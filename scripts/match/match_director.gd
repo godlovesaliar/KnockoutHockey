@@ -15,6 +15,8 @@ signal goal(team: int, scorer: Skater)
 signal whistle_blown(reason: StringName)
 signal penalty_called(offender: Skater, kind: StringName)
 signal match_finished(score: Array)
+signal faceoff_won(team: int)
+signal penalty_expired(team: int)   ## a minor ran out (not a goal against, not offsetting)
 
 enum Phase { PREGAME, FACEOFF, LIVE, STOPPAGE, PERIOD_END, SHOOTOUT, FINAL, INTRO, FIGHT }
 
@@ -41,7 +43,7 @@ const FIGHT_MAJOR := 300.0       ## 5:00 offsetting majors
 const FIGHT_COOLDOWN := 60.0     ## sitting out instead, when penalties are off
 const MOMENTUM_TIME := 75.0
 const INTRO_MIN := 3.5            ## the matchup screen shows at least this long...
-const INTRO_MAX := 9.0            ## ...and at most this long (the intro line normally ends it)
+const INTRO_MAX := 20.0           ## ...and at most this long (the intro line normally ends it)
 
 @export var use_game_settings := true
 @export var format := 5
@@ -769,8 +771,11 @@ func _on_foul(offender: Skater, _victim: Skater, kind: StringName) -> void:
 
 func _tick_box(delta: float) -> void:
 	for t in 2:
+		var was := lineup(t).box_count()
 		for s in lineup(t).tick_box(delta):
 			_return_from_box(t, s)
+		if lineup(t).box_count() < was:
+			penalty_expired.emit(t)
 
 
 func _return_from_box(t: int, s: Skater) -> void:
@@ -969,6 +974,7 @@ func _resolve_faceoff() -> void:
 	else:
 		winner = 0 if p[0] < p[1] else 1
 	stats.faceoffs[winner] += 1
+	faceoff_won.emit(winner)
 	for s in on_ice_all():
 		s.frozen = false
 	var dot: Vector2 = _fo.dot

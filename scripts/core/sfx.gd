@@ -37,7 +37,8 @@ var _voice: AudioStreamPlayer
 var _voice_priority := 0
 var _lines := {}                  ## announcer line -> Array of takes
 var _last_take := {}
-var _files := {}                  ## announcer file name (no extension) -> stream, for numbered lines like period2
+var _voice_takes := {}            ## voice -> announcer line -> that voice's takes
+var _files := {}                ## announcer file name (no extension) -> stream, for numbered lines like period2
 var _voice_queue: Array[AudioStream] = []   ## rest of an announce_chain
 var _voice_end := 0.0             ## Time.get_ticks_msec() / 1000 when the announcer last went quiet
 var _organ_tween: Tween
@@ -206,25 +207,37 @@ func has_file(name: String) -> bool:
 	return _files.has(name)
 
 
-## Plays recorded clips (Sfx sound names, e.g. the intro halves) one after another on
-## the announcer's voice, as one line. All must exist.
+## Plays recorded clips (Sfx sound names, e.g. the intro halves, or announcer line names
+## prefixed "line:") one after another on the announcer's voice, as one line. All must exist.
 func announce_chain(sounds: Array, priority := 1) -> bool:
 	if muted:
 		return false
 	for s: String in sounds:
-		if not _streams.has(s):
+		if not (_streams.has(s) or (s.begins_with("line:") and _lines.has(s.substr(5)))):
 			return false
 	if _voice.playing and priority <= _voice_priority:
 		return false
 	_voice_queue.clear()
 	for i in range(1, sounds.size()):
-		_voice_queue.append(_pick(sounds[i]))
-	_voice.stream = _pick(sounds[0])
+		_voice_queue.append(_chain_stream(sounds[i]))
+	_voice.stream = _chain_stream(sounds[0])
 	_voice.play()
 	_voice_priority = priority
 	if log_events:
 		print("[audio] %.1f announcer %s" % [Time.get_ticks_msec() / 1000.0, " + ".join(sounds)])
 	return true
+
+
+func _chain_stream(s: String) -> AudioStream:
+	if s.begins_with("line:"):
+		var takes: Array = _lines[s.substr(5)]
+		return takes[_rng.randi() % takes.size()]
+	return _pick(s)
+
+
+## How many takes an announcer line has (0 = none recorded).
+func take_count(line: String) -> int:
+	return (_lines.get(line, []) as Array).size()
 
 
 ## Cuts the announcer off (and drops the rest of a chain).
@@ -252,24 +265,38 @@ func announcing() -> bool:
 	return _voice.playing
 
 
+## The booth's recordings (AnnouncerLines.VOICES: announcer/pbp/, announcer/color/,
+## announcer/both/ for duets, and the original files in announcer/ itself). A line's
+## takes from every voice share one pool: a new voice adds to it, never replaces it.
 func _load_announcer() -> void:
-	if not DirAccess.dir_exists_absolute(ANNOUNCER_DIR):
-		return
-	for f in ResourceLoader.list_directory(ANNOUNCER_DIR):
-		if not (f.ends_with(".mp3") or f.ends_with(".ogg") or f.ends_with(".wav")):
+	var dirs := [[ANNOUNCER_DIR, AnnouncerLines.LEGACY_VOICE]]
+	for v: String in AnnouncerLines.VOICES:
+		dirs.append([ANNOUNCER_DIR + AnnouncerLines.VOICES[v].dir, v])
+	for d: Array in dirs:
+		var dir: String = d[0]
+		if not DirAccess.dir_exists_absolute(dir):
 			continue
-		var stream := load(ANNOUNCER_DIR + f) as AudioStream
-		if stream == null:
-			continue
-		_files[f.get_basename().to_lower()] = stream
-		# Trailing digits mark another take of the same line.
-		var line := f.get_basename().to_lower()
-		while line.length() > 1 and line.right(1).is_valid_int():
-			line = line.left(-1)
-		line = line.trim_suffix("_")
-		if not _lines.has(line):
-			_lines[line] = []
-		_lines[line].append(stream)
+		var by_line: Dictionary = _voice_takes.get_or_add(d[1], {})
+		for f in ResourceLoader.list_directory(dir):
+			if not (f.ends_with(".mp3") or f.ends_with(".ogg") or f.ends_with(".wav")):
+				continue
+			var stream := load(dir + f) as AudioStream
+			if stream == null:
+				continue
+			_files[f.get_basename().to_lower()] = stream
+			# Trailing digits mark another take; other names join their line's takes
+			# (AnnouncerLines: the CSV's names, older recordings).
+			var line := AnnouncerLines.line_for_file(f.get_basename())
+			by_line.get_or_add(line, []).append(stream)
+	# Every voice's takes of a line share one pool (Steve's, Bobby's and duets alike).
+	for v: String in _voice_takes:
+		for line: String in _voice_takes[v]:
+			_lines.get_or_add(line, []).append_array(_voice_takes[v][line])
+
+
+## Takes of a line in one voice's own recordings ("pbp" / "color" / "both").
+func voice_take_count(line: String, voice: String) -> int:
+	return (_voice_takes.get(voice, {}).get(line, []) as Array).size()
 
 
 func _pick(sound: String) -> AudioStream:
