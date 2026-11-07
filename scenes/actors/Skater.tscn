@@ -1,0 +1,14 @@
+[gd_scene format=3]
+
+[ext_resource type="Script" path="res://scripts/actors/skater.gd" id="1_skater"]
+
+[sub_resource type="CapsuleShape3D" id="CapsuleShape3D_skater"]
+radius = 0.35
+height = 1.85
+
+[node name="Skater" type="CharacterBody3D"]
+script = ExtResource("1_skater")
+
+[node name="Collision" type="CollisionShape3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.925, 0)
+shape = SubResource("CapsuleShape3D_skater")

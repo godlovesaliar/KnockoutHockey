@@ -1,0 +1,32 @@
+[gd_scene format=3]
+
+[ext_resource type="Script" path="res://scripts/match/rink_sandbox.gd" id="1_sandbox"]
+[ext_resource type="PackedScene" path="res://scenes/match/Rink.tscn" id="2_rink"]
+[ext_resource type="PackedScene" path="res://scenes/match/Puck.tscn" id="3_puck"]
+[ext_resource type="Script" path="res://scripts/match/broadcast_camera.gd" id="4_cam"]
+
+[sub_resource type="Environment" id="Environment_arena"]
+background_mode = 1
+background_color = Color(0.04, 0.05, 0.07, 1)
+ambient_light_source = 2
+ambient_light_color = Color(0.78, 0.82, 0.9, 1)
+ambient_light_energy = 0.4
+tonemap_mode = 2
+
+[node name="RinkSandbox" type="Node3D"]
+script = ExtResource("1_sandbox")
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+environment = SubResource("Environment_arena")
+
+[node name="Sun" type="DirectionalLight3D" parent="."]
+light_energy = 0.85
+shadow_enabled = true
+
+[node name="Rink" parent="." instance=ExtResource("2_rink")]
+
+[node name="Puck" parent="." instance=ExtResource("3_puck")]
+
+[node name="Camera" type="Camera3D" parent="."]
+script = ExtResource("4_cam")
+target_path = NodePath("../Puck")

@@ -1,0 +1,46 @@
+[gd_scene format=3]
+
+[ext_resource type="Script" path="res://scripts/match/puck.gd" id="1_puck"]
+
+[sub_resource type="SphereShape3D" id="SphereShape3D_puck"]
+radius = 0.0381
+
+[sub_resource type="CylinderMesh" id="CylinderMesh_puck"]
+top_radius = 0.0381
+bottom_radius = 0.0381
+height = 0.0254
+radial_segments = 24
+rings = 1
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_outline"]
+render_priority = 1
+transparency = 1
+no_depth_test = true
+cull_mode = 1
+shading_mode = 0
+albedo_color = Color(1, 1, 1, 0.85)
+grow = true
+grow_amount = 0.012
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_xray"]
+next_pass = SubResource("StandardMaterial3D_outline")
+render_priority = 2
+transparency = 1
+no_depth_test = true
+shading_mode = 0
+albedo_color = Color(0.02, 0.02, 0.03, 0.9)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_puck"]
+next_pass = SubResource("StandardMaterial3D_xray")
+albedo_color = Color(0.03, 0.03, 0.035, 1)
+roughness = 0.4
+
+[node name="Puck" type="CharacterBody3D"]
+script = ExtResource("1_puck")
+
+[node name="Collision" type="CollisionShape3D" parent="."]
+shape = SubResource("SphereShape3D_puck")
+
+[node name="Visual" type="MeshInstance3D" parent="."]
+mesh = SubResource("CylinderMesh_puck")
+surface_material_override/0 = SubResource("StandardMaterial3D_puck")
