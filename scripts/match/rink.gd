@@ -15,11 +15,16 @@ const SEGS := 24
 const BOARD_THICKNESS := 0.15
 const COLLIDER_THICKNESS := 0.5
 const KICK_HEIGHT := 0.25
+const ADS_DIR := "res://assets/images/ads/"   ## every image here can show up on the boards
+const AD_HEIGHT := 0.7     ## meters, inside the white band above the kick plate
+const AD_GAP := 1.6        ## meters of plain board between ads (stretched to fill the side)
 
 @export var board_color := Color(0.96, 0.96, 0.94)
 @export var kick_color := Color(0.95, 0.78, 0.12)
 @export var cap_color := Color(0.14, 0.2, 0.36)
 @export var floor_color := Color(0.16, 0.16, 0.18)
+## How many different sponsors a game shows (picked at random from ADS_DIR each load).
+@export var ad_count := 6
 
 var ice_material: ShaderMaterial
 var nets: Array[Net] = []
@@ -30,6 +35,7 @@ var ends_swapped := false
 func _ready() -> void:
 	_build_ice()
 	_build_boards()
+	_build_ads()
 	_build_colliders()
 	_build_floor()
 	_build_nets()
@@ -131,6 +137,63 @@ func _build_boards() -> void:
 	glass.cull_mode = BaseMaterial3D.CULL_DISABLED
 	_add_wall(glass_line, RinkSpec.BOARD_HEIGHT, RinkSpec.GLASS_TOP, true, glass, "Glass")
 	_add_glass_rail(glass_line)
+
+
+## Board ads: a random few sponsors this game, repeated along both long sides in a
+## different order on each, the way real dasher boards repeat their sponsors.
+func _build_ads() -> void:
+	var files := ResourceLoader.list_directory(ADS_DIR)
+	var pool: Array[Texture2D] = []
+	for f in files:
+		if f.get_extension() in ["png", "jpg", "jpeg", "webp"]:
+			var tex := load(ADS_DIR + f) as Texture2D
+			if tex:
+				pool.append(tex)
+	if pool.is_empty():
+		return
+	pool.shuffle()
+	pool.resize(mini(ad_count, pool.size()))
+	var y := KICK_HEIGHT + (RinkSpec.BOARD_HEIGHT - KICK_HEIGHT) * 0.5
+	var half_span := RinkSpec.HALF_L - RinkSpec.CORNER_RADIUS - 0.6
+	var mats := {}
+	for side: float in [1.0, -1.0]:
+		# Fill the straight with whole ads, cycling through this game's sponsors.
+		var order := pool.duplicate()
+		order.shuffle()
+		var row: Array[Texture2D] = []
+		var used := 0.0
+		var i := 0
+		while true:
+			var tex: Texture2D = order[i % order.size()]
+			var w := AD_HEIGHT * tex.get_width() / float(tex.get_height())
+			if used + w + (AD_GAP if row.size() > 0 else 0.0) > half_span * 2.0:
+				break
+			used += w + (AD_GAP if row.size() > 0 else 0.0)
+			row.append(tex)
+			i += 1
+		var gap := (half_span * 2.0 - (used - AD_GAP * (row.size() - 1))) / float(row.size() + 1)
+		var z := -half_span + gap
+		var n := Vector3(-side, 0.0, 0.0)   # facing the ice
+		for tex in row:
+			var w := AD_HEIGHT * tex.get_width() / float(tex.get_height())
+			var mi := MeshInstance3D.new()
+			mi.name = "Ad_%s" % tex.resource_path.get_file().get_basename()
+			var q := QuadMesh.new()
+			q.size = Vector2(w, AD_HEIGHT)
+			mi.mesh = q
+			if not mats.has(tex):
+				var m := StandardMaterial3D.new()
+				m.albedo_texture = tex
+				m.roughness = 0.55
+				m.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS_ANISOTROPIC
+				mats[tex] = m
+			mi.material_override = mats[tex]
+			mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+			var along := z + w * 0.5
+			mi.transform = Transform3D(Basis.looking_at(-n, Vector3.UP),
+					Vector3(side * (RinkSpec.HALF_W - 0.006), y, along))
+			add_child(mi)
+			z += w + gap
 
 
 func _add_wall(pts: PackedVector2Array, y0: float, y1: float, inward: bool, mat: Material, node_name: String) -> void:

@@ -7,6 +7,7 @@ extends Node
 ##   Sfx.crowd_react("cheer", volume_db, priority)   # one crowd reaction at a time
 ##   Sfx.play_organ("organ_upbeat", volume_db, true) # the arena organ (one at a time)
 ##   Sfx.announce("bighit", priority)               # play-by-play (assets/sound/announcer/)
+##   Sfx.play_music() / Sfx.stop_music(fade)        # the menu playlist (assets/sound/music/)
 ##
 ## Positional sounds get quieter with distance from `listener` (the director keeps it on
 ## the puck, which is where the camera looks).
@@ -24,6 +25,9 @@ const CUT_DIR := "res://assets/sound/cut/"
 ## Announcer lines: <line><n>.mp3/.ogg/.wav, e.g. faceoff.mp3, faceoff2.mp3 = two takes of "faceoff".
 const ANNOUNCER_DIR := "res://assets/sound/announcer/"
 const ANNOUNCER_DB := 1.0
+## Menu music: every track in this folder, shuffled, one after another.
+const MUSIC_DIR := "res://assets/sound/music/"
+const MUSIC_DB := -10.0
 
 var _streams := {}                ## name -> AudioStream or Array of variants
 var _voices: Array[AudioStreamPlayer] = []
@@ -42,6 +46,11 @@ var _files := {}                ## announcer file name (no extension) -> stream,
 var _voice_queue: Array[AudioStream] = []   ## rest of an announce_chain
 var _voice_end := 0.0             ## Time.get_ticks_msec() / 1000 when the announcer last went quiet
 var _organ_tween: Tween
+var _music: AudioStreamPlayer
+var _music_tween: Tween
+var _music_on := false
+var _playlist: Array[String] = []
+var _last_track := ""
 var _rng := RandomNumberGenerator.new()
 
 
@@ -65,6 +74,11 @@ func _ready() -> void:
 	_voice.volume_db = ANNOUNCER_DB
 	add_child(_voice)
 	_voice.finished.connect(_on_voice_finished)
+	_music = AudioStreamPlayer.new()
+	add_child(_music)
+	_music.finished.connect(func() -> void:
+		if _music_on:
+			_next_track())
 	_load_announcer()
 	_rng.randomize()
 
@@ -160,6 +174,56 @@ func stop_organ(fade := 1.5) -> void:
 	_organ_tween = create_tween()
 	_organ_tween.tween_property(_organ, "volume_db", -60.0, fade)
 	_organ_tween.tween_callback(_organ.stop)
+
+
+## Starts the menu music (or keeps it going: moving between menu screens doesn't
+## restart the track). Tracks play shuffled, never the same one twice in a row.
+func play_music() -> void:
+	if muted:
+		return
+	if _music_tween:
+		_music_tween.kill()
+		_music_tween = null
+	if _music_on and _music.playing:
+		_music.volume_db = MUSIC_DB   # cancel a fade-out that was under way
+		return
+	_music_on = true
+	_next_track()
+
+
+## Fades the menu music out (the game is starting).
+func stop_music(fade := 1.0) -> void:
+	_music_on = false
+	if not _music.playing:
+		return
+	if _music_tween:
+		_music_tween.kill()
+	_music_tween = create_tween()
+	_music_tween.tween_property(_music, "volume_db", -60.0, fade)
+	_music_tween.tween_callback(_music.stop)
+
+
+func _next_track() -> void:
+	if _playlist.is_empty():
+		for f in ResourceLoader.list_directory(MUSIC_DIR):
+			if f.get_extension() in ["mp3", "ogg", "wav"]:
+				_playlist.append(MUSIC_DIR + f)
+		_playlist.shuffle()
+		if _playlist.size() > 1 and _playlist[0] == _last_track:
+			_playlist.append(_playlist.pop_front())
+	if _playlist.is_empty():
+		return
+	_last_track = _playlist.pop_front()
+	var stream := load(_last_track) as AudioStream
+	if stream == null:
+		return
+	_music.stream = stream
+	if log_events:
+		print("[music] ", _last_track.get_file(), "  %.0fs" % stream.get_length())
+	_music.volume_db = -30.0
+	_music.play()
+	_music_tween = create_tween()
+	_music_tween.tween_property(_music, "volume_db", MUSIC_DB, 1.5)
 
 
 ## Says an announcer line (a random take, not the last one used). One voice: a line

@@ -32,3 +32,13 @@ The recordings in `assets/sound/` (shots, hits, hockey stops, skating, goal horn
 ## Characters and animations
 
 Y Bot and all 51 animations in `assets/animations/` are from [Mixamo](https://www.mixamo.com) (Adobe). They're free to use in personal and commercial projects; no attribution is required. They're credited here anyway.
+
+## Music
+
+The menu playlist (`assets/sound/music/`; every track there plays, shuffled). Supplied by the project owner; the file names follow Pixabay's download naming (artist handle, title, track id), so the source and license still need confirming.
+
+| Track (file) | Artist | License | Source |
+|---|---|---|---|
+| Extreme Sports (`gr0za-extreme-sports-extreme-610340.mp3`) | gr0za | to confirm | link to add |
+| Uplifting Action Sport Energetic Rock (`ikoliks-uplifting-action-sport-energetic-rock-619094.mp3`) | ikoliks | to confirm | link to add |
+| Sports Sport Rock (`jonasblakewood-sports-sport-rock-622907.mp3`) | jonasblakewood | to confirm | link to add |

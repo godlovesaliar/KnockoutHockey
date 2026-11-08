@@ -7,9 +7,9 @@ extends Node3D
 ##   A / J   pass (hold = saucer); without the puck = switch player
 ##   X / K   shoot (tap = wrist, hold = slap); hold while a pass comes = one-timer
 ##   Y / I   deke                      LT / Space   protect puck
-##   R reset · C / Back camera · Esc quit
+##   R reset · C / Back camera · Esc / Start pause menu
 ##
-## Command-line (after `--`): cam=…, shot=<png>, wait=<s>, demo=carry|windup|pass
+## Command-line (after `--`): cam=…, shot=<png>, wait=<s>, demo=carry|windup|pass, pausemenu[=controls]
 
 const SKATER_SCENE := preload("res://scenes/actors/Skater.tscn")
 
@@ -101,7 +101,23 @@ func _unhandled_input(event: InputEvent) -> void:
 			KEY_R:
 				_faceoff()
 			KEY_ESCAPE:
-				get_tree().quit()
+				_open_pause()
+	if event is InputEventJoypadButton and event.pressed and event.button_index == JOY_BUTTON_START:
+		_open_pause()
+
+
+var _pause: PauseMenu
+
+
+## Esc / Start: the pause menu (resume, controls, restart, quit to the main menu).
+func _open_pause() -> void:
+	if _pause != null:
+		return
+	_pause = PauseMenu.new()
+	_pause.mode = "PRACTICE"
+	_pause.restart_text = "RESTART PRACTICE"
+	add_child(_pause)
+	_pause.closed.connect(func() -> void: _pause = null)
 
 
 func _physics_process(_delta: float) -> void:
@@ -137,7 +153,7 @@ func _process(delta: float) -> void:
 			+ "Stick/WASD skate · RT/Shift turbo · LT/Space protect\n" \
 			+ "A/J pass (hold = saucer) · no puck: switch player\n" \
 			+ "X/K shoot (tap wrist, hold slap) · hold X for a pass = one-timer\n" \
-			+ "Y/I deke · R reset · C camera · Esc quit"
+			+ "Y/I deke · R reset · C camera · Esc pause"
 
 
 func _on_shot(s: Skater, kind: StringName, spd: float) -> void:
@@ -212,6 +228,10 @@ func _handle_cmdline() -> void:
 				0.4 * (k + 1), c.number, c.global_position, c.heading, puck.global_position,
 				puck.carrier.number if puck.carrier else -1, puck.get_node("Visual").global_position])
 		get_tree().quit()
+	if args.has("pausemenu"):   # open the pause menu at once (screenshots); pausemenu=controls for that page
+		_open_pause()
+		if args["pausemenu"] == "controls":
+			_pause._show_controls()
 	if args.has("shot"):
 		await get_tree().create_timer(float(args.get("wait", "1.5"))).timeout
 		await RenderingServer.frame_post_draw

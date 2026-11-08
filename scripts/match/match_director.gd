@@ -739,8 +739,8 @@ func _open_intermission(final: bool) -> void:
 	_intermission.open(self, final)
 	if final:
 		_intermission.continued.connect(func() -> void:
-			if ResourceLoader.exists("res://scenes/ui/MatchSetup.tscn"):
-				get_tree().change_scene_to_file("res://scenes/ui/MatchSetup.tscn"))
+			if ResourceLoader.exists("res://scenes/ui/TeamSelect.tscn"):
+				get_tree().change_scene_to_file("res://scenes/ui/TeamSelect.tscn"))
 	else:
 		_intermission.continued.connect(func() -> void:
 			_intermission = null
