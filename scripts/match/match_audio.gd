@@ -17,8 +17,9 @@ extends Node
 ## it and the file names that count as its takes are listed in AnnouncerLines; a line with no
 ## recordings is simply skipped. Each line has a chance and a cooldown so the commentary
 ## stays occasional, and a priority (a line only cuts off a lower one). Every game opens
-## with the intro: a general welcome (if recorded), then the home team's "Tonight: a
-## matchup between the <home>" and the away team's "and the <away>." (Teams `call`).
+## with the matchup screen: the home team's "Tonight: a matchup between the <home>" and
+## the away team's "and the <away>." (Teams `call`). As it closes, Steve and Bobby welcome
+## everyone together (intro_duet; Steve's solo welcome only if no duet is recorded).
 ## Goals get a follow-up a moment later when the situation calls for one (tie, lead,
 ## insurance, hat trick, power play, short-handed, comeback). Duets (both voices in one
 ## clip) can be takes of any line, and the banter lines are duets only: quiet spells,
@@ -47,6 +48,7 @@ var director: MatchDirector
 var home_chant := ""          ## the home team's chant (Teams.LIST)
 var _goal_time := -100.0
 var _prev_phase := -1
+var _opened := false   ## the duet welcome played as the matchup screen closed
 var _chant_in := 60.0
 var _pinned := 0.0
 var _pressure := 0.0
@@ -464,6 +466,10 @@ func _on_phase(phase: MatchDirector.Phase) -> void:
 			_say_later("final_horn", at, 3, 0.0, true)
 			if not _banter("banter_final", 0.5, at + 2.2, true):
 				_react_line("final_react", 0.8, at + 2.2, 0.0, true)
+		MatchDirector.Phase.PREGAME:
+			# Leaving the matchup screen: Steve and Bobby open the broadcast together.
+			if was == MatchDirector.Phase.INTRO:
+				_opened = _say("intro_duet" if Sfx.has_line("intro_duet") else "intro", 1.0, 3, 0.0)
 		MatchDirector.Phase.LIVE:
 			Sfx.stop_organ(1.2)
 			if was == MatchDirector.Phase.FACEOFF:
@@ -598,6 +604,8 @@ func _say_period_start() -> void:
 		await get_tree().create_timer(0.25).timeout
 		waited += 0.25
 	var p := director.period
+	if p == 1 and _opened:
+		return   # the duet welcome already opened the game
 	var own: String = "overtime" if p > director.periods else {2: "second_period", 3: "third_period"}.get(p, "")
 	_say(own if Sfx.has_line(own) else "newperiod", 1.0, 3, 0.0)
 	if p == 3:
@@ -623,17 +631,14 @@ func _say_one_of(lines: Array, chance: float, priority: int, cooldown: float) ->
 	return false
 
 
-## A welcome (if recorded), then "Tonight: a matchup between the <home>" + "and the <away>."
+## The matchup screen: "Tonight: a matchup between the <home>" + "and the <away>."
+## (The welcome follows as the screen closes: _on_phase, PREGAME.)
 func _play_intro() -> void:
 	var home: String = Teams.team(director.team_ids[HOME]).get("call", "")
 	var away: String = Teams.team(director.team_ids[1 - HOME]).get("call", "")
 	if home == "" or away == "":
 		return
-	var chain := ["intro_home_" + home, "intro_away_" + away]
-	if Sfx.has_line("intro"):
-		chain.push_front("line:intro")
-	if not Sfx.announce_chain(chain, 4):
-		Sfx.announce("intro", 4)
+	Sfx.announce_chain(["intro_home_" + home, "intro_away_" + away], 4)
 
 
 func _on_carrier(c: Skater) -> void:

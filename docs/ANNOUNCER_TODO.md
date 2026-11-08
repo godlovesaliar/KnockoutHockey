@@ -1,14 +1,15 @@
 # Announcer lines: takes still needed (target 3 per line)
 
-- **Steve Sheldon** (play-by-play, `assets/sound/announcer/pbp/`): 110 takes needed
+- **Steve Sheldon** (play-by-play, `assets/sound/announcer/pbp/`): 111 takes needed
 - **Bobby Niedemyer** (color, `assets/sound/announcer/color/`): 26 takes needed
-- **Steve & Bobby** (duets, `assets/sound/announcer/both/`): 27 takes needed
+- **Steve & Bobby** (duets, `assets/sound/announcer/both/`): 7 takes needed
 
 ## Game flow
 
 | Line | Records new takes | Takes (Steve / Bobby / duet) | Still needed | CSV scripts | Plays when |
 |---|---|---|---|---|---|
-| `intro` | Steve | 3 (2 / 0 / 1) | — | intro_01 "Welcome to tonight's matchup, hockey fans!"<br>intro_02 "It's a packed house tonight, and the teams are taking the ice."<br>intro_03 "Here we go, hockey fans! Let's drop the puck!" | before the team matchup intro ("Welcome to tonight's matchup!") |
+| `intro` | Steve | 2 (2 / 0 / 0) | 1 | intro_01 "Welcome to tonight's matchup, hockey fans!"<br>intro_02 "It's a packed house tonight, and the teams are taking the ice."<br>intro_03 "Here we go, hockey fans! Let's drop the puck!" | as the matchup screen closes, only if no duet welcome is recorded |
+| `intro_duet` | Both | 4 (0 / 0 / 4) | — |  | every game, as the matchup screen closes (Steve and Bobby welcome everyone; stands in for the first period's call) |
 | `newperiod` | Steve | 3 (2 / 1 / 0) | — | period_start_01 "And we're underway!"<br>period_start_02 "Puck is dropped, here we go!" | the first period starts (and any period without its own line) |
 | `second_period` | Steve | 4 (3 / 1 / 0) | — | second_period_01 "Start of the second period." | the second period starts |
 | `third_period` | Steve | 4 (3 / 1 / 0) | — | third_period_01 "Here we go, start of the third." | the third period starts |
@@ -130,15 +131,15 @@
 
 | Line | Records new takes | Takes (Steve / Bobby / duet) | Still needed | CSV scripts | Plays when |
 |---|---|---|---|---|---|
-| `banter` | Both | 0 | 3 |  | a long quiet spell, in place of Bobby's idle remarks now and then |
-| `banter_intermission` | Both | 0 | 3 |  | after a period ends, while the teams head off (recap the period) |
-| `banter_penalty` | Both | 0 | 3 |  | after a penalty call, in place of the power-play line now and then (Bobby disputes it) |
-| `banter_fight` | Both | 0 | 3 |  | after a fight ends |
-| `banter_goal` | Both | 0 | 3 |  | after a goal, when nothing more specific fits |
-| `banter_hit` | Both | 0 | 3 |  | after a big hit, in place of Bobby's reaction now and then |
+| `banter` | Both | 4 (0 / 0 / 4) | — |  | a long quiet spell, in place of Bobby's idle remarks now and then |
+| `banter_intermission` | Both | 4 (0 / 0 / 4) | — |  | after a period ends, while the teams head off (recap the period) |
+| `banter_penalty` | Both | 4 (0 / 0 / 4) | — |  | after a penalty call, in place of the power-play line now and then (Bobby disputes it) |
+| `banter_fight` | Both | 3 (0 / 0 / 3) | — |  | after a fight ends |
+| `banter_goal` | Both | 2 (0 / 0 / 2) | 1 |  | after a goal, when nothing more specific fits |
+| `banter_hit` | Both | 4 (0 / 0 / 4) | — |  | after a big hit, in place of Bobby's reaction now and then |
 | `banter_blowout` | Both | 0 | 3 |  | when a team is up by four or more, in place of the blowout line now and then |
 | `banter_close` | Both | 0 | 3 |  | late in a close game, in place of the close-game line now and then |
-| `banter_final` | Both | 0 | 3 |  | after the final horn, in place of Bobby's wrap-up now and then |
+| `banter_final` | Both | 3 (0 / 0 / 3) | — |  | after the final horn, in place of Bobby's wrap-up now and then |
 
 ## In the CSV, not used by the game
 

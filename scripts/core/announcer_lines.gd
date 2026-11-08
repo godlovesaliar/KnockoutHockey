@@ -11,7 +11,7 @@ class_name AnnouncerLines
 ## recordings, which are Bobby's.
 ## A line's takes from every voice share one pool: Bobby's original play-by-play takes
 ## keep playing alongside Steve's, and a duet can be a take of any line
-## (both/intro_01.mp3 joins the welcome). A line's voice says who should record its
+## (both/save_01.mp3 joins the saves). A line's voice says who should record its
 ## new takes; "both" lines (the banter) are written as duets.
 ##
 ## File names: <line>.mp3, <line>2.mp3, <line>_01.mp3 ... (trailing digits and an
@@ -34,7 +34,8 @@ const LEGACY_VOICE := "color"   ## whose files sit in announcer/ itself
 ## [category, [[line, voice, also, when it plays], ...]]
 const GROUPS := [
 	["Game flow", [
-		["intro", "pbp", ["doubleintro"], "before the team matchup intro (\"Welcome to tonight's matchup!\")"],
+		["intro", "pbp", [], "as the matchup screen closes, only if no duet welcome is recorded"],
+		["intro_duet", "both", ["doubleintro"], "every game, as the matchup screen closes (Steve and Bobby welcome everyone; stands in for the first period's call)"],
 		["newperiod", "pbp", ["period_start"], "the first period starts (and any period without its own line)"],
 		["second_period", "pbp", ["period2", "secondperiod"], "the second period starts"],
 		["third_period", "pbp", ["period3", "thirdperiod"], "the third period starts"],
