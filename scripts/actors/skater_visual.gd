@@ -57,6 +57,10 @@ var _clip_regions := Vector3.ZERO
 var _clip_left := 0.0
 var _clip_w := Vector3.ZERO
 var _clip_fade := 6.0
+## Fights: extra body yaw (rad) on top of the heading, to square a bladed stance up to
+## the opponent.
+var yaw_offset := 0.0
+var roll_offset := 0.0   ## fights: sideways tilt (rad) while slipping a punch
 
 static var _materials := {}
 static var _visor: StandardMaterial3D
@@ -144,6 +148,11 @@ static func body_assets(kind: String) -> Array:
 ## Rest position of a bone in body space (+Z forward, +X = the character's left).
 func bone_pos(bone: String) -> Vector3:
 	return skel.get_bone_global_rest(skel.find_bone(bone)).origin
+
+
+## Where a bone is now, in world space (as last posed).
+func bone_world(bone: String) -> Vector3:
+	return skel.global_transform * skel.get_bone_global_pose(skel.find_bone(bone)).origin
 
 
 ## Mesh-based gear anchor from the build step ("head", "chest", "hips"): the AABB of
@@ -280,6 +289,11 @@ func set_fight_mode(on: bool) -> void:
 	blade.visible = not on
 	for g in _gloves:
 		g.visible = not on
+	rig.fist = 1.0 if on else 0.0
+	rig.lock_root = on
+	rig.reach_w = [0.0, 0.0]
+	if not on:
+		yaw_offset = 0.0
 	# Bare hands: the uniform's glove layer goes, the skin underneath shows.
 	for mi: MeshInstance3D in skel.find_children("*", "MeshInstance3D", false, false):
 		mi.set_instance_shader_parameter("gloves_worn", 0.0 if on else 1.0)
@@ -522,8 +536,8 @@ func set_marker(on: bool) -> void:
 # --- Clips -----------------------------------------------------------------------
 
 ## Plays a library clip over the given regions (legs, spine, arms: 0..1 each).
-## `duration` < 0 holds until stop_clip().
-func play_clip(clip: String, regions: Vector3, duration := -1.0, speed := 1.0, blend := 0.12) -> void:
+## `duration` < 0 holds until stop_clip(); `from` starts part-way in (clip seconds).
+func play_clip(clip: String, regions: Vector3, duration := -1.0, speed := 1.0, blend := 0.12, from := 0.0) -> void:
 	if not anim.has_animation(clip):
 		return
 	_clip = clip
@@ -531,6 +545,8 @@ func play_clip(clip: String, regions: Vector3, duration := -1.0, speed := 1.0, b
 	_clip_left = duration if duration > 0.0 else INF
 	_clip_fade = 1.0 / maxf(blend, 0.02)
 	anim.play(clip, blend, speed)
+	if from > 0.0:
+		anim.seek(from, false)
 
 
 func stop_clip(fade := 0.3) -> void:
@@ -625,7 +641,7 @@ func _pose(delta: float) -> void:
 	var side := skater.forehand_side()
 
 	# Body yaw; a hockey stop turns the body sideways; a fall shows the back to the hit.
-	var target_yaw := _heading_yaw()
+	var target_yaw := _heading_yaw() + yaw_offset
 	if skater.stopping:
 		target_yaw += deg_to_rad(80.0) * side
 	if skater.is_down() and spd > 1.0:
@@ -705,7 +721,7 @@ func _pose(delta: float) -> void:
 	rig.free_arm = _free_arm
 
 	var pitch := 0.0
-	var roll := _lean
+	var roll := _lean + roll_offset
 	if skater.state == Skater.State.STUMBLE:
 		roll += sin(skater._state_time * 40.0) * 0.12
 	model.rotation = Vector3(pitch, _yaw, roll)

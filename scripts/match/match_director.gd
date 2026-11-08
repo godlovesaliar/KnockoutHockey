@@ -8,7 +8,7 @@ extends Node3D
 ##
 ## Settings come from GameSettings (the setup screen) unless use_game_settings is false.
 ## Command-line (after `--`): ai, format=3|5, period=<s>, diff=<0..1>, ot=off|sudden_death|
-## shootout|sd_so, norules, cam=…, shot=<png>, wait=<s>
+## shootout|sd_so, norules, cam=…, shot=<png>, wait=<s>, shots=<n>, every=<s>
 
 signal phase_changed(phase: Phase)
 signal goal(team: int, scorer: Skater)
@@ -192,13 +192,18 @@ func _parse_cmdline() -> void:
 	if args.has("statscreen"):   # open the stats screen at once (screenshots / layout checks)
 		_open_intermission.call_deferred(args["statscreen"] == "final")
 	if args.has("shot"):
-		_screenshot.call_deferred(str(args["shot"]), float(args.get("wait", "3.0")))
+		_screenshot.call_deferred(str(args["shot"]), float(args.get("wait", "3.0")), int(args.get("shots", "1")), float(args.get("every", "0.5")))
 
 
-func _screenshot(path: String, wait: float) -> void:
+## `shots` > 1: a burst, `every` seconds apart, saved as <path>_<n>.png.
+func _screenshot(path: String, wait: float, shots := 1, every := 0.5) -> void:
 	await get_tree().create_timer(wait, true, false, true).timeout
-	await RenderingServer.frame_post_draw
-	get_viewport().get_texture().get_image().save_png(path)
+	for n in shots:
+		await RenderingServer.frame_post_draw
+		var out := path if shots == 1 else path.get_basename() + "_%d.png" % n
+		get_viewport().get_texture().get_image().save_png(out)
+		if n < shots - 1:
+			await get_tree().create_timer(every, true, false, true).timeout
 	get_tree().quit()
 
 

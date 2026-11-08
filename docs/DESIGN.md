@@ -104,14 +104,14 @@ All bindings can be remapped. Keyboard player 2 uses the arrow keys and numpad (
 
 | Input | Action |
 |---|---|
-| Left stick | Lean / dodge (left, right, back) |
-| A | Jab (fast, weak) |
-| X | Haymaker / overhand (slow, strong) |
-| B | Grab jersey / pull (sets up punches, drains opponent balance) |
-| Y | Block / tie up |
-| RT | Uppercut (only while you have a grab) |
+| Left stick | Toward / away from the other fighter (on screen): step in / back off. Up / down: slip a punch |
+| A | Jab (fast, light); a short right while holding or held |
+| X | Haymaker (big right, visible windup) |
+| B | Grab the jersey; held, B tries to break free |
+| Y (hold) | Block: fists up, much less damage, costs stamina |
+| RT | Uppercut (only while you're holding them) |
 
-The prompt to drop the gloves: A yes, B no. Keyboards use the same keys as pass / shoot / check / turbo / deke.
+Presses during a punch or a stagger are buffered (0.3 s), so mashing a combo works. The prompt to drop the gloves: A yes, B no. Keyboards use the same keys as pass / shoot / check / turbo / deke.
 
 ### 3.4 Multiplayer
 
@@ -193,8 +193,10 @@ AI teams decide whether to accept or start fights based on the player's fighting
 
 - The camera cuts to a tighter, lower angle on the two fighters; the other skaters gather in a ring and the linesmen hover. The crowd stands.
 - Each fighter has **health** (from fighting + durability), **balance** (from strength) and **stamina** (from endurance).
-- **Grounded rules:** fighters grab jerseys, trade punches, tie up and wrestle. Grabbing gives positional advantage; an uppercut can only be thrown from a grab. Blocking reduces damage but drains stamina. Dodging (left stick) beats haymakers if timed right.
-- **The fight ends** when: one fighter is **knocked down** (health or balance at 0), both are exhausted, or a time limit is hit (about 30 s), and the linesmen break it up.
+- **Grounded rules:** fighters grab jerseys, trade punches, tie up and wrestle. Grabbing pulls the two together, drains the held fighter's balance, makes your punches hit 30% harder and opens the uppercut; the held fighter can't slip and tries to break free (B, strength vs. stamina). Blocking reduces damage but drains stamina. Slipping (stick up / down) beats haymakers if timed right. Range matters: step in to land, back off (out of reach, stamina comes back twice as fast).
+- **Feel (as built):** full-body Mixamo clips (legs and hips move; the pelvis is held over its spot so clips that step don't lunge through the other fighter), fists closed by the rig (`SkaterRig.fist`), and at contact the punching hand is pulled onto the other's face, chin or ribs, or onto their raised guard, by per-arm reach IK (`SkaterRig.reach_w` / `reach_world`); grips put the lead hand on the other's jersey the same way. The pair glides along a slowly circling axis: lunges, knockback on clean shots, the pull of a grip. Heavy shots get a short hitstop and camera shake. Every clean blow staggers the one hit for a moment.
+- **HUD:** each fighter's HEALTH, BALANCE and STAMINA bars are labeled, with what drains each for the first seconds, a white chunk for damage just taken, and a status tag (HOLDING, HELD — BREAK FREE, ROCKED, WOBBLY, WINDED, BLOCKING). Under the clock: how to win. At the bottom, the controls on the human's own device (`HumanBrain.button_label`). `KH_FIGHT_LOG=1` prints each result.
+- **The fight ends** when: one fighter is **knocked down** (health or balance at 0), both are exhausted, or a time limit is hit (25 s), and the linesmen break it up.
 - **The winner** is whoever knocked the other down, or did more damage if no one did. A draw is possible.
 - Short, readable animations: windups are clearly visible, and nothing sends anyone flying. It ends with a "helmet off, sent to the box" walk-off.
 

@@ -8,11 +8,19 @@ extends Node
 ## FIGHT -> OVER (knockdown or decision, then the director sends both to the box).
 ##
 ## Each fighter has health (fighting + durability), balance (strength) and stamina
-## (endurance). Moves: jab (fast, weak), haymaker (slow visible windup, strong, can be
-## dodged by leaning), grab (holds the jersey: more damage, drains the other's balance,
-## and unlocks the uppercut), uppercut (only from a grab), block (hold: much less damage,
-## costs stamina). Lean with the stick to dodge. Health or balance at 0 = knocked down.
-## Time limit, or both out of gas, ends it on points (damage dealt); close = a draw.
+## (endurance). Empty the other's health or balance and they go down; when time runs out
+## the one who did more damage wins (close = a draw).
+##
+## Moves (full-body clips, fists closed; at contact the punching hand is pulled onto the
+## other's face, or their guard, so blows land):
+##   jab (A)        lead hand, fast, light
+##   haymaker (X)   big right with a visible windup; slip it (stick up/down) or block it
+##   grab (B)       a hand on their jersey: pulls you together, drains their balance,
+##                  your punches hit harder and the uppercut opens up. Held? B breaks free.
+##   uppercut (RT)  only while you hold them; big balance damage
+##   block (hold Y) much less damage, costs stamina
+## Stick toward / away from the other steps in / backs off (out of range, punches miss and
+## stamina comes back faster); up / down slips to the side.
 
 signal finished(winner: Skater, loser: Skater)   ## winner null = draw (loser null too)
 signal declined
@@ -21,26 +29,37 @@ enum Stage { PROMPT, SQUARE_UP, FIGHT, OVER }
 
 const PROMPT_TIME := 3.0
 const SQUARE_TIME := 1.4
-const TIME_LIMIT := 30.0
+const TIME_LIMIT := 25.0
 const OVER_TIME := 3.2
-const GAP := 0.95             ## meters between the fighters' centers
-const LEAN_DIST := 0.3
+const GAP := 0.95             ## meters between the fighters' centers when squared up
+const GAP_MIN := 0.68         ## closest they get (held in a clinch)
+const GAP_MAX := 1.9
+const STEP_SPEED := 1.6       ## m/s stepping in or back
+const LEAN_DIST := 0.26
 const RING_RADIUS := 4.6
-const GRAB_TIME := 3.0
-const DRAW_MARGIN := 0.15     ## damage within this share of each other = a draw
-const MOVE_INPUT_LATCH := 0.18
+const GRAB_TIME := 3.5
+const DRAW_MARGIN := 0.08     ## damage within this share of each other = a draw
+const BUFFER := 0.3           ## a press this long before the fighter is free still fires
+const STANCE_YAW := 0.42      ## rad the body turns to square the bladed clips up to the other
 
-## Moves: clip, clip time of contact, seconds to contact, recovery after contact,
-## damage, balance damage, stamina cost.
+## clip, start (clip s), contact (clip s), end (clip s), clip speed, hand (0 left / 1 right),
+## damage, balance damage, stamina cost, lunge (m), range (separation it reaches), stun (s
+## the one hit can't act), aim ("head" / "body" / "chin").
 const MOVES := {
-	"jab": {"clip": "lead_jab", "impact": 0.5, "windup": 0.24, "recover": 0.22, "dmg": 3.5, "bal": 2.0, "cost": 3.0},
-	"hay": {"clip": "hook", "impact": 0.4, "windup": 0.5, "recover": 0.38, "dmg": 10.0, "bal": 7.0, "cost": 9.0},
-	"upper": {"clip": "uppercut", "impact": 1.05, "windup": 0.42, "recover": 0.32, "dmg": 12.0, "bal": 11.0, "cost": 8.0},
-	"grab": {"clip": "punching", "impact": 0.4, "windup": 0.26, "recover": 0.2, "dmg": 0.0, "bal": 3.0, "cost": 4.0},
+	"jab": {"clip": "lead_jab", "from": 0.18, "contact": 0.5, "end": 0.95, "speed": 1.7, "hand": 0,
+		"dmg": 6.5, "bal": 2.5, "cost": 3.0, "lunge": 0.12, "range": 1.25, "stun": 0.22, "aim": "head"},
+	"hay": {"clip": "cross_punch", "from": 0.5, "contact": 1.1, "end": 1.6, "speed": 1.5, "hand": 1,
+		"dmg": 18.0, "bal": 11.0, "cost": 9.0, "lunge": 0.2, "range": 1.15, "stun": 0.45, "aim": "head"},
+	"upper": {"clip": "uppercut", "from": 0.22, "contact": 0.5, "end": 0.85, "speed": 1.3, "hand": 1,
+		"dmg": 19.0, "bal": 17.0, "cost": 8.0, "lunge": 0.06, "range": 1.0, "stun": 0.5, "aim": "chin"},
+	"short": {"clip": "punching", "from": 0.12, "contact": 0.4, "end": 0.75, "speed": 1.5, "hand": 1,
+		"dmg": 8.0, "bal": 4.0, "cost": 3.0, "lunge": 0.04, "range": 1.0, "stun": 0.22, "aim": "body"},
+	"grab": {"clip": "", "from": 0.0, "contact": 0.2, "end": 0.34, "speed": 1.0, "hand": 0,
+		"dmg": 0.0, "bal": 4.0, "cost": 4.0, "lunge": 0.15, "range": 1.3, "stun": 0.0, "aim": "collar"},
 }
-const HIT_CLIPS := {"jab": "light_hit_to_head", "hay": "head_hit", "upper": "receive_uppercut_to_the_face", "body": "stomach_hit"}
+const HIT_CLIPS := {"jab": "light_hit_to_head", "hay": "head_hit", "upper": "receive_uppercut_to_the_face", "short": "stomach_hit"}
 const IDLE_CLIP := "bouncing_fight_idle"
-const BLOCK_CLIP := "center_block"
+const FULL := Vector3.ONE
 
 
 class Fighter:
@@ -55,23 +74,33 @@ class Fighter:
 	var max_stamina := 100.0
 	var stamina := 100.0
 	var act := ""             ## "", a MOVES key, "hit" (reacting), "down"
-	var act_t := 0.0
+	var act_t := 0.0          ## seconds into the act
+	var stun := 0.0           ## "hit": seconds it lasts
 	var landed := false
-	var speed := 1.0
+	var connects := ""        ## at contact: "hit" / "block" / "miss" (decided at contact)
+	var rate := 1.0           ## act speed (tired fighters are slower)
 	var blocking := false
 	var grabbing := 0.0       ## seconds left holding the other's jersey
 	var lean := 0.0
 	var lean_target := 0.0
 	var lean_hold := 0.0
-	var base := Vector3.ZERO
-	var facing := Vector3.FORWARD
+	var x := 0.0              ## position along the fight axis (a < 0 < b)
+	var vx := 0.0
+	var step := 0.0           ## -1..1 toward (+) / away from the other, from the stick
+	var side := -1.0          ## -1: a (left end of the axis), +1: b
 	var damage_dealt := 0.0
 	var ai_next := 0.6
+	var ai_range := GAP
 	var prev_turbo := false
-	var idle_playing := false
+	var buffered := ""
+	var buffer_t := 0.0
+	var pose := ""            ## the looping clip playing ("idle" / "block")
+	var flash_t := 0.0        ## HUD: seconds the bars flash after a hit
+	var reach := [0.0, 0.0]   ## per hand, the IK weight this tick
+	var guard := 0.0          ## 0..1 fists up in front of the face (blocking)
 
-	func right() -> Vector3:
-		return facing.cross(Vector3.UP).normalized()   # same as Skater.right_dir()
+	func toward() -> float:   ## +1 if the other is along +axis
+		return -side
 
 
 var director: MatchDirector
@@ -79,6 +108,7 @@ var stage := Stage.PROMPT
 var a: Fighter
 var b: Fighter
 var center := Vector3.ZERO
+var axis := Vector3.RIGHT
 var prompt_brain: HumanBrain   ## the human who decides (null = no prompt)
 var winner: Skater
 var loser: Skater
@@ -86,11 +116,15 @@ var _t := 0.0
 var _time_left := TIME_LIMIT
 var _rng := RandomNumberGenerator.new()
 var _cam: Camera3D
-var _cam_angle := 0.0
+var _cam_side := Vector3.BACK
+var _cam_fresh := true
+var _shake := 0.0
+var _hitstop_until := 0
 var _props: Array[Node3D] = []
 var _hud: FightHud
 var _ring: Array[Skater] = []
 var _exhausted := 0.0
+var _axis_base := 0.0
 
 
 ## `prompt` = the human brain that gets "drop the gloves?" (null: the fight is on).
@@ -101,6 +135,8 @@ func setup(d: MatchDirector, fa: Skater, fb: Skater, prompt: HumanBrain) -> void
 	b = _fighter(fb)
 	a.other = b
 	b.other = a
+	a.side = -1.0
+	b.side = 1.0
 	prompt_brain = prompt
 	center = (fa.global_position + fb.global_position) * 0.5
 	center.y = 0.0
@@ -141,7 +177,26 @@ func is_human_fight() -> bool:
 	return a.human != null or b.human != null
 
 
+## The first human fighting (for the controls hint), or null.
+func human_brain() -> HumanBrain:
+	return a.human if a.human else b.human
+
+
+func separation() -> float:
+	return b.x - a.x
+
+
+func time_left() -> float:
+	return _time_left
+
+
 # --- Stages ------------------------------------------------------------------------
+
+func _process(_delta: float) -> void:
+	if _hitstop_until > 0 and Time.get_ticks_msec() >= _hitstop_until:
+		_hitstop_until = 0
+		Engine.time_scale = 1.0
+
 
 func _physics_process(delta: float) -> void:
 	_t += delta
@@ -149,7 +204,7 @@ func _physics_process(delta: float) -> void:
 		Stage.PROMPT:
 			_update_prompt(delta)
 		Stage.SQUARE_UP:
-			_hold_positions(delta)
+			_move(delta)
 			if _t > SQUARE_TIME:
 				stage = Stage.FIGHT
 				_t = 0.0
@@ -157,7 +212,9 @@ func _physics_process(delta: float) -> void:
 		Stage.FIGHT:
 			_update_fight(delta)
 		Stage.OVER:
-			_hold_positions(delta)
+			for f: Fighter in [a, b]:
+				f.reach = [0.0, 0.0]
+			_move(delta)
 			if _t > OVER_TIME:
 				_cleanup()
 				finished.emit(winner, loser)
@@ -183,30 +240,30 @@ func _update_prompt(_delta: float) -> void:
 func _begin_square_up() -> void:
 	stage = Stage.SQUARE_UP
 	_t = 0.0
-	# Line the fighters up across the rink at the fight spot.
-	var axis := Vector3.RIGHT
-	a.base = center - axis * GAP * 0.5
-	b.base = center + axis * GAP * 0.5
-	a.facing = axis
-	b.facing = -axis
+	# Square up across the rink at the fight spot; the camera watches from center ice.
+	_cam_side = Vector3.FORWARD if center.z > 0.0 else Vector3.BACK
+	_axis_base = 0.0
+	axis = Vector3.RIGHT
+	a.x = -GAP * 0.5
+	b.x = GAP * 0.5
 	for f: Fighter in [a, b]:
 		var s: Skater = f.s
 		if s.has_puck():
 			s.puck.strip(s, Vector3.ZERO)
 		s.frozen = true
-		s.place(f.base, f.facing)
+		s.place(_spot(f), axis * f.toward())
 		s.visual.snap()
 		s.visual.set_fight_mode(true)
+		s.visual.yaw_offset = STANCE_YAW
 		_drop_gear(s)
-		_play_idle(f)
-	# Everyone else gathers round.
+		_set_pose(f, "idle")
+	# Everyone else gathers round, leaving the camera's side open.
 	var others: Array[Skater] = []
 	for t in 2:
 		for s in director.lineup(t).on_ice:
 			if s != a.s and s != b.s and not s.benched:
 				others.append(s)
-	# The ring leaves the camera's side open (the camera sits on +Z or -Z, see _update_camera).
-	var cam_ang := atan2(_camera_side().z, _camera_side().x)
+	var cam_ang := atan2(_cam_side.z, _cam_side.x)
 	for k in others.size():
 		var s := others[k]
 		var ang := cam_ang + deg_to_rad(55.0) + deg_to_rad(250.0) * (k + 0.5) / others.size()
@@ -247,75 +304,137 @@ func _update_fight(delta: float) -> void:
 	_time_left -= delta
 	for f: Fighter in [a, b]:
 		_read_input(f, delta)
+	for f: Fighter in [a, b]:
 		_tick_fighter(f, delta)
-	_hold_positions(delta)
+	_move(delta)
 	# Out of gas on both sides, or out of time: a decision.
 	_exhausted = _exhausted + delta if a.stamina < 6.0 and b.stamina < 6.0 else 0.0
-	if _time_left <= 0.0 or _exhausted > 2.5:
+	if stage == Stage.FIGHT and (_time_left <= 0.0 or _exhausted > 2.5):
 		_decision()
 
 
+## Free to start something new (not mid-punch, not reeling).
+func _free(f: Fighter) -> bool:
+	return f.act == ""
+
+
 func _read_input(f: Fighter, delta: float) -> void:
+	f.buffer_t -= delta
 	if f.human:
 		f.intent.clear()
 		f.human.update(f.s, f.intent, delta)
 		var i := f.intent
 		var turbo_down := i.turbo and not f.prev_turbo
 		f.prev_turbo = i.turbo
-		f.blocking = i.deke_held and f.act == ""
-		var side := i.move.dot(f.right())
-		f.lean_target = clampf(side * 1.4, -1.0, 1.0) if absf(side) > 0.3 else 0.0
-		if f.act == "":
-			if i.pass_down:
-				_start(f, "jab")
-			elif i.shoot_down:
-				_start(f, "hay")
-			elif i.check_down:
-				_start(f, "grab")
-			elif turbo_down and f.grabbing > 0.0:
-				_start(f, "upper")
+		# The stick in screen terms: left / right steps toward or away from the other,
+		# up / down slips to the side.
+		var cam_right := _cam.global_basis.x if _cam else Vector3.RIGHT
+		var toward_screen := signf((axis * f.toward()).dot(cam_right))
+		f.step = clampf(i.move.x * toward_screen, -1.0, 1.0) if absf(i.move.x) > 0.25 else 0.0
+		f.lean_target = clampf(i.move.z * 1.5, -1.0, 1.0) if absf(i.move.z) > 0.3 else 0.0
+		f.blocking = i.deke_held and (f.act == "" or (f.act in MOVES and f.landed))
+		var want := ""
+		if i.pass_down:
+			want = "short" if f.grabbing > 0.0 or f.other.grabbing > 0.0 else "jab"
+		elif i.shoot_down:
+			want = "hay"
+		elif i.check_down:
+			want = "break" if f.other.grabbing > 0.0 else "grab"
+		elif turbo_down:
+			want = "upper"
+		if want != "":
+			f.buffered = want
+			f.buffer_t = BUFFER
+		if f.buffer_t > 0.0 and f.buffered != "" and _free(f) and not f.blocking:
+			var w := f.buffered
+			f.buffered = ""
+			_try(f, w)
 	else:
 		_ai(f, delta)
 
 
-## Computer fighter: reacts to visible haymakers, works the grab, mixes punches.
+## Starts `want` if allowed now (the uppercut needs a grip; "break" shakes a grip off).
+func _try(f: Fighter, want: String) -> void:
+	match want:
+		"upper":
+			if f.grabbing > 0.0:
+				_start(f, "upper")
+			else:
+				_hud.flash_for(f, "UPPERCUT: GRAB FIRST (B)")
+		"break":
+			_break_free(f)
+		_:
+			_start(f, want)
+
+
+func _break_free(f: Fighter) -> void:
+	var o := f.other
+	if o.grabbing <= 0.0:
+		return
+	f.stamina = maxf(0.0, f.stamina - 4.0)
+	var mine := PlayerStats.lerp_stat(f.s.stats.strength, 0.3, 0.75) * (0.6 if f.stamina < 10.0 else 1.0)
+	if _rng.randf() < mine:
+		o.grabbing = 0.0
+		o.balance -= 4.0
+		o.vx -= o.toward() * 0.9
+		f.vx -= f.toward() * 0.5
+		_hud.flash("%s BREAKS FREE" % _name(f.s))
+		Sfx.play("pad", _mid() + Vector3.UP * 1.3, -8.0, 0.8)
+	else:
+		_hud.flash_for(f, "STILL HELD — KEEP TRYING (B)")
+
+
+## Computer fighter: keeps its range, reacts to visible haymakers, works the grab, mixes
+## punches, backs off to get its wind back.
 func _ai(f: Fighter, delta: float) -> void:
-	var skill := PlayerStats.lerp_stat(f.s.stats.fighting, 0.25, 0.8)
+	var skill := PlayerStats.lerp_stat(f.s.stats.fighting, 0.25, 0.85)
+	var aggr := PlayerStats.lerp_stat(f.s.stats.aggression, 0.0, 1.0)
 	var o := f.other
 	f.lean_hold -= delta
 	if f.lean_hold <= 0.0:
 		f.lean_target = 0.0
-	# A haymaker coming: dodge or block, if quick enough.
-	if o.act == "hay" and not o.landed and o.act_t < 0.3 and f.act == "" and f.lean_target == 0.0 and not f.blocking:
-		if _rng.randf() < skill * delta * 9.0:
-			if _rng.randf() < 0.6:
+	# Range: close in to fight, back off when winded.
+	var tired := f.stamina < f.max_stamina * 0.22
+	f.ai_range = 1.55 if tired and o.grabbing <= 0.0 and f.grabbing <= 0.0 else lerpf(1.0, 0.86, aggr)
+	var sep := separation()
+	f.step = clampf((sep - f.ai_range) * 3.0, -1.0, 1.0) if absf(sep - f.ai_range) > 0.06 else 0.0
+	# A haymaker coming: slip it or get the guard up, if quick enough to read it.
+	if o.act == "hay" and not o.landed and f.act == "" and f.lean_target == 0.0 and not f.blocking:
+		if _rng.randf() < skill * delta * 7.0:
+			if _rng.randf() < 0.55:
 				f.lean_target = 1.0 if _rng.randf() < 0.5 else -1.0
-				f.lean_hold = 0.6
+				f.lean_hold = 0.55
 			else:
 				f.blocking = true
-				f.ai_next = 0.5
+				f.ai_next = 0.45
 	f.ai_next -= delta
 	if f.ai_next > 0.0 or f.act != "":
 		return
 	f.blocking = false
-	var aggr := PlayerStats.lerp_stat(f.s.stats.aggression, 0.0, 1.0)
-	f.ai_next = _rng.randf_range(0.3, 0.85) * lerpf(1.25, 0.75, skill)
-	if f.stamina < 8.0:
-		f.blocking = true
+	f.ai_next = _rng.randf_range(0.25, 0.7) * lerpf(1.3, 0.7, skill)
+	if tired:
+		if _rng.randf() < 0.5:
+			f.blocking = true
+			f.ai_next = 0.6
+		return
+	if o.grabbing > 0.0:
+		_try(f, "break" if _rng.randf() < 0.45 else "short")
 		return
 	if f.grabbing > 0.0:
-		_start(f, "upper" if _rng.randf() < 0.45 else "jab")
+		_try(f, "upper" if _rng.randf() < 0.4 else "short")
 		return
+	if sep > 1.3:
+		return   # still closing in
 	var r := _rng.randf()
-	if r < 0.42:
+	if r < 0.4:
 		_start(f, "jab")
-	elif r < 0.62 + aggr * 0.12:
+	elif r < 0.6 + aggr * 0.12:
 		_start(f, "hay")
 	elif r < 0.85:
 		_start(f, "grab")
 	else:
 		f.blocking = true
-		f.ai_next = 0.6
+		f.ai_next = 0.5
 
 
 func _start(f: Fighter, move: String) -> void:
@@ -323,44 +442,98 @@ func _start(f: Fighter, move: String) -> void:
 	f.act = move
 	f.act_t = 0.0
 	f.landed = false
+	f.connects = ""
 	f.blocking = false
 	# Tired fighters throw slower.
-	f.speed = 1.0 if f.stamina >= m.cost else 0.7
+	f.rate = 1.0 if f.stamina >= m.cost else 0.7
 	f.stamina = maxf(0.0, f.stamina - m.cost)
-	var clip_speed: float = m.impact / m.windup * f.speed
-	f.s.visual.play_clip(m.clip, Vector3(0.0, 1.0, 1.0), (m.windup + m.recover) / f.speed, clip_speed, 0.06)
-	f.idle_playing = false
+	f.vx += f.toward() * m.lunge * 3.0
+	if m.clip != "":
+		f.s.visual.play_clip(m.clip, FULL, _dur(m) / f.rate + 0.25, m.speed * f.rate, 0.07, m.from)
+		f.pose = ""
+
+
+## Seconds from the start of a move to its contact, and to its end.
+func _windup(m: Dictionary) -> float:
+	return (m.contact - m.from) / m.speed
+
+
+func _dur(m: Dictionary) -> float:
+	return (m.end - m.from) / m.speed
 
 
 func _tick_fighter(f: Fighter, delta: float) -> void:
+	f.reach = [0.0, 0.0]
 	if f.act == "down":
 		return
-	f.stamina = minf(f.max_stamina, f.stamina + (2.2 if f.blocking else 3.5) * delta)
+	var o := f.other
+	var sep := separation()
+	# Wind comes back, faster out of reach.
+	var regen := 3.5 if sep < 1.3 else 7.0
+	if f.blocking:
+		regen = -2.0
+	f.stamina = clampf(f.stamina + regen * delta, 0.0, f.max_stamina)
+	# Held by the jersey: balance drains (more against a strong grabber).
 	f.grabbing = maxf(0.0, f.grabbing - delta)
-	if f.other.grabbing > 0.0:
-		f.balance -= 4.5 * delta
+	if o.grabbing > 0.0:
+		f.balance -= PlayerStats.lerp_stat(o.s.stats.strength, 3.5, 7.0) * delta
+		f.lean_target = 0.0   # can't slip while held
 	else:
-		f.balance = minf(f.max_balance, f.balance + 3.0 * delta)
-	if f.blocking and f.act == "":
-		f.stamina = maxf(0.0, f.stamina - 1.5 * delta)
-		if not f.s.visual.anim.current_animation == BLOCK_CLIP:
-			f.s.visual.play_clip(BLOCK_CLIP, Vector3(0.0, 1.0, 1.0), 0.5, 1.4, 0.08)
-			f.idle_playing = false
+		f.balance = minf(f.max_balance, f.balance + 2.0 * delta)
+	if f.grabbing > 0.0:
+		f.reach[0] = 1.0   # the lead hand stays on their jersey
+	if f.balance <= 0.0:
+		_knockdown(o, f)
+		return
+	f.flash_t = maxf(0.0, f.flash_t - delta)
+	f.guard = move_toward(f.guard, 1.0 if f.blocking else 0.0, delta * 12.0)
+	if f.guard > 0.0:
+		f.reach[1] = maxf(f.reach[1], f.guard)
+		if f.grabbing <= 0.0:
+			f.reach[0] = maxf(f.reach[0], f.guard)
 	if f.act == "":
-		if not f.blocking and not f.idle_playing:
-			_play_idle(f)
+		_set_pose(f, "idle")
 		return
 	f.act_t += delta
 	if f.act == "hit":
-		if f.act_t > 0.4:
+		if f.act_t > f.stun:
 			f.act = ""
 		return
 	var m: Dictionary = MOVES[f.act]
-	if not f.landed and f.act_t >= m.windup / f.speed:
+	var contact := _windup(m) / f.rate
+	if not f.landed and f.connects == "" and f.act_t >= contact - 0.1:
+		f.connects = _will_connect(f, f.act)
+	# Steer the punching hand onto the target around contact.
+	if f.connects in ["hit", "block"]:
+		var w := 0.0
+		var t := f.act_t - contact
+		if t < 0.0:
+			w = smoothstep(-0.12, 0.0, t)
+		else:
+			w = 1.0 - smoothstep(0.06, 0.2, t)
+		if f.act == "grab":
+			w = smoothstep(-0.2, 0.0, t)
+		f.reach[m.hand] = maxf(f.reach[m.hand], w)
+	if not f.landed and f.act_t >= contact:
 		f.landed = true
 		_land(f, f.act)
-	if f.act_t >= (m.windup + m.recover) / f.speed:
+	if f.act != "" and f.act != "down" and f.act_t >= _dur(m) / f.rate:
 		f.act = ""
+
+
+## At contact: does the move land, hit the guard, or miss (out of range, slipped)?
+func _will_connect(f: Fighter, move: String) -> String:
+	var o := f.other
+	var m: Dictionary = MOVES[move]
+	if separation() > m.range:
+		return "miss"
+	if move == "hay" and absf(o.lean) > 0.55:
+		return "miss"
+	if move == "jab" and absf(o.lean) > 0.8:
+		return "miss"
+	if o.blocking and move != "grab":
+		return "block"
+	return "hit"
 
 
 func _land(f: Fighter, move: String) -> void:
@@ -368,19 +541,25 @@ func _land(f: Fighter, move: String) -> void:
 	var m: Dictionary = MOVES[move]
 	if o.act == "down":
 		return
-	var at := (f.s.global_position + o.s.global_position) * 0.5 + Vector3.UP * 1.5
-	# A haymaker into a lean whiffs and costs the thrower balance.
-	if move == "hay" and absf(o.lean) > 0.55:
-		f.balance -= 8.0
-		_hud.flash("%s SLIPS IT!" % _name(o.s))
+	var at := _mid() + Vector3.UP * 1.5
+	var how := f.connects if f.connects != "" else _will_connect(f, move)
+	if how == "miss":
+		if separation() > m.range:
+			_hud.flash_for(f, "OUT OF RANGE — STEP IN")
+		else:
+			f.balance -= 6.0 if move == "hay" else 2.0
+			_hud.flash("%s SLIPS IT!" % _name(o.s))
+		Sfx.play("swish" if Sfx.has("swish") else "pad", at, -12.0, 1.4)
 		return
 	if move == "grab":
 		if o.blocking and _rng.randf() < 0.5:
+			_hud.flash_for(f, "GRAB SWATTED AWAY")
 			return
 		f.grabbing = GRAB_TIME
 		o.grabbing = 0.0
 		o.balance -= m.bal
 		_hud.flash("%s GRABS THE JERSEY" % _name(f.s))
+		Sfx.play("pad", at, -6.0, 0.7)
 		return
 	var power := PlayerStats.lerp_stat(f.s.stats.fighting, 0.8, 1.25) / PlayerStats.lerp_stat(o.s.stats.durability, 0.85, 1.15)
 	if f.grabbing > 0.0:
@@ -389,26 +568,36 @@ func _land(f: Fighter, move: String) -> void:
 		power *= 0.7
 	var dmg: float = m.dmg * power
 	var bal: float = m.bal * power
-	if move == "jab" and absf(o.lean) > 0.55:
+	if move == "jab" and absf(o.lean) > 0.4:
 		dmg *= 0.5
-	if o.blocking:
-		dmg *= 0.3
-		bal *= 0.4
-		o.stamina = maxf(0.0, o.stamina - 5.0)
-		Sfx.play("pad", at, -6.0, 1.3)
+	var heavy: bool = move in ["hay", "upper"]
+	if how == "block":
+		dmg *= 0.25
+		bal *= 0.35
+		o.stamina = maxf(0.0, o.stamina - (7.0 if heavy else 3.0))
+		o.vx -= o.toward() * (0.5 if heavy else 0.2)
+		Sfx.play("pad", at, -5.0, 1.2)
+		_hud.flash_for(o, "BLOCKED")
 	else:
-		Sfx.play("punch", at, -2.0 if move == "jab" else 2.0, 1.1 if move == "jab" else 0.9)
+		Sfx.play("punch", at, 2.0 if heavy else -2.0, 0.9 if heavy else 1.1)
 		var grunt := "punch_female" if o.s.body_type == "female" else "punch_male"
 		if move != "jab" or _rng.randf() < 0.4:
 			Sfx.play(grunt, at, -3.0)
-		# Big shots interrupt a windup; jabs just sting.
-		if move != "jab" and o.act in MOVES:
-			o.act = ""
-		if o.act == "":
-			o.act = "hit"
-			o.act_t = 0.0
-			o.s.visual.play_clip(HIT_CLIPS.get(move, "head_hit"), Vector3(0.0, 1.0, 1.0), 0.45, 1.3, 0.04)
-			o.idle_playing = false
+		o.vx -= o.toward() * (1.1 if heavy else 0.45)
+		_shake = maxf(_shake, 0.09 if heavy else 0.035)
+		if heavy:
+			_hitstop(70)
+		# Every clean blow interrupts; the one hit reels for a moment.
+		o.act = "hit"
+		o.act_t = 0.0
+		o.stun = m.stun
+		o.landed = false
+		o.blocking = false
+		o.s.visual.play_clip(HIT_CLIPS.get(move, "head_hit"), FULL, m.stun + 0.3, 1.5, 0.04)
+		o.pose = ""
+		o.flash_t = 0.35
+		if o.grabbing > 0.0 and heavy:
+			o.grabbing = 0.0   # rocked: lets go
 	o.health -= dmg
 	o.balance -= bal
 	f.damage_dealt += dmg
@@ -417,35 +606,48 @@ func _land(f: Fighter, move: String) -> void:
 
 
 func _knockdown(w: Fighter, l: Fighter) -> void:
+	if stage != Stage.FIGHT:
+		return
 	l.act = "down"
 	l.health = maxf(l.health, 0.0)
-	l.s.visual.play_clip("knocked_out", Vector3.ONE, OVER_TIME + 1.0, 1.0, 0.1)
+	l.balance = maxf(l.balance, 0.0)
+	l.grabbing = 0.0
+	l.s.visual.play_clip("knocked_out", FULL, OVER_TIME + 1.0, 1.0, 0.1)
 	w.act = "down"   # done throwing
-	w.s.visual.play_clip("taunt" if _rng.randf() < 0.5 else "fist_pump", Vector3(0.0, 1.0, 1.0), OVER_TIME, 1.0, 0.2)
+	w.grabbing = 0.0
+	w.s.visual.play_clip("taunt" if _rng.randf() < 0.5 else "fist_pump", FULL, OVER_TIME, 1.0, 0.2)
+	_hitstop(140)
+	_shake = 0.14
 	_over(w.s, l.s, "%s DROPS %s!" % [_name(w.s), _name(l.s)])
 
 
 func _decision() -> void:
 	var da := a.damage_dealt
 	var db := b.damage_dealt
+	for f: Fighter in [a, b]:
+		f.grabbing = 0.0
 	if absf(da - db) <= maxf(da, db) * DRAW_MARGIN:
 		for f: Fighter in [a, b]:
 			f.act = "down"
-			f.s.visual.play_clip("dizzy_idle", Vector3(0.0, 1.0, 1.0), OVER_TIME, 1.0, 0.2)
+			f.s.visual.play_clip("dizzy_idle", FULL, OVER_TIME, 1.0, 0.2)
 		_over(null, null, "THE LINESMEN STEP IN — A DRAW")
 		return
 	var w := a if da > db else b
 	var l := w.other
 	w.act = "down"
 	l.act = "down"
-	w.s.visual.play_clip("fist_pump", Vector3(0.0, 1.0, 1.0), OVER_TIME, 1.0, 0.2)
-	l.s.visual.play_clip("dizzy_idle", Vector3(0.0, 1.0, 1.0), OVER_TIME, 1.0, 0.2)
+	w.s.visual.play_clip("fist_pump", FULL, OVER_TIME, 1.0, 0.2)
+	l.s.visual.play_clip("dizzy_idle", FULL, OVER_TIME, 1.0, 0.2)
 	_over(w.s, l.s, "LINESMEN IN — %s TAKES IT ON POINTS" % _name(w.s))
 
 
 func _over(w: Skater, l: Skater, text: String) -> void:
 	winner = w
 	loser = l
+	if OS.has_environment("KH_FIGHT_LOG"):
+		print("[fight] %.1f s  %s  | a hp %.0f/%.0f bal %.0f st %.0f dealt %.0f | b hp %.0f/%.0f bal %.0f st %.0f dealt %.0f" % [
+			TIME_LIMIT - _time_left, text, a.health, a.max_health, a.balance, a.stamina, a.damage_dealt,
+			b.health, b.max_health, b.balance, b.stamina, b.damage_dealt])
 	stage = Stage.OVER
 	_t = 0.0
 	_hud.banner(text)
@@ -457,20 +659,113 @@ func _over(w: Skater, l: Skater, text: String) -> void:
 		Sfx.crowd_react("big_boo" if Sfx.has("big_boo") else "boo", -3.0, 3)
 
 
-func _play_idle(f: Fighter) -> void:
-	f.s.visual.play_clip(IDLE_CLIP, Vector3(0.0, 1.0, 1.0), -1.0, 1.0, 0.12)
-	f.idle_playing = true
-
-
-func _hold_positions(delta: float) -> void:
-	if stage == Stage.PROMPT:
+## Loops the idle bounce (the guard goes up on top of it, by reach).
+func _set_pose(f: Fighter, pose: String) -> void:
+	if f.pose == pose:
 		return
+	f.pose = pose
+	f.s.visual.play_clip(IDLE_CLIP, FULL, -1.0, 1.15, 0.14)
+
+
+func _hitstop(ms: int) -> void:
+	Engine.time_scale = 0.12
+	_hitstop_until = Time.get_ticks_msec() + ms
+
+
+func _mid() -> Vector3:
+	return (a.s.global_position + b.s.global_position) * 0.5
+
+
+func _spot(f: Fighter) -> Vector3:
+	var right := axis.cross(Vector3.UP).normalized()
+	return center + axis * f.x + right * f.lean * LEAN_DIST * -f.side
+
+
+## Gliding along the axis: stick / AI steps, lunges and knockback, the pull of a grab;
+## the pair slowly circles. Then the hands that reach (punches landing, grips).
+func _move(delta: float) -> void:
+	var held := a.grabbing > 0.0 or b.grabbing > 0.0
 	for f: Fighter in [a, b]:
-		f.lean = move_toward(f.lean, f.lean_target, delta * 6.0)
-		var p := f.base + f.right() * f.lean * LEAN_DIST
-		f.s.global_position = p
-		f.s.heading = f.facing
+		var want := f.step * STEP_SPEED * f.toward()
+		if f.act in ["hit", "down"]:
+			want = 0.0
+		if held:
+			want = 0.0
+		f.vx = move_toward(f.vx, want, (7.0 if want != 0.0 else 3.2) * delta)
+		f.x += f.vx * delta
+		f.lean = move_toward(f.lean, f.lean_target, delta * 7.0)
+	# A grip pulls them together; nobody passes through anybody.
+	var sep := separation()
+	if held and sep > GAP_MIN + 0.04:
+		var pull := minf((sep - GAP_MIN) * 3.0 * delta, sep - GAP_MIN)
+		a.x += pull * 0.5
+		b.x -= pull * 0.5
+	sep = separation()
+	if sep < GAP_MIN:
+		var push := (GAP_MIN - sep) * 0.5
+		a.x -= push
+		b.x += push
+		a.vx = minf(a.vx, 0.0)
+		b.vx = maxf(b.vx, 0.0)
+	if sep > GAP_MAX:
+		var pull2 := (sep - GAP_MAX) * 0.5
+		a.x += pull2
+		b.x -= pull2
+	# Keep the pair near its spot (and both off the boards).
+	var mid := (a.x + b.x) * 0.5
+	if absf(mid) > 1.2:
+		var back := (absf(mid) - 1.2) * signf(mid)
+		a.x -= back
+		b.x -= back
+	# Circling a little, so it doesn't look like two posts.
+	if stage != Stage.PROMPT:
+		var ang := _axis_base + sin(_t * 0.35 + 0.4) * 0.3 if stage == Stage.FIGHT else _axis_base
+		axis = Vector3(cos(ang), 0.0, sin(ang))
+	for f: Fighter in [a, b]:
+		var p := _spot(f)
+		var c2 := RinkSpec.clamp_inside(p.x, p.z, 0.8)
+		f.s.global_position = Vector3(c2.x, 0.0, c2.y)
+		f.s.heading = axis * f.toward()
 		f.s.velocity = Vector3.ZERO
+		# Slipping tilts the whole body.
+		f.s.visual.roll_offset = -f.lean * 0.3
+	for f: Fighter in [a, b]:
+		_aim_hands(f)
+
+
+## The reach targets on the other fighter's body for this tick.
+func _aim_hands(f: Fighter) -> void:
+	var rig := f.s.visual.rig
+	var o := f.other
+	var dir := (f.s.global_position - o.s.global_position)
+	dir.y = 0.0
+	dir = dir.normalized() if dir.length() > 0.01 else axis
+	for k in 2:
+		rig.reach_w[k] = f.reach[k]
+		if f.reach[k] <= 0.0:
+			continue
+		var aim := "collar" if (k == 0 and f.grabbing > 0.0) else ""
+		if aim == "" and f.act in MOVES and f.connects in ["hit", "block"]:
+			aim = MOVES[f.act].aim
+		if aim == "" and f.guard > 0.0:
+			aim = "guard"
+		var target: Vector3
+		match aim:
+			"collar":
+				target = o.s.visual.bone_world("Spine2").lerp(o.s.visual.bone_world("Neck"), 0.55) + dir * 0.12
+			"body":
+				target = o.s.visual.bone_world("Spine1") + dir * 0.14
+			"guard":
+				# Fists up in front of their own face, a little apart.
+				var side := dir.cross(Vector3.UP).normalized() * (0.09 if k == 0 else -0.09)
+				target = f.s.visual.bone_world("Head") - dir * 0.24 + side + Vector3.DOWN * 0.06
+			"chin":
+				target = o.s.visual.bone_world("Head") + dir * 0.07 + Vector3.DOWN * 0.08
+			_:
+				target = o.s.visual.bone_world("Head") + dir * 0.1 + Vector3.DOWN * 0.02
+		if f.connects == "block" and not aim in ["collar", "guard"]:
+			target += dir * 0.12   # stopped by the forearms
+		rig.reach_world[k] = target
 
 
 func _name(s: Skater) -> String:
@@ -481,7 +776,7 @@ func _name(s: Skater) -> String:
 
 func _make_camera() -> void:
 	_cam = Camera3D.new()
-	_cam.fov = 48.0
+	_cam.fov = 46.0
 	add_child(_cam)
 	_cam.make_current()
 
@@ -489,25 +784,34 @@ func _make_camera() -> void:
 func _update_camera(delta: float) -> void:
 	if _cam == null:
 		return
-	_cam_angle += delta * 0.12
-	# Side-on to the fighters (who face along X), low, slowly drifting.
-	var base := _camera_side()
-	var side := (base + Vector3(sin(_cam_angle * 0.5) * 0.35, 0.0, 0.0)).normalized()
-	_cam.look_at_from_position(center + side * 4.4 + Vector3.UP * 1.55, center + Vector3.UP * 1.15)
-
-
-## Which side of the fight the camera watches from: toward center ice.
-func _camera_side() -> Vector3:
-	return Vector3.FORWARD if center.z > 0.0 else Vector3.BACK
+	# Side-on to the fighters, low, following the pair as it moves and circles.
+	var perp := axis.cross(Vector3.UP).normalized()
+	if perp.dot(_cam_side) < 0.0:
+		perp = -perp
+	var mid := _mid()
+	mid.y = 0.0
+	var dist := 3.6 + maxf(0.0, separation() - GAP) * 0.8
+	var shake := Vector3.ZERO
+	if _shake > 0.0:
+		shake = Vector3(_rng.randf_range(-1, 1), _rng.randf_range(-1, 1), _rng.randf_range(-1, 1)) * _shake
+		_shake = maxf(0.0, _shake - delta * 0.6)
+	var want := mid + perp * dist + Vector3.UP * 1.5
+	var from := want if _cam_fresh else _cam.global_position.lerp(want, 1.0 - exp(-4.0 * delta))
+	_cam_fresh = false
+	_cam.look_at_from_position(from + shake, mid + Vector3.UP * 1.25 + shake * 0.5)
 
 
 # --- Cleanup -------------------------------------------------------------------------
 
 func _cleanup() -> void:
+	if _hitstop_until > 0:
+		_hitstop_until = 0
+		Engine.time_scale = 1.0
 	for f: Fighter in [a, b]:
 		if is_instance_valid(f.s):
 			f.s.visual.stop_clip(0.2)
 			f.s.visual.set_fight_mode(false)
+			f.s.visual.roll_offset = 0.0
 			f.s.frozen = false
 	for s in _ring:
 		if is_instance_valid(s):
@@ -516,3 +820,8 @@ func _cleanup() -> void:
 		p.queue_free()
 	if _cam:
 		director.cam.make_current()
+
+
+func _exit_tree() -> void:
+	if _hitstop_until > 0:
+		Engine.time_scale = 1.0

@@ -2,7 +2,8 @@ extends Node3D
 ## Close-up character check (M5). Lines up skaters doing different things in front of a
 ## perspective camera.  `-- shot=<png> wait=<s> view=front|side|back|goalie`
 ##   1 standing   2 skating a circle   3 slap-shot windup   4 knocked down
-##   5 celebrating   6 stickhandling the puck   + a goalie behind them
+##   5 celebrating (or `clip=<name>`; `fight=1`: gloves off, fists)   6 stickhandling the puck
+##   + a goalie behind them
 
 const SKATER_SCENE := preload("res://scenes/actors/Skater.tscn")
 const GOALIE_SCENE := preload("res://scenes/actors/Goalie.tscn")
@@ -153,6 +154,8 @@ func _run() -> void:
 		goalie.reset_in_net()
 	await get_tree().create_timer(0.3).timeout
 	skaters[3].visual.play_clip("knocked_down", Vector3.ONE, -1.0, 1.7, 0.08)
+	if _arg("fight", "") != "":   # gloves off, fists (close-ups of the fight look)
+		skaters[4].visual.set_fight_mode(true)
 	if _arg("clip", "") != "":
 		skaters[4].visual.play_clip(_arg("clip", ""), Vector3(float(_arg("legs", "0")), 1, 1), -1.0)
 	else:

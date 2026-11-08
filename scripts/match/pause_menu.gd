@@ -78,7 +78,7 @@ func _build_controls() -> void:
 			grid.add_child(_label(row[k], 19, Color(1.0, 0.9, 0.55), HORIZONTAL_ALIGNMENT_LEFT))
 	_controls.add_child(grid)
 	_controls.add_child(_label("A one-timer: hold shoot while a pass is on its way.  Goalie with the puck: A pass out, X clear, Y cover.", 16, Color(0.75, 0.8, 0.9)))
-	_controls.add_child(_label("Fights — A jab · X haymaker · B grab · RT uppercut (from a grab) · hold Y block · stick: lean / dodge (keyboard: same keys as pass / shoot / check / turbo / deke)", 16, Color(1.0, 0.75, 0.6)))
+	_controls.add_child(_label("Fights — A jab · X haymaker · B grab / break free · RT uppercut (while holding) · hold Y block · stick toward / away: step in / back off · up / down: slip (keyboard: same keys as pass / shoot / check / turbo / deke)", 16, Color(1.0, 0.75, 0.6)))
 	var back := Button.new()
 	back.text = "   Back   "
 	back.add_theme_font_size_override("font_size", 24)

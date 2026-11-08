@@ -65,6 +65,26 @@ func device_name() -> String:
 	return "Keyboard / Pad"
 
 
+## What to press for a button on this device ("pass" -> "A" on a pad, "J" on keyboard 1).
+## Buttons: pass, shoot, check, deke, turbo, protect, backward.
+func button_label(b: String) -> String:
+	if kind == Kind.KB1 or kind == Kind.KB2:
+		var map: Dictionary = KB1 if kind == Kind.KB1 else KB2
+		var keys: Array = map.get(b, [])
+		return OS.get_keycode_string(keys[0]) if not keys.is_empty() else "?"
+	return {"pass": "A", "shoot": "X", "check": "B", "deke": "Y", "turbo": "RT", "protect": "LB", "backward": "LT"}.get(b, "?")
+
+
+## The movement control on this device: [left / right, up / down].
+func move_labels() -> Array:
+	match kind:
+		Kind.KB1:
+			return ["A / D", "W / S"]
+		Kind.KB2:
+			return ["Left / Right", "Up / Down"]
+	return ["Stick left / right", "Stick up / down"]
+
+
 func update(_skater: Skater, i: SkaterIntent, _delta: float) -> void:
 	_poll()
 	i.move = _cur.move

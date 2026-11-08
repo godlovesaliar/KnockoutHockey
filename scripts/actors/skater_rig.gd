@@ -41,6 +41,15 @@ var hand_world: Array[Vector3] = [Vector3.ZERO, Vector3.ZERO]   ## [left, right]
 var elbow_pole: Array[Vector3] = [Vector3(1.0, -0.45, -0.3), Vector3(-1.0, -0.45, -0.3)]
 var grip_spread := 0.46         ## distance between the hands on the stick
 var free_arm := 0.0             ## 0..1: the bottom hand lets go of the stick and swings with the stride
+## Fights: 0..1 curls the fingers into fists (the clips carry no finger tracks).
+var fist := 0.0
+## Fights: per arm [left, right], 0..1 pulls that hand onto `reach_world` after everything
+## else (a punch landing on a face, a hand gripping a jersey), keeping the clip's twist.
+var reach_w: Array[float] = [0.0, 0.0]
+var reach_world: Array[Vector3] = [Vector3.ZERO, Vector3.ZERO]
+## Full-body clips that step (the jab lunges almost a meter): keep the pelvis over the
+## feet's spot, only the clip's height and rotation.
+var lock_root := false
 var _top_lift := 0.0
 
 # --- Outputs (valid after `modification_processed`) ---
@@ -56,6 +65,8 @@ var _b := {}            ## bone name -> index
 var _rest_g := {}       ## index -> rest global Transform3D
 var _rest_l := {}       ## index -> rest local Transform3D
 var _len := {}          ## "leg_l1" etc.
+var _fingers: Array = []   ## [bone, local axis, angle] curled by `fist`
+var _fist_was := false
 
 
 func _cache(sk: Skeleton3D) -> void:
@@ -76,7 +87,64 @@ func _cache(sk: Skeleton3D) -> void:
 		_len[side + "Upper"] = _gpos(side + "Arm").distance_to(_gpos(side + "ForeArm"))
 		_len[side + "Fore"] = _gpos(side + "ForeArm").distance_to(_gpos(side + "Hand"))
 	ankle_height = maxf(_gpos("LeftFoot").y, 0.04)
+	_cache_fingers(sk)
 	_ok = true
+
+
+## Every bone under each hand: fingers fold toward the palm about the knuckle line, the
+## thumb tucks over them. Works for the one-finger "mitten" hands and full Mixamo hands.
+func _cache_fingers(sk: Skeleton3D) -> void:
+	_fingers.clear()
+	for side in ["Left", "Right"]:
+		var hand: int = _b[side + "Hand"]
+		var hp := sk.get_bone_global_rest(hand).origin
+		var kids := []
+		var thumbs := []
+		for i in sk.get_bone_count():
+			var p := sk.get_bone_parent(i)
+			var under := false
+			while p >= 0:
+				if p == hand:
+					under = true
+					break
+				p = sk.get_bone_parent(p)
+			if not under or sk.get_bone_children(i).is_empty():
+				continue   # tips ("_end", "Index4") carry no skin
+			(thumbs if sk.get_bone_name(i).contains("Thumb") else kids).append(i)
+		if kids.is_empty():
+			continue
+		# Finger direction: wrist to the farthest finger joint. Palm faces down in the
+		# T-pose (and down-inward in an A-pose).
+		var tip := hp
+		for i: int in kids:
+			var q := sk.get_bone_global_rest(i).origin
+			if q.distance_to(hp) > tip.distance_to(hp):
+				tip = q
+		var d := (tip - hp).normalized()
+		var palm := Vector3.DOWN - d * d.dot(Vector3.DOWN)
+		palm = palm.normalized() if palm.length() > 0.01 else Vector3.BACK
+		var axis := d.cross(palm).normalized()   # turns the fingers toward the palm
+		# Segments per finger chain (a "base" bone is the palm, barely bends).
+		var segs := 0
+		for i: int in kids:
+			if not sk.get_bone_name(i).contains("Base"):
+				segs += 1
+		var chains := maxi(1, kids.filter(func(i: int) -> bool: return sk.get_bone_parent(i) == hand).size())
+		var per := clampf(240.0 / maxf(1.0, float(segs) / chains), 75.0, 160.0)
+		for i: int in kids:
+			var ang := 25.0 if sk.get_bone_name(i).contains("Base") else per
+			_fingers.append([i, (sk.get_bone_global_rest(i).basis.inverse() * axis).normalized(), deg_to_rad(ang)])
+		for k in thumbs.size():
+			var i: int = thumbs[k]
+			var t_dir := Vector3.ZERO
+			var kid := -1
+			for j in sk.get_bone_count():
+				if sk.get_bone_parent(j) == i:
+					kid = j
+			if kid >= 0:
+				t_dir = (sk.get_bone_global_rest(kid).origin - sk.get_bone_global_rest(i).origin).normalized()
+			var t_axis := t_dir.cross(palm + d * 0.5).normalized() if t_dir != Vector3.ZERO else axis
+			_fingers.append([i, (sk.get_bone_global_rest(i).basis.inverse() * t_axis).normalized(), deg_to_rad(75.0 / thumbs.size())])
 
 
 func _gpos(n: String) -> Vector3:
@@ -103,6 +171,9 @@ func _process_modification_with_delta(_delta: float) -> void:
 	var hips_proc := Transform3D(
 			Basis(Vector3.UP, hips_yaw) * Basis(Vector3.RIGHT, lean * 0.3) * hips_rest.basis,
 			hips_rest.origin + Vector3(0, -hips_drop, 0) + hips_shift)
+	if lock_root:
+		var hp0 := sk.get_bone_pose_position(hi)
+		sk.set_bone_pose_position(hi, Vector3(hips_rest.origin.x, hp0.y, hips_rest.origin.z))
 	var hips := _blend_local(sk, hi, hips_proc, w_legs, true)
 	var gl := {hi: hips}   # bone -> final global this frame
 
@@ -218,12 +289,56 @@ func _process_modification_with_delta(_delta: float) -> void:
 		var g_hand := g_fore_f * _pose_local(sk, hand_i)
 		hand_out[s] = g_hand.origin
 
+	for k in 2:
+		if reach_w[k] > 0.001:
+			hand_out[k] = _reach(sk, gl, k, to_skel * reach_world[k], clampf(reach_w[k], 0.0, 1.0))
+	if fist > 0.001 or _fist_was:
+		for f: Array in _fingers:
+			var i: int = f[0]
+			var r: Transform3D = sk.get_bone_rest(i)
+			sk.set_bone_pose_rotation(i, r.basis.get_rotation_quaternion() * Quaternion(f[1], f[2] * fist))
+		_fist_was = fist > 0.001
+
 	var to_world := sk.global_transform
 	left_hand_world = to_world * hand_out[0]
 	right_hand_world = to_world * hand_out[1]
 	top_hand_world = to_world * hand_out[first]
 	var dir := (blade - hand_out[first]).normalized()
 	stick_top_world = to_world * (hand_out[first] - dir * 0.1)
+
+
+## Pulls arm k (0 left, 1 right) so its hand moves `w` of the way to `target` (skeleton
+## space): two-bone IK from the shoulder, bending the way the elbow already bends, each
+## bone turned the shortest way so the clip's twist stays. Returns the hand position.
+func _reach(sk: Skeleton3D, gl: Dictionary, k: int, target: Vector3, w: float) -> Vector3:
+	var side := "Left" if k == 0 else "Right"
+	var arm_i: int = _b[side + "Arm"]
+	var fore_i: int = _b[side + "ForeArm"]
+	var hand_i: int = _b[side + "Hand"]
+	var g_sh := _gpose(sk, sk.get_bone_parent(arm_i), gl)
+	var g_arm := g_sh * _pose_local(sk, arm_i)
+	var g_fore := g_arm * _pose_local(sk, fore_i)
+	var g_hand := g_fore * _pose_local(sk, hand_i)
+	var shoulder := g_arm.origin
+	var elbow := g_fore.origin
+	var hand := g_hand.origin
+	var goal := hand.lerp(target, w)
+	var pole := elbow - (shoulder + hand) * 0.5
+	if pole.length_squared() < 1e-5:
+		pole = elbow_pole[k]
+	var r := _two_bone(shoulder, goal, pole, _len[side + "Upper"], _len[side + "Fore"])
+	var new_elbow: Vector3 = r[0]
+	var new_hand: Vector3 = r[1]
+	var q_arm := Quaternion((elbow - shoulder).normalized(), (new_elbow - shoulder).normalized())
+	var g_arm2 := Transform3D(Basis(q_arm) * g_arm.basis, shoulder)
+	sk.set_bone_pose_rotation(arm_i, (g_sh.basis.inverse() * g_arm2.basis).get_rotation_quaternion())
+	var g_fore2 := g_arm2 * _pose_local(sk, fore_i)
+	# The forearm's direction after the upper arm turned, then turned onto the new hand.
+	var cur_dir := (g_arm2 * _pose_local(sk, fore_i) * _pose_local(sk, hand_i)).origin - g_fore2.origin
+	var q_fore := Quaternion(cur_dir.normalized(), (new_hand - new_elbow).normalized())
+	var g_fore3 := Transform3D(Basis(q_fore) * g_fore2.basis, g_fore2.origin)
+	sk.set_bone_pose_rotation(fore_i, (g_arm2.basis.inverse() * g_fore3.basis).get_rotation_quaternion())
+	return new_hand
 
 
 ## Global pose of bone i this frame: final if the rig already set it, otherwise built
