@@ -70,13 +70,24 @@ func update(s: Skater, i: SkaterIntent, delta: float) -> void:
 
 func _arrive(s: Skater, i: SkaterIntent, target: Vector3, slow_radius: float) -> void:
 	var c := RinkSpec.clamp_inside(target.x, target.z, 1.0)
-	var to := Vector3(c.x, 0.0, c.y) - s.global_position
-	to.y = 0.0
-	var d := to.length()
+	var goal := Vector3(c.x, 0.0, c.y)
+	var d := Vector2(goal.x - s.global_position.x, goal.z - s.global_position.z).length()
 	if d < 0.4:
 		return
-	i.move = to / d * clampf(d / slow_radius, 0.25, 1.0)
+	var to := _route(s, goal) - s.global_position
+	to.y = 0.0
+	i.move = to.normalized() * clampf(d / slow_radius, 0.25, 1.0)
 	i.turbo = d > 12.0 and s.stamina > 0.5
+
+
+## Where to head for `target` without skating through a net: the target, or the corner
+## of a net that's in the way.
+func _route(s: Skater, target: Vector3) -> Vector3:
+	if s.rink == null:
+		return target
+	for net in s.rink.nets:
+		target = net.detour(s.global_position, target, 0.35)
+	return target
 
 
 func _chase(s: Skater, i: SkaterIntent) -> void:
@@ -85,7 +96,7 @@ func _chase(s: Skater, i: SkaterIntent) -> void:
 	var t := minf(d / maxf(s.top_speed(), 1.0), 1.0)
 	var target := puck.global_position + puck.velocity * t * 0.7
 	var c := RinkSpec.clamp_inside(target.x, target.z, 0.5)
-	var to := Vector3(c.x, 0.0, c.y) - s.global_position
+	var to := _route(s, Vector3(c.x, 0.0, c.y)) - s.global_position
 	to.y = 0.0
 	if to.length() > 0.05:
 		i.move = to.normalized()
@@ -111,7 +122,7 @@ func _carry(s: Skater, i: SkaterIntent, think: bool) -> void:
 	var to_net := net.global_position - s.global_position
 	to_net.y = 0.0
 	var dist := to_net.length()
-	var target := net.global_position + out * (2.5 if dist < 9.0 else 6.0)
+	var target := _route(s, net.global_position + out * (2.5 if dist < 9.0 else 6.0))
 	var desired := (target - s.global_position)
 	desired.y = 0.0
 	desired = desired.normalized()
@@ -210,7 +221,9 @@ func _pressure(s: Skater, i: SkaterIntent, think: bool) -> void:
 	to.y = 0.0
 	var d := to.length()
 	if d > 0.05:
-		i.move = to / d
+		var way := _route(s, target) - s.global_position
+		way.y = 0.0
+		i.move = way.normalized() if way.length() > 0.05 else to / d
 	i.turbo = d > 6.0 and s.stamina > 0.3
 	if not think:
 		return

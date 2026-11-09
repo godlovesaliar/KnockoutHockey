@@ -138,6 +138,9 @@ func _move_goalie(delta: float) -> void:
 			var t := maxf(0.0, (pl.z - gl.z) / -vl.z)
 			target = Vector3(clampf(pl.x + vl.x * t, -1.4, 1.4), 0.0, gl.z)
 			speed = PlayerStats.lerp_stat(stats.positioning, 5.0, 8.0)
+	# Never behind the goal line: from there the net is in the way. A puck sitting on the
+	# line or just in the net is still in reach (`_try_cover`) from out front.
+	target.z = maxf(target.z, 0.3)
 	var to := net.to_global(target) - global_position
 	to.y = 0.0
 	velocity = to / delta if to.length() < speed * delta else to.normalized() * speed

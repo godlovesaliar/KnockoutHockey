@@ -51,6 +51,83 @@ func _physics_process(_delta: float) -> void:
 	_prev_local = lp
 
 
+## Steering around the net. Returns where a body of `radius` at `from` should head next to
+## reach `to` without going through this net: `to` itself when the way is clear, else the
+## best corner of the net's footprint (grown by the radius). A `to` inside the footprint
+## (a puck in the net) is moved out to the nearest side first.
+func detour(from: Vector3, to: Vector3, radius: float) -> Vector3:
+	var hx := RinkSpec.NET_WIDTH * 0.5 + RinkSpec.POST_RADIUS * 2.0
+	var d := RinkSpec.NET_DEPTH
+	var f := to_local(from)
+	var t := to_local(to)
+	var f2 := Vector2(f.x, f.z)
+	var t2 := Vector2(t.x, t.z)
+	# How much room we can ask for: less when we're already up against the net.
+	var c := minf(radius + 0.15, _box_dist(f2, hx, d) - 0.02)
+	if c <= 0.0:
+		return to # inside the frame itself (shouldn't happen): don't fight it
+	var lo := Vector2(-hx - c, -d - c)
+	var hi := Vector2(hx + c, c)
+	if t2.x > lo.x and t2.x < hi.x and t2.y > lo.y and t2.y < hi.y:
+		# Out to the nearest side of the footprint.
+		var gaps := [t2.x - lo.x, hi.x - t2.x, t2.y - lo.y, hi.y - t2.y]
+		var k: int = gaps.find(gaps.min())
+		match k:
+			0: t2.x = lo.x - 0.05
+			1: t2.x = hi.x + 0.05
+			2: t2.y = lo.y - 0.05
+			_: t2.y = hi.y + 0.05
+		to = to_global(Vector3(t2.x, t.y, t2.y))
+	if not _seg_hits_box(f2, t2, lo, hi):
+		return to
+	var best := to
+	var best_cost := INF
+	for corner in [lo, Vector2(hi.x, lo.y), hi, Vector2(lo.x, hi.y)]:
+		# Aim a little past the corner so we round it instead of stopping on it.
+		var p: Vector2 = corner + (corner - (lo + hi) * 0.5).normalized() * 0.25
+		if _seg_hits_box(f2, p, lo, hi):
+			continue
+		var cost := f2.distance_to(p) + p.distance_to(t2)
+		if _seg_hits_box(p, t2, lo, hi):
+			cost += 3.0 # one more corner to go round
+		if cost < best_cost:
+			best_cost = cost
+			best = to_global(Vector3(p.x, 0.0, p.y))
+	best.y = from.y
+	return best
+
+
+## Distance from a local (x, z) point to the net's frame footprint (0 inside).
+static func _box_dist(p: Vector2, hx: float, d: float) -> float:
+	var qx := maxf(absf(p.x) - hx, 0.0)
+	var qz := maxf(maxf(p.y, -d - p.y), 0.0)
+	return Vector2(qx, qz).length()
+
+
+## Whether the segment a-b passes through the inside of the box (lo, hi) (2D slab test).
+static func _seg_hits_box(a: Vector2, b: Vector2, lo: Vector2, hi: Vector2) -> bool:
+	var e := 0.03 # grazing an edge or corner doesn't count
+	lo += Vector2(e, e)
+	hi -= Vector2(e, e)
+	var dir := b - a
+	var t0 := 0.0
+	var t1 := 1.0
+	for axis in 2:
+		var o: float = a[axis]
+		var v: float = dir[axis]
+		if absf(v) < 1e-6:
+			if o <= lo[axis] or o >= hi[axis]:
+				return false
+			continue
+		var ta := (lo[axis] - o) / v
+		var tb := (hi[axis] - o) / v
+		t0 = maxf(t0, minf(ta, tb))
+		t1 = minf(t1, maxf(ta, tb))
+		if t0 >= t1:
+			return false
+	return true
+
+
 func _build_frame() -> void:
 	var w := RinkSpec.NET_WIDTH
 	var h := RinkSpec.NET_HEIGHT
