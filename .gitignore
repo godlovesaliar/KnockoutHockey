@@ -2,3 +2,7 @@
 /android/
 *.tmp
 /screenshots/
+
+# Local test models and old roster backups
+/assets/fortest/
+/data/knockout_hockey_rostersold.*

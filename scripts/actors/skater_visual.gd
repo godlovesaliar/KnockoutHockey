@@ -53,7 +53,6 @@ var shaft: MeshInstance3D
 var blade: MeshInstance3D
 var ring: MeshInstance3D
 var marker: MeshInstance3D
-var charge_bar: MeshInstance3D
 var spray: CPUParticles3D
 
 var _yaw := 0.0
@@ -81,7 +80,7 @@ var _free_arm := 0.0
 var _blade := Vector3.ZERO        ## blade position relative to the skater
 var _marker_on := false
 var _tag: Label3D
-var _ring_mat: ShaderMaterial    ## the ring's sprint (outer) and legs (inner) meters
+var _ring_mat: ShaderMaterial    ## the ring's sprint (outer), legs (inner) and slap-shot (middle) meters
 var _name_tag: Label3D           ## the controlled player's number and name, above the P tag
 var _prev_state := -1
 var _was_stopping := false
@@ -978,18 +977,6 @@ func _build_markers() -> void:
 	marker = _add_mesh(self, _torus(0.42, 0.5), _unshaded(Color(1, 1, 1, 0.8)), Vector3(0, 0.02, 0))
 	marker.visible = false
 
-	charge_bar = MeshInstance3D.new()
-	var quad := QuadMesh.new()
-	quad.size = Vector2(0.9, 0.09)
-	charge_bar.mesh = quad
-	var bar_mat := _unshaded(Color(1.0, 0.45, 0.1))
-	bar_mat.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
-	bar_mat.no_depth_test = true
-	charge_bar.material_override = bar_mat
-	charge_bar.position = Vector3(0, 2.3, 0)
-	charge_bar.visible = false
-	add_child(charge_bar)
-
 	spray = CPUParticles3D.new()
 	spray.amount = 48
 	spray.lifetime = 0.45
@@ -1031,7 +1018,7 @@ func _build_markers() -> void:
 	_name_tag.position = Vector3(0, 2.8, 0)
 	_name_tag.visible = false
 	add_child(_name_tag)
-	for n in [shaft, blade, ring, marker, charge_bar, spray, _tag, _name_tag]:
+	for n in [shaft, blade, ring, marker, spray, _tag, _name_tag]:
 		n.physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_OFF
 
 
@@ -1208,10 +1195,6 @@ func _process(delta: float) -> void:
 	_update_stick(delta)
 	_update_human_tag()
 	marker.visible = _marker_on
-	var loading := skater.state == Skater.State.WINDUP and skater.windup_time > Skater.WRIST_WINDOW
-	charge_bar.visible = loading
-	if loading:
-		charge_bar.scale = Vector3(maxf(0.05, skater.shot_charge), 1, 1)
 	spray.emitting = skater.stopping
 	spray.position = skater.heading * 0.2 + Vector3(0, 0.05, 0)
 
@@ -1328,6 +1311,7 @@ func _pose(delta: float) -> void:
 ## "P1".."P4" tag, number and name, and the ring for human-controlled skaters. The ring is
 ## two meters: sprint (stamina) as the wide outer arc, green through yellow to red, and legs
 ## (shift energy) as the thin blue arc inside it. Both drain back toward the top of the screen.
+## While a slap shot is held, the middle fills orange from the center until it's fully charged.
 func _update_human_tag() -> void:
 	ring.visible = skater.is_human
 	var show_tag := skater.is_human and skater.human_index >= 0
@@ -1339,6 +1323,8 @@ func _update_human_tag() -> void:
 		# Sprint used up: the track pulses red until it's back (Skater unlocks turbo at 25%).
 		var locked: bool = skater._turbo_locked
 		_ring_mat.set_shader_parameter("flash", (0.5 + 0.5 * sin(Time.get_ticks_msec() * 0.012)) if locked else 0.0)
+		var loading := skater.state == Skater.State.WINDUP and skater.windup_time > Skater.WRIST_WINDOW
+		_ring_mat.set_shader_parameter("charge", maxf(0.05, skater.shot_charge) if loading else 0.0)
 	if _tag:
 		_tag.visible = show_tag
 	if _name_tag:

@@ -28,6 +28,10 @@ OUT = os.path.join(SRC, "cut")
 INTRO_DIR = os.path.join(SRC, "intro")
 INTRO_SPLIT_FROM = 1.9     # the split is searched between here...
 INTRO_SPLIT_TO_END = 1.2   # ...and this long before the end (seconds)
+# Intros whose quietest moment isn't the one before "and the" (seconds into the intro):
+INTRO_SPLIT_AT = {
+    "armadillos": 2.83,   # the search lands between "and" and "the"
+}
 
 # name: [(source, start s, length s, peak dB), ...]
 CLIPS = {
@@ -160,6 +164,7 @@ def cut_intros(ff):
         team = m.group(1)
         path = os.path.join(INTRO_DIR, f)
         split, dur = intro_split(ff, path)
+        split = INTRO_SPLIT_AT.get(team, split)
         gain = -1 - peak_db(ff, path, 0, dur)
         for part, start, length in (("home", 0.0, split), ("away", split, dur - split)):
             out = os.path.join(OUT, "intro_%s_%s_0.ogg" % (part, team))
