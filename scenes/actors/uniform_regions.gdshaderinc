@@ -61,7 +61,10 @@ void uniform_regions_full(vec4 c, vec2 u, out vec4 part, out float skates, out f
 		c.r * torso_pants + c.b * leg_pants,
 		c.b * (1.0 - leg_pants),
 		c.a);
-	skates = u.x;
+	// UV2.x: 1 = foot (skates); negative = the modelled jersey (tools/build_characters.gd,
+	// _jersey): -0.25 its cloth, -1 its collar and laces, drawn in the trim color.
+	skates = max(u.x, 0.0);
+	float collar = smoothstep(0.5, 0.75, -u.x);
 	// Stripes only where a triangle belongs to one part: across a part boundary (armpit,
 	// shoulder) the position blends between the parts' scales and would sweep through
 	// a stripe's range, drawing slivers.
@@ -70,8 +73,8 @@ void uniform_regions_full(vec4 c, vec2 u, out vec4 part, out float skates, out f
 	vec2 sleeve = region_stripes(f, sleeve_band, sleeve_stripes) * pure.g;
 	vec2 sock = region_stripes(f, sock_band, sock_stripes) * pure.b * (1.0 - leg_pants);
 	float cuff = pure.g * (1.0 - region_below(f, cuff_start));
-	trim = clamp(hem.x + sleeve.x + sock.x + cuff, 0.0, 1.0);
-	accent = alternate ? clamp(hem.y + sleeve.y + sock.y, 0.0, 1.0) : 0.0;
+	trim = clamp(hem.x + sleeve.x + sock.x + cuff + collar, 0.0, 1.0);
+	accent = alternate ? clamp(hem.y + sleeve.y + sock.y, 0.0, 1.0) * (1.0 - collar) : 0.0;
 }
 
 void uniform_regions(vec4 c, vec2 u, out vec4 part, out float skates, out float trim) {

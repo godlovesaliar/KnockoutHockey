@@ -4,16 +4,31 @@ extends SkaterVisual
 ## Wide crouched stance, butterfly drop on low shots, glove / blocker reach on saves,
 ## stick paddle flat on the ice in front of the pads.
 
-## Mask models (tools/build_gear.gd), picked by Skater.gear_style. fit = mask height /
-## head height; raise = above the head's center, in head heights; fwd = ahead of it, in
-## head depths.
+## Mask models (tools/build_gear.gd), picked by Skater.gear_style. Fitted to the face:
+## eye = where the eyes sit in the mask model's coordinates, crown = from there up to the
+## top of the head (model units), both measured on the male body where the masks were
+## tuned. Bodies without eyes fall back to the head box: fit = mask height / head height,
+## raise = above the head's center in head heights, fwd = ahead of it in head depths.
 const MASKS := [
-	{"mesh": preload("res://assets/characters/goalie_mask.res"), "fit": 1.3, "raise": 0.06, "fwd": 0.06},
-	{"mesh": preload("res://assets/characters/goalie_mask_b.res"), "fit": 1.3, "raise": 0.08, "fwd": 0.03},
+	{"mesh": preload("res://assets/characters/goalie_mask.res"), "eye": Vector3(0, 0.0115, 0.085), "crown": 0.168,
+		"fit": 1.3, "raise": 0.06, "fwd": 0.06},
+	{"mesh": preload("res://assets/characters/goalie_mask_b.res"), "eye": Vector3(0, 0.0023, 0.0646), "crown": 0.114,
+		"fit": 1.3, "raise": 0.08, "fwd": 0.03},
 ]
 
 const GOALIE_STICK_MESH := preload("res://assets/characters/goalie_stick.res")
-const CATCHER_MESH := preload("res://assets/characters/catcher.res")
+## Goalie trapper (tools/blender/goalie_gear.py): origin at the hand, +Y on along the
+## forearm's line (the cuff back up the wrist), pocket +Z, thumb -X.
+const CATCHER_MESH := preload("res://assets/characters/goalie_catcher.res")
+## Modeled pads (tools/blender/goalie_gear.py), sized for a 1.8 m body. Pad: a left pad,
+## origin at the ankle, +Y up the shin (0.42 m to the knee), +Z forward, +X outward (the
+## right one is mirrored). Thigh rise: the same from the knee, on up the shin's line. Blocker: in the
+## right hand's limb frame, origin at the wrist, board on +Z.
+const PAD_MESH := preload("res://assets/characters/goalie_pad.res")
+const BOOT_MESH := preload("res://assets/characters/goalie_boot.res")    ## the pad's boot: same frame, rides the foot
+const THIGH_MESH := preload("res://assets/characters/goalie_thigh.res")
+const BLOCKER_MESH := preload("res://assets/characters/blocker.res")
+const PAD_SHIN := 0.42
 
 var goalie: Goalie
 var _drop := 0.0
@@ -26,16 +41,22 @@ func build(sk: Skater) -> void:
 
 func _build_gear() -> void:
 	var c := team_colors()
-	var white := MeshUtil.material(Color(0.93, 0.93, 0.9), 0.55)
-	var trim := MeshUtil.material(c.jersey, 0.6)
-	var jersey := MeshUtil.material(c.jersey, 0.8)
 	var head := anchor_box("head", "Head", Vector3(0.2, 0.25, 0.22) * hs)
 	# Goalie mask model (tools/build_gear.gd): covers the whole head, cage in front.
 	var mspec: Dictionary = MASKS[skater.gear_style % MASKS.size()]
 	var mmesh: Mesh = mspec.mesh
 	var fit: float = head.size.y * mspec.fit / mmesh.get_aabb().size.y
-	var mm := attach("Head", mmesh, null, head.get_center() + Vector3(0, head.size.y * mspec.raise, head.size.z * mspec.fwd), Basis.from_scale(Vector3.ONE * fit))
+	var at := head.get_center() + Vector3(0, head.size.y * mspec.raise, head.size.z * mspec.fwd)
+	var eyes := skel.get_node_or_null("Eyes") as MeshInstance3D
+	if eyes != null:
+		# Eye opening on the eyes, sized by eyes-to-crown: the head box alone put the mask
+		# too high and too small on the female body.
+		var e := eyes.mesh.get_aabb().get_center()
+		fit = (head.end.y - e.y) / float(mspec.crown)
+		at = Vector3(head.get_center().x, e.y, e.z) - (mspec.eye as Vector3) * fit
+	var mm := attach("Head", mmesh, null, at, Basis.from_scale(Vector3.ONE * fit))
 	mm.material_override = null
+	mm.name = "Helmet"   # as the skater's helmet: tools and views find the head gear by name
 	var shell := MeshUtil.material(c.jersey.lerp(Color.WHITE, 0.15), 0.35)
 	shell.cull_mode = BaseMaterial3D.CULL_DISABLED
 	var cage := MeshUtil.material(Color(0.12, 0.12, 0.13), 0.3)
@@ -45,42 +66,68 @@ func _build_gear() -> void:
 	var chest := anchor_box("chest", "Spine2", Vector3(0.36, 0.2, 0.24) * hs)
 	var cc := chest.get_center()
 	var cr := Vector3(maxf(chest.size.x * 0.75, 0.3 * hs), 0.2 * hs, maxf(chest.size.z * 0.75, 0.2 * hs))
-	var cloth := uniform_material(c)   # chest, belly and hip bulk: same uniform as the cloth layer
-	attach("Spine2", _cloth_mesh(_sphere(), cc, Basis.from_scale(cr)), cloth, cc, Basis.from_scale(cr))
+	var cloth := uniform_material(c)   # hip bulk: same uniform as the cloth layer
+	# The goalie cut of the jersey (room for a chest protector and arm pads) instead of
+	# the skater's; bodies without one get chest and belly bulk under the skater jersey.
+	var goalie_jersey := skel.get_node_or_null("Outfit_GoalieJersey") as MeshInstance3D
+	if goalie_jersey != null:
+		goalie_jersey.visible = true
+		var skater_jersey := skel.get_node_or_null("Outfit_Jersey") as MeshInstance3D
+		if skater_jersey != null:
+			skater_jersey.visible = false
 	var hips := anchor_box("hips", "Hips", Vector3(0.34, 0.2, 0.24) * hs)
 	var hipc := hips.get_center()
-	var belly_at := Vector3(hipc.x, lerpf(hipc.y, cc.y, 0.5), lerpf(hipc.z, cc.z, 0.5) + 0.03 * hs)
-	var belly_b := Basis.from_scale(Vector3(0.22, 0.16, 0.17) * hs)
-	attach("Spine", _cloth_mesh(_sphere(), belly_at, belly_b), cloth, belly_at, belly_b)
+	if goalie_jersey == null:
+		attach("Spine2", _cloth_mesh(_sphere(), cc, Basis.from_scale(cr)), cloth, cc, Basis.from_scale(cr))
+		var belly_at := Vector3(hipc.x, lerpf(hipc.y, cc.y, 0.5), lerpf(hipc.z, cc.z, 0.5) + 0.03 * hs)
+		var belly_b := Basis.from_scale(Vector3(0.22, 0.16, 0.17) * hs)
+		attach("Spine", _cloth_mesh(_sphere(), belly_at, belly_b), cloth, belly_at, belly_b)
 	var hips_at := hipc - Vector3(0, 0.07 * hs, 0)
 	var hips_b := Basis.from_scale(Vector3(maxf(hips.size.x * 0.62, 0.23 * hs), 0.18 * hs, maxf(hips.size.z * 0.7, 0.17 * hs)))
 	attach("Hips", _cloth_mesh(_sphere(), hips_at, hips_b), cloth, hips_at, hips_b)
+	# Under the pads the legs are knee guards and pants, not socks: whatever shows between
+	# the pads (the knees in the butterfly) is drawn in the pants color.
+	for mi: MeshInstance3D in skel.find_children("Outfit_*", "MeshInstance3D", false, false):
+		var m := (mi.material_override as ShaderMaterial).duplicate() as ShaderMaterial
+		m.set_shader_parameter("pants_leg", 1.0)
+		mi.material_override = m
+	# Leg pads and thigh rises: white with the team color on the rolls and knee stack, grey
+	# leather landing pads inside (glove.gdshader, like the skater gloves).
+	var pad_mat := glove_material(Color(0.93, 0.93, 0.9), c.jersey)
 	for side in ["Left", "Right"]:
-		var hip := bone_pos(side + "UpLeg")
 		var knee := bone_pos(side + "Leg")
 		var ankle := bone_pos(side + "Foot")
-		var out := Vector3(0.006 if side == "Left" else -0.006, 0, 0)
-		var shin := knee.distance_to(ankle) / 0.42
-		attach(side + "Leg", _box(Vector3(0.26 * hs, 0.66 * shin, 0.2 * hs)), white, knee.lerp(ankle, 0.37) + out + Vector3(0, 0, 0.08 * hs))
-		attach(side + "Leg", _box(Vector3(0.27 * hs, 0.06 * shin, 0.21 * hs)), trim, knee.lerp(ankle, 0.06) + out + Vector3(0, 0, 0.08 * hs))
-		attach(side + "UpLeg", _box(Vector3(0.22, 0.22, 0.16) * hs), white, hip.lerp(knee, 0.52) + Vector3(0, 0, 0.07 * hs))
-	# Catcher on the left hand (the baseball-glove model: fingers along the hand frame's
-	# -X, pocket along its +Z, which faces the shooter in the ready pose); blocker on the
-	# right (boxes: across, along, depth).
+		var shin := knee.distance_to(ankle) / PAD_SHIN
+		var mirror := 1.0 if side == "Left" else -1.0
+		attach(side + "Leg", PAD_MESH, pad_mat, ankle, _pad_basis(knee - ankle, mirror) * Basis.from_scale(Vector3(hs, shin, hs))).name = side + "Pad"
+		# The boot rides the foot, so the skate under it can flex without poking through.
+		attach(side + "Foot", BOOT_MESH, pad_mat, ankle, _pad_basis(knee - ankle, mirror) * Basis.from_scale(Vector3.ONE * hs)).name = side + "PadBoot"
+		# The thigh rise stands up from the pad in line with the shin (rigid with it, as on
+		# real pads): riding the thigh, it opened a gap over the knee in the crouch.
+		attach(side + "Leg", THIGH_MESH, pad_mat, knee, _pad_basis(knee - ankle, mirror) * Basis.from_scale(Vector3.ONE * hs))
+	# Catcher on the left hand (pocket along the hand frame's +Z, which faces the shooter
+	# in the ready pose); blocker on the right. Both white with team-color trim, like the pads.
 	var lh := bone_pos("LeftHand")
 	var ld := (lh - bone_pos("LeftForeArm")).normalized()
 	var lf := limb_frame("LeftForeArm", "LeftHand")
-	var catcher := MeshUtil.material(c.jersey, 0.6)
-	catcher.cull_mode = BaseMaterial3D.CULL_DISABLED
-	attach("LeftHand", CATCHER_MESH, catcher, lh + ld * 0.02 * hs, Basis(lf.y, -lf.x, lf.z) * Basis.from_scale(Vector3.ONE * hs))
+	attach("LeftHand", CATCHER_MESH, pad_mat, lh + ld * 0.02 * hs, lf * Basis.from_scale(Vector3.ONE * hs))
 	var rh := bone_pos("RightHand")
-	var rd := (rh - bone_pos("RightForeArm")).normalized()
 	var rf := limb_frame("RightForeArm", "RightHand")
-	attach("RightHand", _box(Vector3(0.11, 0.18, 0.11) * hs), trim, rh + rd * 0.062 * hs, rf)
-	attach("RightHand", _box(Vector3(0.38, 0.28, 0.04) * hs), white, rh + rd * 0.062 * hs + rf.z * 0.11 * hs, rf)
+	attach("RightHand", BLOCKER_MESH, pad_mat, rh, rf * Basis.from_scale(Vector3.ONE * hs))
+	# The body's own fingers would poke out of the blocker and catcher: fold them away.
+	rig.hide_fingers = true
 	add_skates(c)
 	_add_number(cc + Vector3(0, (-0.02 - number_drop(c)) * hs, -cr.z), NUMBER_HEIGHT * 1.1 * hs)
-	_add_crest(cc + Vector3(0, -0.06 * hs, cr.z), CREST_WIDTH * 1.15 * hs)
+	# (lower under the goalie jersey's laced collar, as on the skaters)
+	_add_crest(cc + Vector3(0, (-0.13 if goalie_jersey != null else -0.06) * hs, cr.z), CREST_WIDTH * 1.1 * hs)
+
+
+## Frame for a pad model: +Y along `up` (rest pose), +Z forward, +X outward for the left
+## leg; mirror -1 flips X for the right one.
+static func _pad_basis(up: Vector3, mirror: float) -> Basis:
+	var y := up.normalized()
+	var z := (Vector3.BACK - y * y.dot(Vector3.BACK)).normalized()
+	return Basis(y.cross(z) * mirror, y, z)
 
 
 ## Goalie stick model (tools/build_gear.gd): body, grip, blade tape.

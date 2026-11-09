@@ -160,9 +160,22 @@ static func make_skater(root: Node3D, arena: Dictionary, team: int, opponent: in
 	s.rink = arena.rink
 	s.fatigue_enabled = false
 	s.body_type = "female" if who.get("gender", "") == "Female" else "male"
-	s.skin_tone = SkaterVisual.SKIN_TONES[hash(str(who.get("last", "")) + str(team)) % SkaterVisual.SKIN_TONES.size()]
+	# Same looks as in a game for roster players (see MatchDirector).
+	var look := RandomNumberGenerator.new()
+	look.seed = hash("%s %s %s" % [Teams.team(team).abbr, who.get("first", ""), who.get("last", "")])
+	s.skin_tone = SkaterVisual.SKIN_TONES[look.randi() % SkaterVisual.SKIN_TONES.size()]
+	s.gear_style = look.randi() % 2
+	var hair := SkaterVisual.random_look(look, s.body_type, s.skin_tone)
+	s.hair_style = hair.hair_style
+	s.facial_hair = hair.facial_hair
+	s.hair_color = hair.hair_color
+	s.eye_color = hair.eye_color
 	root.add_child(s)
 	s.brain = ScriptBrain.new(func(_s: Skater, _i: SkaterIntent, _t: float) -> void: pass)
+	# Menu players are posing for the camera: eyes on it, a word or a smirk now and then.
+	if s.visual != null and s.visual.face != null:
+		s.visual.face.look_at_camera = true
+		s.visual.face.chatty = true
 	s.teammates = [s]
 	return s
 

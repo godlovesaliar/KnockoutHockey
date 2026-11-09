@@ -1,6 +1,6 @@
 extends SceneTree
 ## Offline build step for equipment models:
-##   godot --headless --path . -s res://tools/build_gear.gd [-- only=helmet|mask|stick|goalie_stick|skate|glove|catcher]
+##   godot --headless --path . -s res://tools/build_gear.gd [-- only=helmet|mask|stick|goalie_stick|skate|glove|catcher|goalie_gear]
 ##
 ## Source models (assets/equip/, credits in assets/CREDITS.md) become plain meshes in
 ## meters, with their textures dropped (they carry real team and brand logos) and
@@ -38,18 +38,36 @@ const STICK_SHAFT := 1.45        ## heel to butt end, meters
 const GOALIE_STICK_SRC := EQUIP + "ccm_premier_goaliestick.blend"
 const GOALIE_STICK_NODES := ["Cube", "Cube_002"]   ## the rest of the .blend is a display scene
 const GOALIE_STICK_SHAFT := 1.4
-const SKATE_SRC := EQUIP + "ice-hockey-skate/source/IceHockey_Skate.fbx"
-const SKATE_LENGTH := 0.31
-const SKATE_TRIS := 1800
-const SKATE_STEEL := 0.028       ## the runner: everything this close to the bottom
-const GLOVE_SRC := EQUIP + "glove.glb"   ## a long-cuff leather gauntlet, fingers flat
-const GLOVE_LENGTH := 0.36       ## cuff to fingertips before curling, meters
-const GLOVE_KNUCKLE := 0.27      ## fingers bend from here down from the tips (fraction of length)
-const GLOVE_WRIST := 0.48        ## the wrist (model origin), from the tips (fraction of length)
-const GLOVE_THUMB_X := -0.29     ## the thumb: left of this (fraction of width from center)...
-const GLOVE_THUMB_Z := 0.12      ## ...and this far palm-side of the fingers (fraction of depth): not curled
-const GLOVE_CURL := 1.6          ## finger curl, radians
-const GLOVE_PUFF := Vector3(1.12, 1.0, 1.3)   ## hockey gloves are bulkier than the leather source
+## Skater glove sources: upright right gloves (fingers +Y, palm -Z, thumb -X) with the
+## fingers more or less flat. GLOVE picks the one the game uses.
+##   length: cuff to fingertips before curling (m) · knuckle: the fingers bend from here
+##   down from the tips · wrist: the wrist (model origin) down from the tips (fractions of
+##   the length) · thumb_x / thumb_z: the thumb lies left of thumb_x (fraction of the
+##   width from center) and thumb_z palm-side of the fingers (fraction of the depth), and
+##   isn't curled · curl: finger curl (rad) · thumb_fold: the thumb swings in toward the
+##   palm this far (rad, more toward its tip) · puff: bulk scale · tris: simplify to.
+const GLOVES := {
+	# Armored moto glove: knuckle guard, finger armor, short strapped cuff.
+	"srg": {"src": EQUIP + "srg_glove.glb", "length": 0.27, "knuckle": 0.42, "wrist": 0.66,
+		"thumb_x": -0.27, "thumb_z": 0.1, "curl": 2.0, "thumb_fold": 1.1, "thumb_reach": 0.35, "puff": Vector3(1.18, 1.0, 1.25), "tris": 9000, "cluster": false, "weld": 0.004},
+	# Long-cuff leather gauntlet (the first glove; its cuff flared out of the grip).
+	"leather": {"src": EQUIP + "glove.glb", "length": 0.36, "knuckle": 0.27, "wrist": 0.48,
+		"thumb_x": -0.29, "thumb_z": 0.12, "curl": 1.6, "puff": Vector3(1.12, 1.0, 1.3), "tris": 0},
+}
+## "blender" takes the glove modeled by tools/blender/hand_gear.py: already closed around
+## the stick and in game axes, so it's only copied over. "hockey" builds the older padded
+## glove from scratch (_build_hockey_glove); the scans above stay as options.
+const GLOVE := "blender"
+const BLENDER_GLOVE := EQUIP + "hockey_glove.glb"
+## Its cuff, a separate mesh the game hangs on the forearm (same axes, origin at the wrist).
+const BLENDER_CUFF := EQUIP + "hockey_glove_cuff.glb"
+## The bare fist worn in fights (also from hand_gear.py), same axes as the glove.
+const FIST_SRC := EQUIP + "fist.glb"
+## Where the stick runs through the closed fist, from the wrist: up the fingers, then in
+## toward the palm (meters, 1.8 m body). SkaterVisual.GRIP_OFFSET / GRIP_PALM match these.
+const GRIP_UP := 0.065
+const GRIP_IN := 0.05
+const GOALIE_GEAR := ["goalie_pad", "goalie_boot", "goalie_thigh", "blocker", "goalie_catcher"]
 const CATCHER_SRC := EQUIP + "baseball_glove.glb"
 const CATCHER_HEIGHT := 0.42
 const CATCHER_TRIS := 3500
@@ -75,8 +93,15 @@ func _init() -> void:
 		_build_skate()
 	if what in ["all", "glove"]:
 		_build_glove()
+	if what in ["all", "glove", "fist"]:
+		_save([_simplify(_merge(_parts(FIST_SRC)), 0)], "fist")
 	if what in ["all", "catcher"]:
 		_build_catcher()
+	if what in ["all", "goalie_gear"]:
+		# Leg pads, thigh rises and blocker from tools/blender/goalie_gear.py: modeled in
+		# game axes with their shading baked into vertex colors, so only copied over.
+		for name in GOALIE_GEAR:
+			_save([_simplify(_merge(_parts(EQUIP + name + ".glb")), 0)], name)
 	quit()
 
 
@@ -121,7 +146,8 @@ func _part(arr: Array, xf: Transform3D, mat: Material, name: String, surf: int) 
 		v[i] = xf * v[i]
 		if i < nr.size():
 			nr[i] = (nb * nr[i]).normalized()
-	return {"verts": v, "norms": nr, "idx": idx, "avg": _avg_color(mat as BaseMaterial3D), "name": name, "surf": surf}
+	var cols: PackedColorArray = arr[Mesh.ARRAY_COLOR] if arr[Mesh.ARRAY_COLOR] != null else PackedColorArray()
+	return {"verts": v, "norms": nr, "idx": idx, "colors": cols, "avg": _avg_color(mat as BaseMaterial3D), "name": name, "surf": surf}
 
 
 ## Applies `f(v) -> v` to a part's vertices and `b` to its normals.
@@ -155,6 +181,8 @@ func _merge(parts: Array) -> Dictionary:
 	var v := PackedVector3Array()
 	var nr := PackedVector3Array()
 	var idx := PackedInt32Array()
+	var cols := PackedColorArray()   # kept only when every part has vertex colors
+	var all_cols := true
 	for p: Dictionary in parts:
 		var base := v.size()
 		v.append_array(p.verts)
@@ -162,14 +190,19 @@ func _merge(parts: Array) -> Dictionary:
 			nr.append_array(p.norms)
 		else:
 			nr.resize(v.size())
+		var pc: PackedColorArray = p.get("colors", PackedColorArray())
+		if pc.size() == (p.verts as PackedVector3Array).size():
+			cols.append_array(pc)
+		else:
+			all_cols = false
 		for i: int in p.idx:
 			idx.append(base + i)
-	return {"verts": v, "norms": nr, "idx": idx}
+	return {"verts": v, "norms": nr, "idx": idx, "colors": cols if all_cols else PackedColorArray()}
 
 
 ## Welds by position (dropping UV seams) and simplifies to about `target` triangles,
 ## with smooth normals. target <= 0 keeps the part as it is.
-func _simplify(p: Dictionary, target: int) -> Dictionary:
+func _simplify(p: Dictionary, target: int, allow_cluster := true, weld_dist := 1e-6) -> Dictionary:
 	if target <= 0 or _tris(p) <= target:
 		if (p.norms as PackedVector3Array).size() != (p.verts as PackedVector3Array).size() or (p.norms as PackedVector3Array).has(Vector3.ZERO):
 			p.norms = _normals(p.verts, p.idx)
@@ -179,7 +212,7 @@ func _simplify(p: Dictionary, target: int) -> Dictionary:
 	var idx := PackedInt32Array()
 	for i: int in p.idx:
 		var q: Vector3 = (p.verts as PackedVector3Array)[i]
-		var key := q.snapped(Vector3.ONE * 1e-6)
+		var key := q.snapped(Vector3.ONE * weld_dist)
 		var j: int = weld.get(key, -1)
 		if j < 0:
 			j = v.size()
@@ -214,12 +247,12 @@ func _simplify(p: Dictionary, target: int) -> Dictionary:
 			remap[old] = j
 			nv.append(v[old])
 		ni.append(j)
-	if ni.size() / 3 > target * 1.5:
+	if allow_cluster and ni.size() / 3 > target * 1.5:
 		# Still far off (scans full of tiny holes): fall back to vertex clustering.
 		var cl := _cluster(nv, ni, target)
 		nv = cl[0]
 		ni = cl[1]
-	print("    simplified %d -> %d tris" % [_tris(p), ni.size() / 3])
+	print("    simplified %d -> %d tris%s" % [_tris(p), ni.size() / 3, "" if lod.size() / 3 <= target * 1.5 else " (vertex clustering)"])
 	return {"verts": nv, "norms": _normals(nv, ni), "idx": ni}
 
 
@@ -306,6 +339,9 @@ func _save(surfaces: Array, out: String, metas := {}) -> ArrayMesh:
 			a[Mesh.ARRAY_VERTEX] = p.verts
 			a[Mesh.ARRAY_NORMAL] = p.norms
 			a[Mesh.ARRAY_INDEX] = p.idx
+			var pc: PackedColorArray = p.get("colors", PackedColorArray())
+			if pc.size() == (p.verts as PackedVector3Array).size():
+				a[Mesh.ARRAY_COLOR] = pc   # baked shading for the glove shader (tools/blender/hand_gear.py)
 		mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, a)
 	for k: String in metas:
 		mesh.set_meta(k, metas[k])
@@ -449,14 +485,12 @@ func _build_stick() -> void:
 
 # --- Skate -------------------------------------------------------------------------
 
+## Modeled in tools/blender/skate_gear.py in game axes (toe +Z, origin under the middle of
+## the runner) with the boot's shading baked into vertex colors: only copied over.
 func _build_skate() -> void:
-	var p := _simplify(_merge(_parts(SKATE_SRC)), SKATE_TRIS)
-	var box := _bounds([p])
-	var scale := SKATE_LENGTH / box.size.z
-	var base := Vector3(box.get_center().x, box.position.y, box.get_center().z)
-	_map(p, func(q: Vector3) -> Vector3: return (q - base) * scale, Basis.IDENTITY)
-	var parts := _split(p, func(c: Vector3) -> bool: return c.y < SKATE_STEEL)
-	_save(parts, "skate")
+	var boot := _simplify(_merge(_parts(EQUIP + "skate.glb")), 0)
+	var steel := _simplify(_merge(_parts(EQUIP + "skate_steel.glb")), 0)
+	_save([boot, steel], "skate")
 
 
 # --- Glove ---------------------------------------------------------------------
@@ -465,14 +499,22 @@ func _build_skate() -> void:
 ## flat; they are bent toward the palm around the knuckle line so the glove grips the
 ## stick, and the glove is puffed up to hockey-glove bulk.
 func _build_glove() -> void:
-	var p := _merge(_parts(GLOVE_SRC))
+	if GLOVE == "blender":
+		_save([_simplify(_merge(_parts(BLENDER_GLOVE)), 0)], "glove")
+		_save([_simplify(_merge(_parts(BLENDER_CUFF)), 0)], "glove_cuff")
+		return
+	if GLOVE == "hockey":
+		_build_hockey_glove()
+		return
+	var g: Dictionary = GLOVES.get(GLOVE, {})
+	var p := _simplify(_merge(_parts(g.src)), g.tris, g.get("cluster", true), g.get("weld", 1e-6))
 	var box := _bounds([p])
 	var top := box.end.y
 	var len := box.size.y
-	var y_k := top - len * GLOVE_KNUCKLE
-	var x_thumb := box.get_center().x + box.size.x * GLOVE_THUMB_X
+	var y_k: float = top - len * g.knuckle
+	var x_thumb: float = box.get_center().x + box.size.x * g.thumb_x
 	var finger_len := top - y_k
-	var r := finger_len / GLOVE_CURL
+	var r: float = finger_len / g.curl
 	# Mid-plane of the fingers (their z center).
 	var zs := 0.0
 	var n := 0
@@ -481,22 +523,158 @@ func _build_glove() -> void:
 			zs += q.z
 			n += 1
 	var z_m := zs / maxi(n, 1)
-	var z_thumb := z_m - box.size.z * GLOVE_THUMB_Z
+	var z_thumb: float = z_m - box.size.z * g.thumb_z
+	var thumb_reach: float = g.get("thumb_reach", 9.0)   # the thumb tip ends this far up the fingers (fraction)
 	var bend := func(q: Vector3) -> Vector3:
-		if q.y <= y_k or (q.x <= x_thumb and q.z < z_thumb):
+		if q.y <= y_k or (q.x <= x_thumb and q.z < z_thumb and q.y < y_k + finger_len * thumb_reach):
 			return q
 		var th := (q.y - y_k) / r
-		var w := q.z - z_m
+		var w := clampf(q.z - z_m, -r * 0.5, r * 0.45)   # armor plates on the back of the fingers would fling out
 		return Vector3(q.x, y_k + (r + w) * sin(th), z_m - r + (r + w) * cos(th))
 	var v: PackedVector3Array = p.verts
 	for i in v.size():
 		v[i] = bend.call(v[i])
+	# The thumb swings in toward the palm (about the vertical axis at its root), so it
+	# closes around the stick instead of sticking out to the side.
+	var fold: float = g.get("thumb_fold", 0.0)
+	if fold > 0.0:
+		var x_edge := box.position.x
+		for i in v.size():
+			var q := v[i]
+			if q.x >= x_thumb or q.y <= box.position.y + len * (1.0 - g.wrist):
+				continue
+			var t := clampf((x_thumb - q.x) / maxf(x_thumb - x_edge, 0.001), 0.0, 1.0)
+			var a := -fold * t * t * (3.0 - 2.0 * t)
+			var dx := q.x - x_thumb
+			var dz := q.z - z_m
+			v[i] = Vector3(x_thumb + dx * cos(a) + dz * sin(a), q.y, z_m - dx * sin(a) + dz * cos(a))
 	p.verts = v
-	var wrist := Vector3(box.get_center().x, top - len * GLOVE_WRIST, box.get_center().z)
-	var scale := GLOVE_LENGTH / len
-	_map(p, func(q: Vector3) -> Vector3: return (q - wrist) * GLOVE_PUFF * scale, Basis.IDENTITY)
+	var wrist := Vector3(box.get_center().x, top - len * g.wrist, box.get_center().z)
+	var scale: float = g.length / len
+	var puff: Vector3 = g.puff
+	_map(p, func(q: Vector3) -> Vector3: return (q - wrist) * puff * scale, Basis.IDENTITY)
 	p.norms = _normals(p.verts, p.idx)
 	_save([p], "glove")
+
+
+## A hockey glove built from padded tubes, already closed around the stick: a right
+## glove, wrist at the origin, fingers up +Y curling toward the palm (-Z), back of the
+## hand +Z, thumb on the -X side. The stick runs along X through (0, GRIP_UP, -GRIP_IN).
+## Pieces: a flared cuff with a rolled rim, a padded backhand with two cross rolls and a
+## big knuckle roll, four two-segment finger rolls wrapped around the shaft, and a thumb
+## lying along it.
+func _build_hockey_glove() -> void:
+	var p := {"verts": PackedVector3Array(), "norms": PackedVector3Array(), "idx": PackedInt32Array()}
+	var grip := Vector3(0, GRIP_UP, -GRIP_IN)
+	# Cuff: an oval tube from the forearm up to the wrist, slightly flared, rim rolled.
+	var cuff: Array = []
+	var cr: Array = []
+	for i in 6:
+		var t := i / 5.0
+		cuff.append(Vector3(0, lerpf(-0.07, 0.012, t), 0.0))
+		cr.append(Vector2(lerpf(0.056, 0.05, t), lerpf(0.05, 0.043, t)))
+	_tube(p, cuff, cr, Vector3.RIGHT, 18, false)
+	var rim: Array = []
+	var rr: Array = []
+	for k in 25:
+		var a := TAU * k / 24.0
+		rim.append(Vector3(cos(a) * 0.056, -0.068, sin(a) * 0.05))
+		rr.append(Vector2(0.008, 0.008))
+	_tube(p, rim, rr, Vector3.UP, 8)
+	# Backhand and palm: rounded blocks filling the hand, two padded rolls across the
+	# back, the knuckle roll.
+	_blob(p, Vector3(0.002, 0.038, 0.0), Vector3(0.052, 0.044, 0.036))
+	_blob(p, Vector3(0.0, 0.03, -0.036), Vector3(0.047, 0.036, 0.026))
+	for y in [0.02, 0.048]:
+		_tube(p, [Vector3(-0.038, y, 0.031), Vector3(0.0, y, 0.037), Vector3(0.04, y, 0.031)],
+				[Vector2(0.013, 0.013), Vector2(0.014, 0.014), Vector2(0.013, 0.013)], Vector3.UP, 10)
+	_tube(p, [Vector3(-0.048, 0.074, 0.002), Vector3(0.0, 0.08, 0.008), Vector3(0.05, 0.074, 0.002)],
+			[Vector2(0.018, 0.018), Vector2(0.02, 0.02), Vector2(0.017, 0.017)], Vector3.UP, 12)
+	# Fingers: index (thumb side) to pinky, each an arc around the shaft, two pads long.
+	var fingers := [[-0.033, 0.017, 3.6], [-0.011, 0.0175, 3.7], [0.012, 0.017, 3.6], [0.034, 0.015, 3.4]]
+	for f: Array in fingers:
+		var x: float = f[0]
+		var rad: float = f[1]
+		var r := 0.033
+		var path: Array = []
+		var rads: Array = []
+		var n := 14
+		for i in n + 1:
+			var th: float = lerpf(0.25, f[2], float(i) / n)
+			path.append(grip + Vector3(x, sin(th) * r, cos(th) * r))
+			var bump := 1.0 + 0.1 * cos(float(i) / n * TAU * 2.0)   # two padded segments
+			rads.append(Vector2(0.0118, rad) * bump)
+		_tube(p, path, rads, Vector3.RIGHT, 10)
+	# Thumb: from the base of the palm along the shaft's far side, tip over the index finger.
+	_tube(p, [Vector3(-0.044, 0.012, -0.022), Vector3(-0.056, 0.03, -0.05), Vector3(-0.05, 0.04, -0.076), Vector3(-0.036, 0.044, -0.09)],
+			[Vector2(0.016, 0.016), Vector2(0.016, 0.016), Vector2(0.014, 0.014), Vector2(0.012, 0.012)], Vector3.UP, 10)
+	_save([p], "glove")
+
+
+## Adds a tube along `path` (rings of `segs` points; `rad` per point: half-size along
+## `ref` and across) with rounded end caps.
+func _tube(p: Dictionary, path: Array, rad: Array, ref: Vector3, segs := 10, caps := true) -> void:
+	var v: PackedVector3Array = p.verts
+	var nr: PackedVector3Array = p.norms
+	var idx: PackedInt32Array = p.idx
+	var n := path.size()
+	var base := v.size()
+	var frames: Array = []
+	for i in n:
+		var t: Vector3 = ((path[mini(i + 1, n - 1)] as Vector3) - (path[maxi(i - 1, 0)] as Vector3)).normalized()
+		var u := (ref - t * t.dot(ref))
+		u = u.normalized() if u.length() > 1e-4 else t.cross(Vector3.FORWARD).normalized()
+		var w := t.cross(u)
+		frames.append([t, u, w])
+		var r: Vector2 = rad[i]
+		for k in segs:
+			var a := TAU * k / segs
+			v.append((path[i] as Vector3) + u * cos(a) * r.x + w * sin(a) * r.y)
+			nr.append((u * cos(a) * r.y + w * sin(a) * r.x).normalized())
+	for i in n - 1:
+		for k in segs:
+			var a := base + i * segs + k
+			var b := base + i * segs + (k + 1) % segs
+			var c := a + segs
+			var d := b + segs
+			idx.append_array([a, c, b, b, c, d])
+	# Caps: a rounded dome on each end.
+	for e in (2 if caps else 0):
+		var i := 0 if e == 0 else n - 1
+		var t: Vector3 = frames[i][0] * (-1.0 if e == 0 else 1.0)
+		var r: Vector2 = rad[i]
+		var tip := v.size()
+		v.append((path[i] as Vector3) + t * minf(r.x, r.y) * 0.8)
+		nr.append(t)
+		for k in segs:
+			var a := base + i * segs + k
+			var b := base + i * segs + (k + 1) % segs
+			idx.append_array([tip, a, b] if e == 1 else [tip, b, a])
+	p.verts = v
+	p.norms = nr
+	p.idx = idx
+
+
+## Adds an ellipsoid (semi-axes `r`) at `c`.
+func _blob(p: Dictionary, c: Vector3, r: Vector3) -> void:
+	var sm := SphereMesh.new()
+	sm.radius = 1.0
+	sm.height = 2.0
+	sm.radial_segments = 20
+	sm.rings = 12
+	var arr := sm.get_mesh_arrays()
+	var base := (p.verts as PackedVector3Array).size()
+	var v: PackedVector3Array = p.verts
+	var nr: PackedVector3Array = p.norms
+	var idx: PackedInt32Array = p.idx
+	for q: Vector3 in arr[Mesh.ARRAY_VERTEX]:
+		v.append(c + q * r)
+		nr.append((q / r).normalized())
+	for i: int in arr[Mesh.ARRAY_INDEX]:
+		idx.append(base + i)
+	p.verts = v
+	p.norms = nr
+	p.idx = idx
 
 
 ## Baseball glove as the goalie's catcher: fingers +Y, pocket +Z in the source.

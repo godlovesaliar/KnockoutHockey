@@ -27,8 +27,7 @@ const F_NUMBERS := [[19, 11, 27, 9, 17, 22, 13, 8, 26, 14, 10, 16], [91, 88, 12,
 const D_NUMBERS := [[4, 44, 2, 5, 7, 3], [55, 77, 33, 47, 6, 2]]
 const G_NUMBERS := [1, 30]
 const F_POS := ["C", "LW", "RW"]
-const BENCH_GATES := [Vector3(-RinkSpec.HALF_W + 1.3, 0, 4.5), Vector3(-RinkSpec.HALF_W + 1.3, 0, -4.5)]
-const BOX_GATE := Vector3(RinkSpec.HALF_W - 1.3, 0, 0)
+const WALK_SPEED := 5.0      ## m/s for scripted walks through the bench and box doors
 const FOUL_CHANCE := {&"tripping": 0.65, &"interference": 0.4, &"boarding": 0.8}
 const FOUL_NAMES := {&"tripping": "TRIPPING", &"interference": "INTERFERENCE", &"boarding": "BOARDING"}
 const SHOOTOUT_NET := 1
@@ -75,6 +74,7 @@ var score := [0, 0]
 var stats := {"shots": [0, 0], "saves": [0, 0], "hits": [0, 0], "big_hits": [0, 0], "faceoffs": [0, 0],
 		"penalties": [0, 0], "pp_goals": [0, 0], "offsides": 0, "icings": 0, "changes": [0, 0],
 		"period_goals": [[0, 0, 0, 0], [0, 0, 0, 0]], "fights": 0}   ## per team: goals in periods 1-3 and OT
+var box := BoxScore.new()     ## per-player stats (hot / cold players, three stars)
 var teams: Array[Dictionary] = []    ## {lineup: Lineup, goalie: Goalie, ai: TeamAI, control: TeamControl}
 var rules: MatchRules
 var shootout := {}
@@ -99,6 +99,12 @@ var _fo := {}
 var _last_in_play := Vector3.ZERO
 var _rng := RandomNumberGenerator.new()
 var _hud: MatchHud
+var replay: Replay
+var referee: Referee
+var _ref_brain: RefBrain
+var _pen_cut: Cutscene        ## the penalty call playing (null = none)
+var _opener: Cutscene         ## the period opener playing (null = none)
+const PENALTY_CALL := 1.5     ## s on the referee's call before the offender heads off
 
 
 func _ready() -> void:
@@ -119,6 +125,17 @@ func _ready() -> void:
 	var home_logo: String = Teams.team(team_ids[0]).get("logo", "")
 	if ResourceLoader.exists(home_logo):
 		rink.set_center_logo(load(home_logo))
+	rink.set_bench_colors([MenuStyle.team_color(team_ids[0]), MenuStyle.team_color(team_ids[1])])
+	replay = Replay.new()
+	replay.name = "Replay"
+	add_child(replay)
+	replay.setup(self)
+	for t in 2:
+		for s in lineup(t).all_skaters():
+			replay.register(s)
+		replay.register(lineup(t).goalie)
+	_make_referee()
+	replay.register(referee)
 	var audio := MatchAudio.new()
 	add_child(audio)
 	audio.setup(self)
@@ -136,6 +153,7 @@ func _ready() -> void:
 	else:
 		_set_phase(Phase.PREGAME)
 		_place_for_faceoff(Vector2.ZERO)
+		_period_opener.call_deferred()
 
 
 func _apply_settings(c: Dictionary, h: Array) -> void:
@@ -186,17 +204,34 @@ func _parse_cmdline() -> void:
 	if args.has("nointro"):
 		_no_intro = true
 	if args.has("fight"):
-		_debug_fight = "prompt" if args["fight"] == "prompt" else "on"
+		_debug_fight = str(args["fight"]) if args["fight"] in ["prompt", "ko"] else "on"
 	if args.has("pausemenu"):   # open the pause menu at once (screenshots); pausemenu=controls for that page
 		_open_pause_for_shot.call_deferred(args["pausemenu"] == "controls")
-	if args.has("statscreen"):   # open the stats screen at once (screenshots / layout checks)
-		_open_intermission.call_deferred(args["statscreen"] == "final")
+	if args.has("statscreen"):   # open the stats screen (screenshots / layout checks); statwait=<s> plays a while first
+		_open_stats_for_shot.call_deferred(args["statscreen"] == "final", float(args.get("statwait", "0")))
+	if args.has("look"):   # a fixed camera for layout checks: look=x,y,z,tx,ty,tz
+		var v := str(args["look"]).split_floats(",")
+		if v.size() == 6:
+			_debug_look.call_deferred(Vector3(v[0], v[1], v[2]), Vector3(v[3], v[4], v[5]))
+	if args.has("goaltest"):   # a few seconds into live play: a home goal (celebration, replay)
+		_goal_demo.call_deferred()
+	if args.has("penaltytest"):   # a few seconds in: a delayed penalty, then the whistle and the call
+		_penalty_demo.call_deferred()
+	if args.has("replaytest"):   # after a few seconds of AI play: a goal-cam replay, then an orbit replay
+		_replay_demo.call_deferred()
+	if args.has("benchtest"):   # sends two to each box and cycles bench reactions (layout checks)
+		_bench_demo.call_deferred()
+	if args.has("doors"):   # swing every door open and shut in a loop (layout checks)
+		_debug_doors.call_deferred()
+	if args.has("hudtest"):   # fire the TV graphics on a timer (layout checks): banner + goal card, flash, penalty card
+		_hud_demo.call_deferred()
 	if args.has("shot"):
 		_screenshot.call_deferred(str(args["shot"]), float(args.get("wait", "3.0")), int(args.get("shots", "1")), float(args.get("every", "0.5")))
 
 
 ## `shots` > 1: a burst, `every` seconds apart, saved as <path>_<n>.png.
 func _screenshot(path: String, wait: float, shots := 1, every := 0.5) -> void:
+	await get_tree().process_frame   # the first frame's delta is the whole load time
 	await get_tree().create_timer(wait, true, false, true).timeout
 	for n in shots:
 		await RenderingServer.frame_post_draw
@@ -231,8 +266,12 @@ func _build_teams() -> void:
 		ai.opp_goalie = other.goalie
 		ai.difficulty = difficulty
 		ai.offsides = offsides
-		ai.bench_gate = BENCH_GATES[t]
+		ai.bench_gate = rink.bench_gate(t)
 		teams[t]["ai"] = ai
+		# Everyone's spot on the bench (the backup... and the starter in a shootout, too).
+		for s in lu.all_skaters():
+			s.bench_claim = _claim_bench.bind(t)
+		lu.goalie.bench_claim = _claim_bench.bind(t)
 		for s in lu.all_skaters():
 			s.teammates = lu.on_ice
 			s.opponents = other.on_ice
@@ -319,6 +358,7 @@ func _setup_player(s: Skater, t: int, number: int, left: bool, p := {}) -> void:
 		s.body_type = "female" if _rng.randf() < FEMALE_SHARE[t] else "male"
 		s.skin_tone = SkaterVisual.SKIN_TONES[_rng.randi() % SkaterVisual.SKIN_TONES.size()]
 		s.gear_style = _rng.randi() % 2
+		_set_look(s, SkaterVisual.random_look(_rng, s.body_type, s.skin_tone))
 	else:
 		s.stats = Rosters.stats(p)
 		s.body_type = "female" if p.gender == "Female" else "male"
@@ -332,9 +372,18 @@ func _setup_player(s: Skater, t: int, number: int, left: bool, p := {}) -> void:
 		look.seed = hash("%s %s %s" % [p.abbr, p.first, p.last])
 		s.skin_tone = SkaterVisual.SKIN_TONES[look.randi() % SkaterVisual.SKIN_TONES.size()]
 		s.gear_style = look.randi() % 2
+		_set_look(s, SkaterVisual.random_look(look, s.body_type, s.skin_tone))
 	s.puck = puck
 	s.rink = rink
 	add_child(s)
+
+
+
+func _set_look(s: Skater, look: Dictionary) -> void:
+	s.hair_style = look.hair_style
+	s.facial_hair = look.facial_hair
+	s.hair_color = look.hair_color
+	s.eye_color = look.eye_color
 
 
 func lineup(t: int) -> Lineup:
@@ -379,6 +428,8 @@ func _physics_process(delta: float) -> void:
 	for t in teams:
 		t.ai.update()
 		t.lineup.recover(delta)
+	if referee and _pen_cut == null:
+		referee.signal_arm = "up" if rules.has_delayed_penalty() else ""
 	if puck.in_play and RinkSpec.sdf(puck.global_position.x, puck.global_position.z) < 0.0:
 		_last_in_play = puck.global_position
 	match phase:
@@ -389,7 +440,7 @@ func _physics_process(delta: float) -> void:
 			if _phase_time > INTRO_MAX or (_phase_time > INTRO_MIN and not Sfx.announcing()):
 				_end_intro()
 		Phase.PREGAME:
-			if _phase_time > 1.2:
+			if _phase_time > 1.2 and _opener == null:
 				_start_faceoff(Vector2.ZERO)
 		Phase.FACEOFF:
 			_update_faceoff()
@@ -450,7 +501,8 @@ func whistle(reason: StringName, dot: Vector2, text: String) -> void:
 	_stoppage(1.6, dot, text)
 
 
-func _stoppage(seconds: float, dot: Vector2, text := "") -> void:
+## `team`: whose moment it is (the banner wears their colors), -1 for neither.
+func _stoppage(seconds: float, dot: Vector2, text := "", team := -1) -> void:
 	puck.dead = true
 	rink.disarm_nets()
 	_stoppage_len = seconds
@@ -462,15 +514,25 @@ func _stoppage(seconds: float, dot: Vector2, text := "") -> void:
 			continue
 		rules.pending[t] = null
 		var offender: Skater = pen.offender
-		lineup(t).send_to_box(offender)
+		if _hud and referee and _pen_cut == null and not offender.benched:
+			_penalty_cutscene(t, offender)
+		else:
+			_send_to_box(t, offender, Lineup.MINOR)
 		stats.penalties[t] += 1
+		box.add(offender, "pim", 2)
+		_bench_react(1 - t, "laugh", 0.35)
+		_bench_react(t, "groan", 0.4)
 		penalty_called.emit(offender, pen.kind)
 		_next_dot = rules.end_dot(t, puck.global_position.x)
 		_stoppage_len = maxf(_stoppage_len, 2.4)
-		text = "PENALTY  #%d %s — %s  2:00" % [offender.number, team_name(t), FOUL_NAMES.get(pen.kind, str(pen.kind))]
+		text = ""
+		if _hud:
+			_hud.penalty_card(t, offender, FOUL_NAMES.get(pen.kind, str(pen.kind)), "2:00", 4.0)
 	_set_phase(Phase.STOPPAGE)
+	if replay and not replay.busy():
+		replay.play_pending(1, ["hit", "ko"], Replay.STOPPAGE_MAX_AGE)
 	if text != "" and _hud:
-		_hud.banner(text, minf(_stoppage_len, 2.4))
+		_hud.banner(text, minf(_stoppage_len, 2.4), team)
 
 
 func _end_period() -> void:
@@ -498,26 +560,35 @@ func _end_period() -> void:
 	_set_phase(Phase.PERIOD_END)
 	if _hud:
 		_hud.banner("END OF %s" % period_name(period), 3.0)
+	_period_highlights()
 
 
 func _next_period() -> void:
 	period += 1
+	if replay:
+		replay.forget()
+	box.period_start()
 	clock = ot_length if period > periods else period_length
 	rink.ends_swapped = not rink.ends_swapped
 	for t in teams.size():
 		teams[t].goalie.net = rink.defended_net(t)
-	_start_faceoff(Vector2.ZERO)
+	_set_phase(Phase.PREGAME)
+	_place_for_faceoff(Vector2.ZERO)
+	_period_opener()
 	if _hud:
 		_hud.banner("OVERTIME" if period > periods else "%s PERIOD" % period_name(period), 2.0)
 
 
-func _finish(text := "") -> void:
+func _finish(text := "", team := -1) -> void:
 	puck.dead = true
 	rink.disarm_nets()
 	_set_phase(Phase.FINAL)
 	if _hud:
-		_hud.banner(text if text != "" else "FINAL   %s %d – %d %s" % [team_name(0), score[0], score[1], team_name(1)], 9999.0)
+		if team < 0 and score[0] != score[1]:
+			team = 0 if score[0] > score[1] else 1
+		_hud.banner(text if text != "" else "FINAL", 9999.0, team)
 	match_finished.emit(score)
+	_period_highlights()
 	if show_hud and not humans.is_empty():
 		_open_final.call_deferred()
 
@@ -555,6 +626,8 @@ func _tick_fight_state(delta: float) -> void:
 		if ta and tb:
 			var c := control(0)
 			_start_fight(ta, tb, c.primary() if c and _debug_fight == "prompt" else null)
+			if _debug_fight == "ko" and _fight:
+				_fight.b.health = 4.0   # one good punch from going down (tests the knockout replay)
 			_debug_fight = ""
 			return
 	if not fighting or _fight != null or _since_fight < FIGHT_GAP:
@@ -616,6 +689,10 @@ func _start_fight(a: Skater, b: Skater, prompt: HumanBrain) -> void:
 	_fight = Fight.new()
 	add_child(_fight)
 	_fight.finished.connect(_on_fight_over)
+	_fight.knockout.connect(func(w: Skater, l: Skater) -> void:
+		if replay and show_hud:
+			replay.capture("ko", "KNOCKOUT  ·  %s" % MenuStyle.player_name(w), [w, l], 2.8, 1.6,
+					{"play_now": true, "speed": 0.45, "cam": "orbit"}))
 	_fight.declined.connect(_on_fight_declined)
 	_fight.setup(self, a, b, prompt)
 	if _hud:
@@ -641,10 +718,17 @@ func _on_fight_over(winner: Skater, loser: Skater) -> void:
 	stats.fights += 1
 	if winner:
 		momentum[winner.team] = MOMENTUM_TIME
+		_bench_react(winner.team, "cheer", 0.8)
+		_bench_react(1 - winner.team, "groan", 0.5)
 	for s in fighters:
 		if not is_instance_valid(s):
 			continue
-		lineup(s.team).send_to_box(s, FIGHT_MAJOR if penalties else FIGHT_COOLDOWN, false)
+		box.add(s, "fights")
+		if penalties:
+			box.add(s, "pim", 5)
+		if s == winner:
+			box.add(s, "fight_w")
+		_send_to_box(s.team, s, FIGHT_MAJOR if penalties else FIGHT_COOLDOWN, false)
 		_reassign_control(s.team, s)
 	var text := "FIGHTING — 5:00 MAJORS" if penalties else "BOTH FIGHTERS SIT"
 	_stoppage(2.0, nearest_dot(_fight_spot), text)
@@ -663,6 +747,9 @@ func _start_intro() -> void:
 	_intro_stage.name = "IntroStage"
 	add_child(_intro_stage)
 	_showcase.clear()
+	if referee:
+		referee.frozen = true
+		referee.visual.visible = false
 	for t in 2:
 		var lu := lineup(t)
 		for s in lu.all_skaters():
@@ -712,6 +799,9 @@ func _end_intro() -> void:
 	for s in _showcase:
 		s.visual.stop_clip(0.2)
 	_showcase.clear()
+	if referee:
+		referee.frozen = false
+		referee.visual.visible = true
 	for t in 2:
 		var lu := lineup(t)
 		for s in lu.all_skaters():
@@ -731,9 +821,12 @@ func _end_intro() -> void:
 	for t in teams:
 		for s in (t.lineup as Lineup).all_skaters():
 			s.visual.snap()
+	_period_opener()
 
 
 func _open_intermission(final: bool) -> void:
+	if _hud:
+		_hud.visible = false
 	_intermission = Intermission.new()
 	add_child(_intermission)
 	_intermission.open(self, final)
@@ -744,12 +837,106 @@ func _open_intermission(final: bool) -> void:
 	else:
 		_intermission.continued.connect(func() -> void:
 			_intermission = null
+			if _hud:
+				_hud.visible = true
 			_next_period())
+
+
+func _debug_look(from: Vector3, at: Vector3) -> void:
+	var c := Camera3D.new()
+	c.fov = 50.0
+	add_child(c)
+	c.look_at_from_position(from, at)
+	c.current = true
+	cam.set_process(false)
+
+
+func _goal_demo() -> void:
+	await get_tree().process_frame
+	await get_tree().create_timer(7.0, false).timeout
+	while phase != Phase.LIVE:
+		await get_tree().process_frame
+	puck.last_touch = lineup(0).on_ice[0]
+	_on_goal(rink.attacked_net(0).index)
+
+
+func _penalty_demo() -> void:
+	await get_tree().process_frame
+	await get_tree().create_timer(6.0, false).timeout
+	var off: Skater = lineup(1).on_ice[0]
+	rules.pending[1] = {"offender": off, "kind": &"tripping"}   # delayed: the arm goes up
+	await get_tree().create_timer(0.8, false).timeout
+	if rules.pending[1] == null:
+		return   # (wiped out by a goal meanwhile)
+	whistle(&"penalty", Vector2.ZERO, "")
+
+
+func _replay_demo() -> void:
+	await get_tree().process_frame
+	await get_tree().create_timer(9.0, false).timeout
+	replay.capture("goal", "%s GOAL  ·  TEST" % team_name(0), [lineup(0).on_ice[0]], 6.0, 0.5,
+			{"play_now": true, "speed": 0.8, "cam": "net", "net": rink.attacked_net(0).global_position})
+	await replay.finished
+	await get_tree().create_timer(3.0, false).timeout
+	var a: Skater = lineup(0).on_ice[1]
+	var b: Skater = lineup(1).on_ice[1]
+	replay.capture("hit", "BIG HIT  ·  %s" % MenuStyle.player_name(a), [a, b], 3.0, 0.3, {"play_now": true, "speed": 0.4, "cam": "orbit"})
+
+
+func _bench_demo() -> void:
+	await get_tree().process_frame
+	await get_tree().create_timer(0.5, false).timeout
+	for t in 2:
+		for k in 2:
+			_send_to_box(t, lineup(t).on_ice[0], 60.0)
+	while is_inside_tree():
+		await get_tree().create_timer(3.0, false).timeout
+		_bench_react(0, "cheer")
+		_bench_react(1, "groan")
+		await get_tree().create_timer(4.0, false).timeout
+		_bench_react(1, "laugh")
+
+
+func _debug_doors() -> void:
+	while is_inside_tree():
+		for t in 2:
+			rink.open_door(rink.bench_door_id(t, 0), 1.5)
+			rink.open_door(rink.bench_door_id(t, 1), 1.5)
+			rink.open_door(rink.box_door_id(t), 1.5)
+		await get_tree().create_timer(3.5).timeout
+
+
+func _hud_demo() -> void:
+	if _hud == null:
+		return
+	var t := get_tree()
+	await t.process_frame   # the first frame's delta is the whole load time
+	await t.create_timer(3.0, true, false, true).timeout
+	var a: Array[Skater] = lineup(0).all_skaters()
+	box.add(a[0], "g")
+	_hud.banner("POWER-PLAY GOAL!", 3.0, 0)
+	_hud.goal_card(0, a[0], [a[1], a[3]], 3.0)
+	await t.create_timer(3.6, true, false, true).timeout
+	_hud.banner("BIG HIT!", 1.6, 1)
+	_hud.flash("DELAYED PENALTY — %s" % team_name(1))
+	await t.create_timer(2.2, true, false, true).timeout
+	_hud.penalty_card(1, lineup(1).all_skaters()[2], "Tripping", "2:00", 3.0)
+	lineup(1).send_to_box(lineup(1).all_skaters()[2])
+
+
+func _open_stats_for_shot(final: bool, wait: float) -> void:
+	if wait > 0.0:
+		await get_tree().process_frame
+		await get_tree().create_timer(wait, true, false, true).timeout
+	if _intermission == null:
+		_open_intermission(final)
 
 
 ## Final stats, after the final banner has shown for a few seconds.
 func _open_final() -> void:
-	await get_tree().create_timer(4.0).timeout
+	await get_tree().create_timer(4.0, false).timeout   # (waits out any replay)
+	while replay and replay.busy():
+		await replay.finished
 	if is_inside_tree() and phase == Phase.FINAL and _intermission == null:
 		_open_intermission(true)
 
@@ -785,11 +972,18 @@ func _tick_box(delta: float) -> void:
 
 func _return_from_box(t: int, s: Skater) -> void:
 	var lu := lineup(t)
+	s.in_box_spot = false
 	if format == 5 and lu.on_ice.size() < strength(t):
-		s.set_benched(false)
-		s.place(BOX_GATE + Vector3(0, 0, 1.5 * (lu.on_ice.size() % 2)), Vector3.LEFT)
+		# Out the box door and back into play.
+		var door := rink.box_door_id(t)
 		lu.on_ice.append(s)
-	elif format == 3:
+		s.set_benched(false)
+		s.walk([rink.door_point(door, 0.7), rink.door_point(door, -0.8), rink.door_point(door, -2.0)],
+				WALK_SPEED, -Vector3(RinkSpec.BOX_SIDE, 0, 0))
+		rink.open_door(door, 1.0)
+		return
+	s.repark()   # not needed out there: back to the bench
+	if format == 3:
 		# 3-on-3: the other team loses its power-play skater.
 		var other := lineup(1 - t)
 		while other.on_ice.size() > strength(1 - t):
@@ -824,13 +1018,357 @@ func _tick_line_changes() -> void:
 				lu.plan_change(false)
 			if lu.avg_energy(lu.defense_on_ice()) < 0.45:
 				lu.plan_change(true)
-		var gate: Vector3 = BENCH_GATES[t]
+		var gate: Vector3 = rink.bench_gate(t)
 		for s in lu.on_ice.duplicate():
 			if s.changing and not s.has_puck() and s.global_position.distance_to(gate) < 2.5:
+				var from: Vector3 = s.global_position
 				var inn := lu.swap_at_gate(s)
 				if inn:
-					inn.place(gate + Vector3(0.8, 0, 0), Vector3.RIGHT)
+					_change_through_doors(t, s, from, inn)
 					stats.changes[t] += 1
+
+
+## A line change: the tired skater goes off through the bench door nearer them, the
+## fresh one comes on through the other, each door swinging open as they reach it.
+func _change_through_doors(t: int, out: Skater, from: Vector3, inn: Skater) -> void:
+	var d0 := rink.bench_door_id(t, 0)
+	var d1 := rink.bench_door_id(t, 1)
+	var near := d0 if from.distance_to(rink.door_point(d0, 0.0)) < from.distance_to(rink.door_point(d1, 0.0)) else d1
+	var other := d1 if near == d0 else d0
+	out.global_position = from
+	_walk_through(out, near, [rink.door_point(near, -0.7)], [rink.door_point(near, 0.7), out.bench_spot],
+			Vector3(-RinkSpec.BENCH_SIDE, 0, 0))
+	inn.global_position = inn.bench_spot
+	_walk_through(inn, other, [rink.door_point(other, 0.7)], [rink.door_point(other, -0.8), rink.door_point(other, -2.2)],
+			Vector3(-RinkSpec.BENCH_SIDE, 0, 0))
+
+
+## Walks `s` along `to_door` (ending at the door), through it and along `after`, opening
+## the door just before they get there.
+func _walk_through(s: Skater, door: String, to_door: Array, after: Array, face: Vector3, done := Callable()) -> void:
+	var dist := 0.0
+	var p := s.global_position
+	for q: Vector3 in to_door:
+		dist += p.distance_to(q)
+		p = q
+	var t_door := dist / WALK_SPEED
+	s.walk(to_door + after, WALK_SPEED, face, done)
+	if t_door < 0.35:
+		rink.open_door(door, 1.1)
+	else:
+		get_tree().create_timer(t_door - 0.35, false).timeout.connect(func() -> void: rink.open_door(door, 1.1))
+
+
+## A player headed to the box: they skate from where they are through the box door to
+## their seat (the box keeps up to three).
+func _send_to_box(t: int, s: Skater, seconds: float, counts := true, delay := 0.0) -> void:
+	var from := s.global_position
+	var on_ice := not s.benched
+	s.box_spot = rink.box_spot(t, lineup(t).in_box.size())
+	s.in_box_spot = true
+	lineup(t).send_to_box(s, seconds, counts)
+	if not on_ice:
+		return
+	s.global_position = from
+	if delay > 0.0:
+		# Waits on the ice for the referee's call (standing, not sitting down yet).
+		s.heading = (s.heading if s.heading.length() > 0.1 else Vector3.FORWARD)
+		if s.visual:
+			s.visual.bench_off()
+			s.visual.process_mode = Node.PROCESS_MODE_PAUSABLE
+		get_tree().create_timer(delay, false).timeout.connect(func() -> void:
+			# (Skipped meanwhile: they're already on the box seat, off the ice.)
+			if is_instance_valid(s) and s.benched and s.in_box_spot and not s.walking() 					and RinkSpec.sdf(s.global_position.x, s.global_position.z) < 0.0:
+				_box_walk(t, s))
+		return
+	_box_walk(t, s)
+
+
+func _box_walk(t: int, s: Skater) -> void:
+	var door := rink.box_door_id(t)
+	_walk_through(s, door, [rink.door_point(door, -0.8)], [rink.door_point(door, 0.7), s.box_spot],
+			-Vector3(RinkSpec.BOX_SIDE, 0, 0), func() -> void:
+				if is_instance_valid(s) and s.benched and s.visual:
+					s.visual.bench_react("sulk"))
+
+
+## Seconds `s` takes to skate from where they are into team `t`'s box.
+func _box_walk_time(t: int, s: Skater) -> float:
+	var door := rink.box_door_id(t)
+	var pts := [s.global_position, rink.door_point(door, -0.8), rink.door_point(door, 0.7), rink.box_spot(t, lineup(t).in_box.size())]
+	var d := 0.0
+	for i in range(1, pts.size()):
+		d += (pts[i] as Vector3).distance_to(pts[i - 1])
+	return d / WALK_SPEED
+
+
+## The penalty call: the referee points at the offender, then at the box, and the camera
+## follows the offender into it. Holds the stoppage until it's done (or skipped).
+func _penalty_cutscene(t: int, s: Skater) -> void:
+	var walk := minf(_box_walk_time(t, s), 7.0)
+	var door := rink.box_door_id(t)
+	var off_at := s.global_position
+	var cs := Cutscene.new()
+	cs.name = "PenaltyCall"
+	_pen_cut = cs
+	referee.signal_arm = "point"
+	referee.point_at = off_at
+	# Stopped and squared up to the offender (the cut to this shot hides the snap).
+	var to_off := off_at - referee.global_position
+	to_off.y = 0.0
+	referee.place(referee.global_position, to_off if to_off.length() > 0.2 else Vector3.RIGHT)
+	_ref_brain.hold = referee.global_position
+	_ref_brain.face_at = off_at
+	_send_to_box(t, s, Lineup.MINOR, true, PENALTY_CALL)
+	var ref := referee
+	cs.shots.append({"len": PENALTY_CALL, "fov": 40.0, "frame": func(_t: float) -> Array:
+		# On the referee, from the offender's side, a little off to one side.
+		var to := off_at - ref.global_position
+		to.y = 0.0
+		var dir := to.normalized() if to.length() > 0.2 else Vector3.RIGHT
+		var side := dir.cross(Vector3.UP)
+		var pos := ref.global_position + dir * 3.4 + side * 1.4 + Vector3.UP * 1.55
+		var c := RinkSpec.clamp_inside(pos.x, pos.z, 0.5)
+		return [Vector3(c.x, pos.y, c.y), ref.global_position + Vector3.UP * 1.25]})
+	cs.shots.append({"len": walk + 1.3, "fov": 44.0,
+		"start": func() -> void:
+			ref.point_at = rink.door_point(door, 0.0)
+			_ref_brain.face_at = rink.door_point(door, 0.0),
+		"frame": func(_t: float) -> Array:
+			# Following the offender from the ice side, ahead of them toward the box.
+			var p := s.global_position if is_instance_valid(s) else off_at
+			var pos := p + Vector3(-RinkSpec.BOX_SIDE * 4.2, 2.5, 2.2 * (1.0 if p.z <= 0.0 else -1.0))
+			var c := RinkSpec.clamp_inside(pos.x, pos.z, 0.6)
+			return [Vector3(c.x, pos.y, c.y), p + Vector3.UP * 0.95]})
+	cs.on_skip = func() -> void:
+		if is_instance_valid(s) and s.benched and s.in_box_spot:
+			s.place(s.global_position)   # cuts the walk short
+			s.repark()                   # straight onto the box seat
+	cs.finished.connect(func(skipped: bool) -> void:
+		_pen_cut = null
+		referee.signal_arm = ""
+		_ref_brain.hold = Vector3.INF
+		_ref_brain.face_at = Vector3.INF
+		if phase == Phase.STOPPAGE:
+			_stoppage_len = minf(_stoppage_len, _phase_time + (0.5 if skipped else 0.2)))
+	add_child(cs)
+	cs.play()
+	_stoppage_len = maxf(_stoppage_len, PENALTY_CALL + walk + 1.3 + 0.5)
+
+
+## The period opener: the starting lines (goalies first) file out of the bench doors and
+## skate to their faceoff spots while the camera takes in each bench and then sweeps the
+## rink. PREGAME waits for it; skipping puts everyone straight on their spots.
+func _period_opener() -> void:
+	if not show_hud:
+		return
+	var targets := {}       # Skater -> [spot, facing]
+	var walks := []         # [skater, door, start delay]
+	var t_end := 0.0
+	for t in 2:
+		var lu := lineup(t)
+		var list: Array[Skater] = []
+		if lu.goalie:
+			list.append(lu.goalie)
+		list.append_array(lu.on_ice)
+		var per_door := [0, 0]
+		for k in list.size():
+			var s := list[k]
+			targets[s] = [s.global_position, s.heading]
+			var di := k % 2
+			var door := rink.bench_door_id(t, di)
+			var q: int = per_door[di]
+			per_door[di] += 1
+			# Waiting in the doorway, one behind the other, facing the ice.
+			var start := rink.door_point(door, 0.8 + 0.55 * q)
+			s.velocity = Vector3.ZERO
+			s.process_mode = Node.PROCESS_MODE_DISABLED
+			s.physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_OFF
+			s.global_position = start
+			s.heading = Vector3(-RinkSpec.BENCH_SIDE, 0, 0)
+			if s.visual:
+				s.visual.process_mode = Node.PROCESS_MODE_PAUSABLE
+				s.visual.snap()
+			var delay := 0.5 + 0.55 * q + 1.6 * t
+			walks.append([s, door, delay])
+			var path_len: float = start.distance_to(rink.door_point(door, -1.2)) + rink.door_point(door, -1.2).distance_to(targets[s][0])
+			t_end = maxf(t_end, delay + path_len / WALK_SPEED)
+	var cs := Cutscene.new()
+	cs.name = "PeriodOpener"
+	_opener = cs
+	var done := {"skipped": false}
+	for w in walks:
+		var s: Skater = w[0]
+		var door: String = w[1]
+		get_tree().create_timer(w[2], false).timeout.connect(func() -> void:
+			if done.skipped or not is_instance_valid(s):
+				return
+			_walk_through(s, door, [rink.door_point(door, 0.7)], [rink.door_point(door, -1.2), targets[s][0]],
+					targets[s][1], func() -> void:
+						if s is Goalie:
+							(s as Goalie).reset_in_net()))
+	for t in 2:
+		var z: Vector2 = RinkSpec.BENCH_Z[t]
+		var zmid := (z.x + z.y) * 0.5
+		var sg := signf(zmid)
+		cs.shots.append({"len": 2.6, "fov": 40.0, "frame": func(tt: float) -> Array:
+			# Down the boards at the bench, the team filing out of its doors.
+			var pos := Vector3(RinkSpec.BENCH_SIDE * (RinkSpec.HALF_W - 7.5), 2.3, zmid + sg * (7.5 + tt * 0.5))
+			return [pos, Vector3(RinkSpec.BENCH_SIDE * (RinkSpec.HALF_W - 2.0), 0.9, zmid)]})
+	var sweep := maxf(2.5, t_end - 5.2 + 0.8)
+	cs.shots.append({"len": sweep, "fov": 50.0,
+		"start": func() -> void:
+			if _hud:
+				_hud.banner("OVERTIME" if period > periods else "%s PERIOD" % period_name(period), 2.2),
+		"frame": func(tt: float) -> Array:
+			# High and wide, sweeping around center ice as the lines settle in.
+			var ang := 0.9 + tt * 0.22
+			return [Vector3(sin(ang) * 14.0, 6.5, cos(ang) * 14.0), Vector3(0, 0.4, 0)]})
+	var settle := func() -> void:
+		for s: Skater in targets:
+			if not is_instance_valid(s):
+				continue
+			if s.walking() or s.process_mode == Node.PROCESS_MODE_DISABLED:
+				s.place(targets[s][0], targets[s][1])
+				s._resume_live()
+			if s is Goalie:
+				(s as Goalie).reset_in_net()
+	cs.on_skip = func() -> void:
+		done.skipped = true
+		settle.call()
+	cs.finished.connect(func(_skipped: bool) -> void:
+		settle.call()   # (anyone still on the way: on their spot)
+		_opener = null)
+	add_child(cs)
+	cs.play()
+
+
+## The goal celebration: the scorer peels off to the corner glass by the net and the
+## linemates pile in around them, cheering, while the camera follows; then the replay.
+func _goal_celebration(t: int, scorer: Skater, net: Vector3) -> void:
+	var nz := signf(net.z) if absf(net.z) > 0.1 else 1.0
+	var sx := signf(scorer.global_position.x) if absf(scorer.global_position.x) > 0.5 else 1.0
+	var raw := Vector3(sx * (RinkSpec.HALF_W - 1.1), 0.0, nz * (RinkSpec.GOAL_LINE_Z - 4.0))
+	var c := RinkSpec.clamp_inside(raw.x, raw.z, 1.1)
+	var spot := Vector3(c.x, 0.0, c.y)
+	# Toward the ice from the boards there, and along them.
+	var inward := -Vector3(spot.x, 0.0, spot.z * 0.35).normalized()
+	var along := inward.cross(Vector3.UP)
+	var offsets := [inward * 1.0 + along * 0.85, inward * 1.0 - along * 0.85, inward * 1.9, along * 1.5, -along * 1.5]
+	var saved := {}
+	var mates: Array[Skater] = [scorer]
+	for s in lineup(t).on_ice:
+		if s != scorer and not s.benched and mates.size() < 5:
+			mates.append(s)
+	for i in mates.size():
+		var s := mates[i]
+		var target: Vector3 = spot if i == 0 else spot + offsets[(i - 1) % offsets.size()]
+		var cl := RinkSpec.clamp_inside(target.x, target.z, 0.9)
+		var b := CelebrateBrain.new(Vector3(cl.x, 0.0, cl.y), spot, true)
+		b.arrived.connect(func(who: Skater) -> void:
+			if is_instance_valid(who) and who.visual:
+				who.visual.celebrate())
+		saved[s] = s.brain
+		s.brain = b
+	var cs := Cutscene.new()
+	cs.name = "GoalCelebration"
+	cs.shots.append({"len": 1.8, "fov": 42.0, "frame": func(_t: float) -> Array:
+		# Out in front of the scorer as they peel away, looking back at them.
+		var p := scorer.global_position if is_instance_valid(scorer) else spot
+		var dir := spot - p
+		dir.y = 0.0
+		dir = dir.normalized() if dir.length() > 0.5 else inward * -1.0
+		var pos := p + dir * 5.5 + dir.cross(Vector3.UP) * 1.4 + Vector3.UP * 1.6
+		var cc := RinkSpec.clamp_inside(pos.x, pos.z, 0.5)
+		return [Vector3(cc.x, pos.y, cc.y), p + Vector3.UP * 1.1]})
+	cs.shots.append({"len": 2.5, "fov": 38.0, "frame": func(_t: float) -> Array:
+		# The huddle against the glass, from the ice.
+		# A little high, so skaters passing in front don't block the huddle.
+		var pos := spot + inward * 5.2 + along * 1.6 + Vector3.UP * 2.6
+		return [pos, spot + inward * 0.9 + Vector3.UP * 1.0]})
+	cs.finished.connect(func(_skipped: bool) -> void:
+		for s: Skater in saved:
+			if is_instance_valid(s) and s.brain is CelebrateBrain:
+				s.brain = saved[s]
+		if replay:
+			replay.play_soon("goal")
+		if phase == Phase.STOPPAGE:
+			_stoppage_len = minf(_stoppage_len, _phase_time + 0.8))
+	add_child(cs)
+	cs.play()
+	if phase == Phase.STOPPAGE:
+		_stoppage_len = maxf(_stoppage_len, 1.8 + 2.5 + 0.6)
+
+
+## The referee: a striped Skater (Referee) skated by a RefBrain, outside both teams.
+func _make_referee() -> void:
+	var r: Skater = SKATER_SCENE.instantiate()
+	r.set_script(Referee)
+	referee = r as Referee
+	referee.name = "Referee"
+	referee.number = 27
+	referee.body_type = "male"
+	referee.skin_tone = SkaterVisual.SKIN_TONES[_rng.randi() % SkaterVisual.SKIN_TONES.size()]
+	referee.gear_style = 0
+	_set_look(referee, SkaterVisual.random_look(_rng, "male", referee.skin_tone))
+	referee.stats = PlayerStats.new()
+	referee.puck = puck
+	referee.rink = rink
+	_ref_brain = RefBrain.new(self)
+	referee.brain = _ref_brain
+	add_child(referee)
+	referee.place(Vector3(-RinkSpec.HALF_W + 2.2, 0, 3.0), Vector3.RIGHT)
+
+
+## A bench spot for `s` (parking now): their current one if no one else has it, else the
+## first free seat, else the first free place standing at the boards. [spot, seated]
+func _claim_bench(s: Skater, t: int) -> Array:
+	var lu := lineup(t)
+	var taken := {}
+	var who: Array = lu.all_skaters()
+	who.append(lu.goalie)
+	for o: Skater in who:
+		if o != s and is_instance_valid(o) and o.benched and not o.in_box_spot and o.bench_spot != Vector3.INF:
+			taken[o.bench_spot] = true
+	var seats := rink.bench_seats(t)
+	var i := 0
+	while true:
+		var p := rink.bench_spot(t, i)
+		if i < 40 and taken.has(p):
+			i += 1
+			continue
+		if s.bench_spot != Vector3.INF and not taken.has(s.bench_spot) and s.bench_sit == (i < seats):
+			return [s.bench_spot, s.bench_sit]   # keep their place if it's as good
+		return [p, i < seats]
+	return [rink.bench_spot(t, 0), true]
+
+
+## Players parked on team `t`'s bench and in its box react ("cheer", "groan", "laugh"),
+## each with a chance and a moment's delay, so it ripples instead of moving as one.
+func _bench_react(t: int, kind: String, chance := 1.0) -> void:
+	var lu := lineup(t)
+	var who: Array = lu.all_skaters()
+	who.append(lu.goalie)
+	for s: Skater in who:
+		if not is_instance_valid(s) or not s.benched or s.walking() or s.visual == null:
+			continue
+		if randf() > chance:
+			continue
+		var k := kind
+		if s.in_box_spot and kind == "cheer":
+			k = "cheer" if randf() < 0.5 else "sulk"   # happy, but still in the box
+		get_tree().create_timer(randf_range(0.0, 0.5), false).timeout.connect(func() -> void:
+			if is_instance_valid(s) and s.benched and not s.walking():
+				s.visual.bench_react(k))
+
+
+## End of a period or the game: up to two saved highlights nobody has seen yet.
+func _period_highlights() -> void:
+	if replay == null or not show_hud:
+		return
+	if replay.busy():
+		await replay.finished
+	replay.play_pending(2)
 
 
 func _puck_in_defensive_zone(t: int) -> bool:
@@ -896,6 +1434,10 @@ func _place_for_faceoff(dot: Vector2) -> void:
 		var lu := lineup(t)
 		lu.choose_fresh()
 		lu.fill(strength(t))
+		# Anyone off the ice who isn't on their way somewhere stands at their spot.
+		for s in lu.all_skaters():
+			if s.benched and not s.walking():
+				s.repark()
 		var spots := _faceoff_spots(t, dot)
 		var face := -own_goal_dir(t)
 		var fi := 0
@@ -1007,6 +1549,8 @@ func _start_shootout() -> void:
 		lu.on_ice.clear()
 		for s in lu.all_skaters():
 			s.set_benched(true)
+			s.in_box_spot = false
+			s.repark()
 		teams[t].ai.shootout = true
 		var order := lu.forwards.duplicate()
 		order.sort_custom(func(a: Skater, b: Skater) -> bool:
@@ -1123,34 +1667,52 @@ func _on_goal(net_index: int) -> void:
 	score[scoring] += 1
 	stats.period_goals[scoring][mini(period, 4) - 1] += 1
 	var scorer := puck.last_touch
+	var beaten := lineup(other).goalie
+	var pp := strength(scoring) > strength(other) and lineup(other).box_count() > 0
+	var assists := box.on_goal(scorer, scoring, lineup(scoring).on_ice, lineup(other).on_ice, beaten, pp)
 	goal.emit(scoring, scorer)
+	_bench_react(scoring, "cheer")
+	_bench_react(other, "groan", 0.8)
 	cam.shake(0.6)
 	# Horn and crowd: MatchAudio (on the goal signal).
 	for s in lineup(scoring).on_ice:
 		s.visual.celebrate()
-	var beaten := lineup(other).goalie
 	if beaten and randf() < 0.6:
 		beaten.visual.play_clip("angry_gesture", Vector3(0.0, 0.7, 1.0), 2.0, 1.1, 0.25)
 	# A delayed penalty against the team scored on is wiped out by the goal.
 	rules.pending[other] = null
-	var pp := strength(scoring) > strength(other) and lineup(other).box_count() > 0
 	if pp:
 		stats.pp_goals[scoring] += 1
-		lineup(other).release_earliest()
-	var who := "  #%d" % scorer.number if scorer and scorer.team == scoring else ""
+		var freed := lineup(other).release_earliest()
+		if freed:
+			freed.in_box_spot = false
+			freed.repark()
+	if _hud and scorer and scorer.team == scoring:
+		_hud.goal_card(scoring, scorer, assists, 3.4)
+	# With a scorer to follow, the celebration plays first and the replay after it.
+	var celebrate := show_hud and scorer != null and scorer.team == scoring and not scorer.benched
+	if replay and show_hud:
+		var who := ("  ·  " + MenuStyle.player_name(scorer)) if scorer and scorer.team == scoring else ""
+		replay.capture("goal", "%s GOAL%s" % [team_name(scoring), who], [scorer], 5.0, 1.2,
+				{"play_now": not celebrate, "speed": 0.8, "cam": "net", "net": rink.get_net(net_index).global_position})
 	if period > periods:
-		_finish("%s WINS IN OT!%s" % [team_name(scoring), who])
-		return
-	_stoppage(3.0, Vector2.ZERO, "%s %sGOAL!%s" % [team_name(scoring), "POWER-PLAY " if pp else "", who])
+		_finish("%s WIN IN OT!" % team_name(scoring), scoring)
+	else:
+		_stoppage(3.0, Vector2.ZERO, "%sGOAL!" % ("POWER-PLAY " if pp else ""), scoring)
+	if celebrate:
+		_goal_celebration(scoring, scorer, rink.get_net(net_index).global_position)
 
 
 func _on_puck_touched(s: Skater) -> void:
 	rules.on_touched(s)
+	if phase == Phase.LIVE:
+		box.on_touch(s)
 
 
 func _on_shot(s: Skater, _kind: StringName, _spd: float) -> void:
 	if phase == Phase.LIVE and not (s is Goalie):
 		stats.shots[s.team] += 1
+		box.add(s, "shots")
 
 
 ## Shots on goal = the other goalie's saves + goals.
@@ -1161,6 +1723,7 @@ func shots_on_goal(t: int) -> int:
 func _on_save(g: Goalie, _kind: StringName) -> void:
 	if phase == Phase.LIVE:
 		stats.saves[g.team] += 1
+		box.add(g, "sv")
 	elif phase == Phase.SHOOTOUT:
 		_shootout_result(false)
 
@@ -1190,12 +1753,18 @@ func _on_hit(attacker: Skater, victim: Skater, _power: float, kind: StringName, 
 		_last_hitter[t] = attacker
 		_last_victim[t] = victim
 	stats.hits[attacker.team] += 1
+	box.add(attacker, "hits")
 	if kind == &"big_hit":
 		stats.big_hits[attacker.team] += 1
+		box.add(attacker, "big_hits")
+		if replay and show_hud:
+			replay.capture("hit", "BIG HIT  ·  %s" % MenuStyle.player_name(attacker), [attacker, victim], 1.8, 1.2,
+					{"speed": 0.4, "cam": "orbit"})
+		_bench_react(attacker.team, "cheer", 0.5)
 		cam.shake(0.9)
 		_slowmo(0.45)
 		if _hud:
-			_hud.banner("BIG HIT!" if not boards else "CRUSHED INTO THE BOARDS!", 1.4)
+			_hud.banner("BIG HIT!" if not boards else "CRUSHED INTO THE BOARDS!", 1.4, attacker.team)
 	elif kind == &"check":
 		cam.shake(0.35)
 

@@ -2,7 +2,8 @@ extends SceneTree
 ## Cuts the team logos out of the logo sheets into transparent PNGs:
 ##   godot --headless --path . -s res://tools/build_logos.gd [-- only=<sheet file>]
 ##
-## Each sheet (assets/images/) has four logos, one per quadrant, on a dark background.
+## Each sheet (assets/images/) has four logos, one per quadrant, on a dark background
+## (or a light one, for sheets marked `light`: then the fill takes pale pixels).
 ## In each quadrant the background is flood-filled from the quadrant's border: pixels
 ## darker than the sheet's `lum` (and, if `sat` < 1, less saturated than `sat`)
 ## connected to the edge. Each logo's bright outer border stops the fill, so dark parts
@@ -20,6 +21,9 @@ const SHEETS := [
 	{"file": "res://assets/images/logos4.png", "teams": ["mitts", "poutine", "geoducks", "grays"], "lum": 0.33, "sat": 0.09},
 	{"file": "res://assets/images/logos5.jfif", "teams": ["curds", "gales", "sourdoughs", "moosejaws"], "lum": 0.33, "sat": 0.09},
 	{"file": "res://assets/images/logos6.jfif", "teams": ["twang", "moonshiners", "swampthings", "floridaman"], "lum": 0.33, "sat": 0.09},
+	# A light (cream) sheet: the background is the pale, unsaturated pixels instead.
+	{"file": "res://assets/images/logos7.jfif", "teams": ["armadillos", "lumberjacks", "otters", "stuntmen"], "lum": 0.8, "sat": 0.12, "light": true},
+	{"file": "res://assets/images/logos8.jfif", "teams": ["gilamonsters", "spuds", "seagulls", "geysers"], "lum": 0.3, "sat": 1.0},
 ]   ## teams: quadrants TL, TR, BL, BR
 const OUT := "res://assets/characters/logo_%s.png"
 const MAX_SIZE := 768
@@ -28,6 +32,7 @@ const PAD := 6
 
 var _lum := 0.33
 var _sat := 0.09
+var _light := false
 
 
 func _init() -> void:
@@ -47,6 +52,7 @@ func _init() -> void:
 			continue
 		img.convert(Image.FORMAT_RGBA8)
 		_sat = sheet.sat
+		_light = sheet.get("light", false)
 		var w := img.get_width()
 		var h := img.get_height()
 		for q in 4:
@@ -57,6 +63,8 @@ func _init() -> void:
 
 
 func _is_bg(c: Color) -> bool:
+	if _light:
+		return c.get_luminance() > _lum and maxf(c.r, maxf(c.g, c.b)) - minf(c.r, minf(c.g, c.b)) < _sat
 	return c.get_luminance() < _lum and maxf(c.r, maxf(c.g, c.b)) - minf(c.r, minf(c.g, c.b)) < _sat
 
 

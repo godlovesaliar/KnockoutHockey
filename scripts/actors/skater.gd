@@ -99,6 +99,16 @@ var fall_side := 1.0              ## which way a knockdown topples (visual)
 var energy := 1.0                 ## shift fatigue: drains on the ice, recovers on the bench
 var fatigue_enabled := true
 var benched := false              ## off the ice (bench or penalty box)
+## Where a benched skater stands: their spot on the team bench, or in the penalty box
+## while `in_box_spot` (MatchDirector sets both). INF = hidden under the rink instead.
+var bench_spot := Vector3.INF
+var box_spot := Vector3.INF
+var in_box_spot := false
+var bench_sit := true              ## on the bench: a seat (false: standing at the boards)
+## Picks this skater's bench spot when they park: returns [spot, seated] (MatchDirector:
+## the first free seat). Unset: keep bench_spot / bench_sit as they are.
+var bench_claim := Callable()
+var _walk: Tween
 var momentum := false             ## the team won a fight lately: a little faster, hits harder
 var changing := false             ## heading to the bench for a line change
 var is_defense := false
@@ -112,6 +122,10 @@ var uniform := {}                ## team palette (Teams.LIST colors); empty = de
 var crest: Texture2D             ## team logo on the jersey front (null = none)
 var skin_tone := Color(0.91, 0.73, 0.60)   ## sRGB; see SkaterVisual.SKIN_TONES
 var gear_style := 0              ## helmet model (goalies: mask model); see SkaterVisual.HELMETS / GoalieVisual.MASKS
+var hair_style := ""              ## SkaterVisual.HAIR_STYLES / "braid"; "" = none showing
+var facial_hair := ""             ## "beard", "moustache" or ""
+var hair_color := Color(0.16, 0.1, 0.06)
+var eye_color := Color(0.34, 0.2, 0.09)   ## sRGB; see SkaterVisual.EYE_COLORS
 var human_index := -1             ## which human (P1..P4) controls this skater, -1 = AI
 var visual: SkaterVisual
 
@@ -159,6 +173,7 @@ func _make_visual() -> SkaterVisual:
 
 ## Teleports the skater, stopped, facing `face`.
 func place(pos: Vector3, face := Vector3.FORWARD) -> void:
+	_stop_walk()
 	global_position = Vector3(pos.x, 0.0, pos.z)
 	velocity = Vector3.ZERO
 	heading = face.normalized() if face.length() > 0.01 else Vector3.FORWARD
@@ -215,21 +230,122 @@ func fatigue_mult() -> float:
 	return lerpf(0.82, 1.0, energy) if fatigue_enabled else 1.0
 
 
-## Takes the skater off the ice (hidden, no physics, no processing) or puts them back.
+## Takes the skater off the ice (no physics, no processing) or puts them back. Off the
+## ice they stand at their bench or box spot (or, without one, hidden under the rink).
 func set_benched(b: bool) -> void:
 	changing = false
 	if b == benched:
 		return
 	benched = b
-	visible = not b
 	process_mode = Node.PROCESS_MODE_DISABLED if b else Node.PROCESS_MODE_INHERIT
+	_stop_walk()
 	if b:
 		if has_puck():
 			puck.strip(self, Vector3.ZERO)
 		velocity = Vector3.ZERO
-		global_position = Vector3(0.0, -40.0, 0.0)
 		frozen = false
 		_set_state(State.SKATE)
+		repark()
+	else:
+		visible = true
+		physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_INHERIT
+		reset_physics_interpolation()
+		if visual:
+			visual.process_mode = Node.PROCESS_MODE_INHERIT
+			visual.bench_off()
+
+
+## Benched: moves to the current spot (box or bench) at once.
+func repark() -> void:
+	if not benched:
+		return
+	if not in_box_spot and bench_claim.is_valid():
+		var r: Array = bench_claim.call(self)
+		bench_spot = r[0]
+		bench_sit = r[1]
+	var spot := box_spot if in_box_spot and box_spot != Vector3.INF else bench_spot
+	if spot == Vector3.INF:
+		visible = false
+		global_position = Vector3(0.0, -40.0, 0.0)
+		return
+	visible = true
+	physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_OFF
+	global_position = spot
+	heading = Vector3(-signf(spot.x), 0.0, 0.0)   # facing the ice
+	velocity = Vector3.ZERO
+	_park_pose()
+
+
+## Parked: the visual keeps running (the skater itself doesn't) to play the bench idle:
+## seated in the box and on the bench's seats, standing at the boards otherwise.
+func _park_pose() -> void:
+	if visual == null:
+		return
+	visual.process_mode = Node.PROCESS_MODE_PAUSABLE
+	visual.snap()
+	visual.bench_pose(in_box_spot or bench_sit)
+
+
+## Scripted walk (through a bench or box door) along `path`, at `speed` m/s, with no
+## physics: used for line changes and trips to and from the penalty box. `face`: the
+## heading at the end. `done` runs at the end (unless the walk is cut off by a teleport).
+func walk(path: Array, speed: float, face: Vector3, done := Callable()) -> void:
+	_stop_walk()
+	if path.is_empty():
+		return
+	process_mode = Node.PROCESS_MODE_DISABLED
+	physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_OFF
+	visible = true
+	if visual:
+		visual.process_mode = Node.PROCESS_MODE_PAUSABLE
+		visual.bench_off()
+	# A tree tween, not the skater's own: a node's tweens stop while it can't process,
+	# and the walk turns the skater's processing off.
+	_walk = get_tree().create_tween()
+	_walk.set_pause_mode(Tween.TWEEN_PAUSE_STOP)
+	var from := global_position
+	for p: Vector3 in path:
+		var leg := p - from
+		leg.y = 0.0
+		var secs := maxf(leg.length() / speed, 0.05)
+		if leg.length() > 0.05:
+			var dir := leg.normalized()
+			_walk.tween_callback(func() -> void:
+				heading = dir
+				velocity = dir * speed)
+		_walk.tween_property(self, "global_position", p, secs)
+		from = p
+	_walk.tween_callback(func() -> void:
+		heading = face.normalized()
+		velocity = Vector3.ZERO
+		_walk = null
+		if benched:
+			_park_pose()
+		else:
+			_resume_live()
+		if done.is_valid():
+			done.call())
+
+
+func walking() -> bool:
+	return _walk != null and _walk.is_running()
+
+
+func _stop_walk() -> void:
+	if _walk != null:
+		_walk.kill()
+		_walk = null
+		if not benched:
+			_resume_live()
+
+
+## Back to normal play after a scripted walk: physics, processing, interpolation.
+func _resume_live() -> void:
+	process_mode = Node.PROCESS_MODE_INHERIT
+	physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_INHERIT
+	reset_physics_interpolation()
+	if visual:
+		visual.process_mode = Node.PROCESS_MODE_INHERIT
 
 
 # --- Tick ------------------------------------------------------------------

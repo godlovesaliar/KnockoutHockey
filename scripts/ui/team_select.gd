@@ -6,7 +6,7 @@ extends Control
 ##
 ## Each controller: left / right picks a side; up / down changes that side's team
 ## (from the middle: the home team); the bumpers change the other team (from the
-## middle: the away team). The mouse can click the arrows on the plates.
+## middle: the away team). The mouse can click the up / down arrows on the plates.
 ## Accept: on to the rules (RulesSelect). Back: the main menu.
 ##
 ## `-- shot=<png> [wait=<s>] [home=<i>] [away=<i>]` saves a screenshot and quits.
@@ -15,6 +15,7 @@ const RULES_SCENE := "res://scenes/ui/RulesSelect.tscn"
 const MENU_SCENE := "res://scenes/ui/MainMenu.tscn"
 
 const PLAYER_X := 1.25        ## meters left / right of center for each team's player
+const PLAYER_LIFT := 0.45     ## meters the players stand above the ice, level with the crests
 const LOGO_POS := Vector3(1.6, 1.95, -1.6)
 const PLATE_Y := 548.0        ## design pixels: top of the name plates
 const PLATE_W := 560.0
@@ -180,8 +181,13 @@ func _dress_side(t: int) -> void:
 		(_skaters[t] as Node).queue_free()
 	var s := MenuArena.make_skater(_stage, _arena, team, teams[1 - t], t == 1, MenuArena.star(team))
 	s.place(Vector3(side * PLAYER_X, 0, 0.6), Vector3(-side * 0.25, 0, 1).normalized())
+	# Standing tall for the camera, in a pose picked at random (some are for women only).
+	var poses: Array = SkaterVisual.DISPLAY_POSES.duplicate()
+	if s.body_type == "female":
+		poses.append_array(SkaterVisual.FEMALE_POSES)
+	s.visual.display_pose = _arg("pose", poses[randi() % poses.size()])
+	s.visual.display_lift = PLAYER_LIFT
 	s.visual.snap()
-	s.visual.play_clip("idle", Vector3.ONE, -1.0, 1.0, 0.05)
 	_skaters[t] = s
 
 
@@ -356,19 +362,18 @@ func _draw_plates() -> void:
 		var ink := Color.WHITE if col.get_luminance() < 0.6 else MenuStyle.INK
 		var city := str(info.city).to_upper()
 		var name := str(info.name).to_upper()
-		if name.begins_with(city):
-			city = ""
 		_plates.draw_string(small, Vector2(x0 + 70, y + 32), city, HORIZONTAL_ALIGNMENT_LEFT, PLATE_W - 140, 22, Color(ink, 0.85))
 		var fs := 46 if f.get_string_size(name, HORIZONTAL_ALIGNMENT_LEFT, -1, 46).x < PLATE_W - 150 else 36
 		_plates.draw_string(f, Vector2(x0 + 66, y + 78), name, HORIZONTAL_ALIGNMENT_LEFT, PLATE_W - 140, fs, ink)
-		# Arrows at each end of the plate (click to change the team).
+		# Up / down arrows stacked at the plate's right end, as the controls change teams
+		# (click them too). Up is the previous team.
 		for dir in [-1, 1]:
-			var ax: float = (x0 + 26) if dir < 0 else (x0 + PLATE_W - 2)
-			var ay := y + h * 0.5
-			var r := Rect2(ax - 24, ay - 30, 48, 60)
+			var ax: float = x0 + PLATE_W - 14 + sk * (0.75 if dir < 0 else 0.25)
+			var ay: float = y + h * 0.5 + dir * 22.0
+			var r := Rect2(ax - 26, ay - 22, 52, 44)
 			_arrows.append([r, t, dir])
-			var s := 13.0
-			var tri := PackedVector2Array([Vector2(ax - s * dir * 0.8, ay - s), Vector2(ax + s * dir * 0.8, ay), Vector2(ax - s * dir * 0.8, ay + s)])
+			var s := 12.0
+			var tri := PackedVector2Array([Vector2(ax - s, ay - s * 0.7 * dir), Vector2(ax + s, ay - s * 0.7 * dir), Vector2(ax, ay + s * 0.7 * dir)])
 			_plates.draw_colored_polygon(tri, Color(ink, 0.9))
 		# Star player and line ratings under the plate.
 		var star := MenuArena.star(team)

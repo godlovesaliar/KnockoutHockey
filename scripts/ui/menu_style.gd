@@ -38,6 +38,7 @@ void fragment() {
 
 static var _fonts := {}
 static var _chrome: Shader
+static var _logos := {}
 
 
 ## The heavy sports face: italic unless `slant` is 0.
@@ -174,3 +175,52 @@ static func draw_tag(ci: CanvasItem, pos: Vector2, mode: String, title: String) 
 	ci.draw_string(font(0.12), pos + Vector2(22, 22), mode, HORIZONTAL_ALIGNMENT_LEFT, -1, 20, Color.WHITE)
 	ci.draw_string(f, pos + Vector2(4, h + 64) + Vector2(3, 3), title, HORIZONTAL_ALIGNMENT_LEFT, -1, 60, Color(0, 0, 0, 0.5))
 	ci.draw_string(f, pos + Vector2(4, h + 64), title, HORIZONTAL_ALIGNMENT_LEFT, -1, 60, Color.WHITE)
+
+
+## A team's color for panels and plates: the jersey, or for white / pale jerseys the trim
+## (then the number outline), so the plate is never white.
+static func team_color(team_id: int) -> Color:
+	var c: Dictionary = Teams.team(team_id).colors
+	for k: String in ["jersey", "trim", "number_outline", "pants"]:
+		var col: Color = c[k]
+		if col.get_luminance() < 0.72:
+			return col
+	return NAVY
+
+
+## The team's crest (cached), or null.
+static func team_logo(team_id: int) -> Texture2D:
+	if not _logos.has(team_id):
+		var path: String = Teams.team(team_id).get("logo", "")
+		_logos[team_id] = load(path) if path != "" and ResourceLoader.exists(path) else null
+	return _logos[team_id]
+
+
+## A slanted bar (the menu's parallelogram): `skew` pixels of lean on each end.
+static func draw_slant(ci: CanvasItem, r: Rect2, color: Color, skew := 14.0) -> void:
+	if r.size.x < 1.0 or r.size.y < 1.0:
+		return   # mid-slide: nothing to draw yet
+	ci.draw_colored_polygon(PackedVector2Array([r.position + Vector2(skew, 0), r.position + Vector2(r.size.x + skew, 0),
+			r.position + Vector2(r.size.x, r.size.y), r.position + Vector2(0, r.size.y)]), color)
+
+
+## Text with the menu's heavy outline (and an optional drop shadow).
+static func draw_bold(ci: CanvasItem, pos: Vector2, text: String, size: int, color := Color.WHITE,
+		outline := 0, outline_color := INK, slant := 0.2, shadow := true) -> void:
+	var f := font(slant)
+	if shadow:
+		ci.draw_string(f, pos + Vector2(3, 3), text, HORIZONTAL_ALIGNMENT_LEFT, -1, size, Color(0, 0, 0, 0.45))
+	if outline > 0:
+		ci.draw_string_outline(f, pos, text, HORIZONTAL_ALIGNMENT_LEFT, -1, size, outline, outline_color)
+	ci.draw_string(f, pos, text, HORIZONTAL_ALIGNMENT_LEFT, -1, size, color)
+
+
+static func text_width(text: String, size: int, slant := 0.2) -> float:
+	return font(slant).get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, size).x
+
+
+## "#19 RIVERA" (or "#19" for players without a sheet name).
+static func player_name(s: Skater) -> String:
+	if s == null:
+		return ""
+	return ("#%d %s" % [s.number, s.last_name.to_upper()]) if s.last_name != "" else "#%d" % s.number

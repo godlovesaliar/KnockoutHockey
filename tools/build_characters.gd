@@ -21,7 +21,7 @@ extends SceneTree
 const ANIM_DIR := "res://assets/animations/"
 const OUT_DIR := "res://assets/characters/"
 const SKIP_ANIMS := ["Y Bot.fbx"]
-const LOOPING := ["idle", "sitting", "clap", "cheering", "rallying", "fight"]
+const LOOPING := ["idle", "sitting", "clap", "cheering", "rallying", "fight", "carrying"]
 const MIN_MESH_VERTS := 500     ## drop tiny extra meshes (the eyeballs are kept as "Eyes" when the body has an eye texture)
 ## The outfit's CUSTOM0 / CUSTOM1 carry rest position / normal (see _shell).
 const REST_TORSO := 0.6    ## the cloth's rest coordinates are scaled to this hips-to-neck length
@@ -86,10 +86,14 @@ static func clip_name_for(file: String) -> String:
 # --- Clips -----------------------------------------------------------------------
 
 func _load_clips() -> void:
-	for f in DirAccess.get_files_at(ANIM_DIR):
-		if not f.ends_with(".fbx") or f in SKIP_ANIMS:
-			continue
-		var root: Node = (load(ANIM_DIR + f) as PackedScene).instantiate()
+	var files: Array[String] = []
+	for dir: String in [ANIM_DIR, ANIM_DIR + "menuposes/"]:
+		for f in DirAccess.get_files_at(dir):
+			if f.ends_with(".fbx") and not f in SKIP_ANIMS:
+				files.append(dir + f)
+	for path in files:
+		var f := path.get_file()
+		var root: Node = (load(path) as PackedScene).instantiate()
 		var ap: AnimationPlayer = root.find_children("*", "AnimationPlayer", true, false)[0]
 		var sk: Skeleton3D = root.find_children("*", "Skeleton3D", true, false)[0]
 		_clips.append({"name": clip_name_for(f), "anim": ap.get_animation(ap.get_animation_list()[0]), "skel": sk, "root": root})
@@ -174,6 +178,22 @@ func _build_body(spec: Dictionary) -> Skeleton3D:
 	for jn in ["Hips", "Neck", "LeftArm", "LeftForeArm", "LeftHand", "RightArm", "RightForeArm", "RightHand",
 			"LeftUpLeg", "LeftLeg", "LeftFoot", "RightUpLeg", "RightLeg", "RightFoot"]:
 		joints[jn] = new_g[names.find(jn)].origin
+	# Modelled jersey (tools/blender/build_jersey.py), when there is one: it replaces the
+	# torso and arms of the pushed-out shell below.
+	var jersey := _jersey(spec, names, new_g, joints)
+	if jersey != null:
+		out.add_child(jersey)
+		jersey.owner = root
+		jersey.skeleton = NodePath("..")
+		root.set_meta("jersey", true)
+		# The goalie cut (room for a chest protector and arm pads), hidden: GoalieVisual
+		# swaps it in for the skater's.
+		var gj := _jersey(spec, names, new_g, joints, "_goalie", "Outfit_GoalieJersey")
+		if gj != null:
+			gj.visible = false
+			out.add_child(gj)
+			gj.owner = root
+			gj.skeleton = NodePath("..")
 	var all_meshes: Array[MeshInstance3D] = meshes.duplicate()
 	if eyes != null:
 		all_meshes.append(eyes)
@@ -192,16 +212,7 @@ func _build_body(spec: Dictionary) -> Skeleton3D:
 		# stays), so patterns measured from them fit A-pose and T-pose bodies alike.
 		var unpose: Array[Transform3D] = []
 		for b in bind_bone.size():
-			var bn: String = names[bind_bone[b]] if bind_bone[b] >= 0 else ""
-			var xf := Transform3D.IDENTITY
-			for side in ["Left", "Right"]:
-				if bn.begins_with(side) and not bn.ends_with("Shoulder") and (bn.contains("Arm") or bn.contains("Hand")):
-					var sh: Vector3 = joints[side + "Arm"]
-					var dir: Vector3 = ((joints[side + "ForeArm"] as Vector3) - sh).normalized()
-					var target := Vector3(signf(dir.x), 0, 0)
-					var rot := Basis(Quaternion(dir, target))
-					xf = Transform3D(rot, sh - rot * sh)
-			unpose.append(xf)
+			unpose.append(_unpose_for(names[bind_bone[b]] if bind_bone[b] >= 0 else "", joints))
 		var mesh := ArrayMesh.new()
 		var outfit := ArrayMesh.new()
 		for s in mi.mesh.get_surface_count():
@@ -250,11 +261,20 @@ func _build_body(spec: Dictionary) -> Skeleton3D:
 				for i in uv.size():
 					uv[i].y = 1.0 - uv[i].y
 				arr[Mesh.ARRAY_TEX_UV] = uv
-			arr[Mesh.ARRAY_COLOR] = colors
 			arr[Mesh.ARRAY_TEX_UV2] = uv2
 			var flags: int = mi.mesh.surface_get_format(s) & Mesh.ARRAY_FLAG_USE_8_BONE_WEIGHTS
+			# Under a modelled jersey the top of the chest stays skin: it fills the collar's
+			# opening and V (the jersey stands well off it there, so it can't poke through).
+			var body_colors := colors
+			if jersey != null:
+				body_colors = colors.duplicate()
+				for i in verts.size():
+					if colors[i].r > 0.5 and uv2[i].y > JERSEY_SKIN_F:
+						body_colors[i] = Color(0, 0, 0, 0)
+			arr[Mesh.ARRAY_COLOR] = body_colors
 			mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr, [], {}, flags)
-			var shell := _shell(arr, thick, per, dom, joints, unpose)
+			arr[Mesh.ARRAY_COLOR] = colors
+			var shell := _shell(arr, thick, per, dom, joints, unpose, jersey != null)
 			if not shell.is_empty():
 				outfit.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, shell, [], {}, flags | REST_FORMAT)
 		var o := MeshInstance3D.new()
@@ -329,7 +349,7 @@ static func cloth_thickness(bone: String) -> float:
 ## The uniform layer of one body surface: every triangle touching a covered vertex,
 ## pushed out along the normals. Bare-skin vertices on its edge take a neighbor's colors
 ## and a small offset, so the hems sit just off the skin.
-func _shell(arr: Array, thick: PackedFloat32Array, per: int, dom: PackedStringArray, joints: Dictionary, unpose: Array[Transform3D]) -> Array:
+func _shell(arr: Array, thick: PackedFloat32Array, per: int, dom: PackedStringArray, joints: Dictionary, unpose: Array[Transform3D], has_jersey := false) -> Array:
 	var verts: PackedVector3Array = arr[Mesh.ARRAY_VERTEX]
 	var norms: PackedVector3Array = arr[Mesh.ARRAY_NORMAL]
 	var colors: PackedColorArray = arr[Mesh.ARRAY_COLOR]
@@ -352,6 +372,8 @@ func _shell(arr: Array, thick: PackedFloat32Array, per: int, dom: PackedStringAr
 			if cov[idx[t + kk]] == 1:
 				any = idx[t + kk]
 		if any < 0:
+			continue
+		if has_jersey and _under_jersey(colors, uv2, idx[t], idx[t + 1], idx[t + 2]):
 			continue
 		for kk in 3:
 			var o := idx[t + kk]
@@ -437,6 +459,8 @@ func _shell(arr: Array, thick: PackedFloat32Array, per: int, dom: PackedStringAr
 		# step from one ring of triangles to the next.
 		var u := uv2[col_from[j]]
 		u.y = (region_of(dom[col_from[j]], gpos[group[j]], joints)[1] as Vector2).y
+		if has_jersey and nc[j].r > 0.5:
+			u.y = minf(u.y, JERSEY_HEM_F - 0.02)   # only pants left on the shell's torso
 		nu2.append(u)
 		for q in per:
 			nb.append(bones[o * per + q])
@@ -450,25 +474,55 @@ func _shell(arr: Array, thick: PackedFloat32Array, per: int, dom: PackedStringAr
 	out[Mesh.ARRAY_BONES] = nb
 	out[Mesh.ARRAY_WEIGHTS] = nw
 	out[Mesh.ARRAY_INDEX] = ni
-	# Rest-pose position and normal for the uniform shader's
-	# fabric detail: patterns pinned to the cloth, so they don't swim when the body moves.
+	var rest := _rest_attrs(nv, nn, nb, nw, per, unpose, joints)
+	out[Mesh.ARRAY_CUSTOM0] = rest[0]
+	out[Mesh.ARRAY_CUSTOM1] = rest[1]
+	return out
+
+
+## A shell triangle the modelled jersey hides: any corner on an arm, or on the torso
+## above the hips joint (the jersey's hem hangs well below that, so the pants' top edge
+## stays covered). What's left of the shell's torso is all pants (see _shell).
+static func _under_jersey(colors: PackedColorArray, uv2: PackedVector2Array, a: int, b: int, c: int) -> bool:
+	for i in [a, b, c]:
+		if colors[i].g > 0.5:
+			return true
+		if colors[i].r > 0.5 and uv2[i].y > 0.0:
+			return true
+	return false
+
+
+## Arms swung out to a T-pose about the shoulder joint, for vertices skinned to `bone`
+## (identity for everything else). See _rest_attrs.
+static func _unpose_for(bone: String, joints: Dictionary) -> Transform3D:
+	for side in ["Left", "Right"]:
+		if bone.begins_with(side) and not bone.ends_with("Shoulder") and (bone.contains("Arm") or bone.contains("Hand")):
+			var sh: Vector3 = joints[side + "Arm"]
+			var dir: Vector3 = ((joints[side + "ForeArm"] as Vector3) - sh).normalized()
+			var rot := Basis(Quaternion(dir, Vector3(signf(dir.x), 0, 0)))
+			return Transform3D(rot, sh - rot * sh)
+	return Transform3D.IDENTITY
+
+
+## Rest-pose position and normal (CUSTOM0 / CUSTOM1) for the uniform shader's fabric
+## detail: patterns pinned to the cloth, so they don't swim when the body moves. Arms
+## swung out to a T-pose (blended by the skin weights, so it stays smooth), origin at the
+## base of the neck, scaled to a REST_TORSO-long torso: the same pattern sizes and yoke
+## shape fit every body.
+static func _rest_attrs(nv: PackedVector3Array, nn: PackedVector3Array, bones: PackedInt32Array, weights: PackedFloat32Array, per: int, unpose: Array[Transform3D], joints: Dictionary) -> Array:
 	var rest_p := PackedFloat32Array()
 	var rest_n := PackedFloat32Array()
-	# Arms swung out to a T-pose (blended by the skin weights, so it stays smooth), origin
-	# at the base of the neck, scaled to a REST_TORSO-long torso: the same pattern sizes
-	# and yoke shape fit every body.
 	var neck: Vector3 = joints.Neck
 	var k := REST_TORSO / maxf(neck.y - (joints.Hips as Vector3).y, 0.01)
 	for j in nv.size():
-		var o := src[j]
 		var tp := Vector3.ZERO
 		var tn := Vector3.ZERO
 		var wsum := 0.0
 		for q in per:
-			var w := weights[o * per + q]
+			var w := weights[j * per + q]
 			if w <= 0.0:
 				continue
-			var xf := unpose[bones[o * per + q]]
+			var xf := unpose[bones[j * per + q]]
 			tp += (xf * nv[j]) * w
 			tn += (xf.basis * nn[j]) * w
 			wsum += w
@@ -481,9 +535,168 @@ func _shell(arr: Array, thick: PackedFloat32Array, per: int, dom: PackedStringAr
 		tn = tn.normalized()
 		rest_p.append_array([r.x, r.y, r.z])
 		rest_n.append_array([tn.x, tn.y, tn.z])
-	out[Mesh.ARRAY_CUSTOM0] = rest_p
-	out[Mesh.ARRAY_CUSTOM1] = rest_n
-	return out
+	return [rest_p, rest_n]
+
+
+## Position along an arm (0 shoulder .. 1 wrist) from the nearer of its two segments.
+static func _arm_f(v: Vector3, side: String, j: Dictionary) -> float:
+	var a: Vector3 = j[side + "Arm"]
+	var b: Vector3 = j[side + "ForeArm"]
+	var c: Vector3 = j[side + "Hand"]
+	var l1 := a.distance_to(b)
+	var l2 := b.distance_to(c)
+	var t1 := clampf((v - a).dot(b - a) / (l1 * l1), 0.0, 1.0)
+	var t2 := clampf((v - b).dot(c - b) / (l2 * l2), 0.0, 1.2)
+	var d1 := v.distance_to(a.lerp(b, t1))
+	var d2 := v.distance_to(b.lerp(c, t2))
+	return (l1 + t2 * l2) / (l1 + l2) if d2 < d1 else t1 * l1 / (l1 + l2)
+
+
+## Torso position the jersey's hem is drawn at: just above the shader's pants_top, so the
+## hem stripe (hem_band) sits along the real hem and nothing of the jersey reads as pants.
+const JERSEY_HEM_F := 0.172
+## Above this the jersey keeps the body's own torso positions (the yoke, the collar).
+const JERSEY_KEEP_F := 0.45
+## Body skin above this torso position stays drawn under a modelled jersey (the collar).
+const JERSEY_SKIN_F := 0.82
+
+
+## The modelled jersey for this body, as an "Outfit_Jersey" skinned mesh on the new
+## skeleton (null when there is none): positions as exported (meters, feet at 0, +Z
+## forward, the same space as the body), regions and rest attributes baked like the shell.
+func _jersey(spec: Dictionary, names: Array[String], new_g: Array[Transform3D], joints: Dictionary, variant := "", node_name := "Outfit_Jersey") -> MeshInstance3D:
+	var path := "res://assets/characters/jersey_%s%s.glb" % [spec.name, variant]
+	if not ResourceLoader.exists(path):
+		return null
+	var src: Node3D = (load(path) as PackedScene).instantiate()
+	var gsk: Skeleton3D = src.find_children("*", "Skeleton3D", true, false)[0]
+	var mi: MeshInstance3D = gsk.find_children("*", "MeshInstance3D", true, false)[0]
+	# Both exports come from the same rig: their joints must line up, or the jersey was
+	# built from a stale body.
+	var to_root := Transform3D.IDENTITY
+	var n: Node = gsk
+	while n != src:
+		to_root = (n as Node3D).transform * to_root
+		n = n.get_parent()
+	var worst := 0.0
+	for jn in ["Hips", "Neck", "LeftHand", "RightHand"]:
+		var gb := -1
+		for b in gsk.get_bone_count():
+			if _canonical(spec, gsk.get_bone_name(b)) == jn:
+				gb = b
+		if gb >= 0:
+			worst = maxf(worst, (to_root * gsk.get_bone_global_rest(gb).origin).distance_to(joints[jn]))
+	if worst > 0.02:
+		push_error("%s: joints off by %.3f m from body_%s; re-run tools/blender/build_jersey.py" % [path, worst, spec.name])
+		src.free()
+		return null
+	var skin := mi.skin
+	var new_skin := Skin.new()
+	var unpose: Array[Transform3D] = []
+	var bind_names: Array[String] = []
+	for i in skin.get_bind_count():
+		var raw := skin.get_bind_name(i)
+		if raw == "":
+			raw = gsk.get_bone_name(skin.get_bind_bone(i))
+		var cn := _canonical(spec, raw)
+		var bi := names.find(cn)
+		if bi < 0:
+			push_error("%s: bone %s not in body_%s" % [path, raw, spec.name])
+			src.free()
+			return null
+		bind_names.append(cn)
+		new_skin.add_named_bind(cn, new_g[bi].affine_inverse())
+		unpose.append(_unpose_for(cn, joints))
+	var mesh_xf := to_root * gsk.global_transform.affine_inverse() * mi.global_transform if mi.is_inside_tree() else to_root
+	var outfit := ArrayMesh.new()
+	for s in mi.mesh.get_surface_count():
+		var arr := mi.mesh.surface_get_arrays(s)
+		var verts: PackedVector3Array = arr[Mesh.ARRAY_VERTEX]
+		var norms: PackedVector3Array = arr[Mesh.ARRAY_NORMAL]
+		var bones: PackedInt32Array = arr[Mesh.ARRAY_BONES]
+		var weights: PackedFloat32Array = arr[Mesh.ARRAY_WEIGHTS]
+		var parts: PackedColorArray = arr[Mesh.ARRAY_COLOR] if arr[Mesh.ARRAY_COLOR] != null else PackedColorArray()
+		var per := bones.size() / verts.size()
+		for i in verts.size():
+			verts[i] = mesh_xf * verts[i]
+			norms[i] = (mesh_xf.basis * norms[i]).normalized()
+		var colors := PackedColorArray()
+		var uv2 := PackedVector2Array()
+		colors.resize(verts.size())
+		uv2.resize(verts.size())
+		var reg := []
+		var arm_end := {"Left": 0.01, "Right": 0.01}
+		for i in verts.size():
+			var best := 0
+			var bw := -1.0
+			for q in per:
+				if weights[i * per + q] > bw:
+					bw = weights[i * per + q]
+					best = bones[i * per + q]
+			var bn := bind_names[best]
+			# Hands and head never own jersey vertices (the Blender side remaps them away);
+			# the neck's collar belongs to the torso.
+			if bn.begins_with("Neck") or bn.begins_with("Head"):
+				bn = "Spine2"
+			var r := region_of(bn, verts[i], joints)
+			if (r[0] as Color).g > 0.5:
+				# Along the sleeve by where the vertex is, not which bone holds it most:
+				# loose cloth past the elbow can still be mostly upper arm, which would pin
+				# it to the elbow and fray the sleeve stripe's edges.
+				r[1] = Vector2(0, _arm_f(verts[i], "Left" if bn.begins_with("Left") else "Right", joints))
+			reg.append(r)
+			var c: Color = r[0]
+			if c.g > 0.5:
+				var side := "Left" if bn.begins_with("Left") else "Right"
+				arm_end[side] = maxf(arm_end[side], (r[1] as Vector2).y)
+		var f_hem := INF
+		for i in verts.size():
+			if (reg[i][0] as Color).r > 0.5:
+				f_hem = minf(f_hem, (reg[i][1] as Vector2).y)
+		for i in verts.size():
+			var c: Color = reg[i][0]
+			var u: Vector2 = reg[i][1]
+			# Torso vs sleeve from the (smoothed) arm weights rather than the dominant
+			# bone: a gradual blend over the shoulder instead of a zigzag along triangle edges.
+			var w_arm := 0.0
+			for q in per:
+				var bn: String = bind_names[bones[i * per + q]]
+				if bn.ends_with("Arm") or bn.ends_with("Hand"):
+					w_arm += weights[i * per + q]
+			var k := smoothstep(0.25, 0.75, w_arm)
+			var side := "Left" if verts[i].x > 0.0 else "Right"
+			var f_torso := (verts[i].y - (joints.Hips as Vector3).y) / ((joints.Neck as Vector3).y - (joints.Hips as Vector3).y)
+			if f_torso < JERSEY_KEEP_F:
+				f_torso = remap(f_torso, f_hem, JERSEY_KEEP_F, JERSEY_HEM_F, JERSEY_KEEP_F)
+			var f_arm := minf(_arm_f(verts[i], side, joints) / arm_end[side], 1.0)
+			c = Color(1.0 - k, k, 0, 0)
+			u.y = f_arm if k > 0.5 else f_torso
+			# UV2.x < 0 marks the modelled jersey (uniform_regions): -0.25 cloth, -1 collar
+			# and laces (drawn in the trim color).
+			u.x = -1.0 if not parts.is_empty() and parts[i].r > 0.25 else -0.25
+			colors[i] = c
+			uv2[i] = u
+		var out := []
+		out.resize(Mesh.ARRAY_MAX)
+		out[Mesh.ARRAY_VERTEX] = verts
+		out[Mesh.ARRAY_NORMAL] = norms
+		out[Mesh.ARRAY_COLOR] = colors
+		out[Mesh.ARRAY_TEX_UV2] = uv2
+		out[Mesh.ARRAY_BONES] = bones
+		out[Mesh.ARRAY_WEIGHTS] = weights
+		out[Mesh.ARRAY_INDEX] = arr[Mesh.ARRAY_INDEX]
+		var rest := _rest_attrs(verts, norms, bones, weights, per, unpose, joints)
+		out[Mesh.ARRAY_CUSTOM0] = rest[0]
+		out[Mesh.ARRAY_CUSTOM1] = rest[1]
+		var flags: int = mi.mesh.surface_get_format(s) & Mesh.ARRAY_FLAG_USE_8_BONE_WEIGHTS
+		outfit.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, out, [], {}, flags | REST_FORMAT)
+	src.free()
+	var o := MeshInstance3D.new()
+	o.name = node_name
+	o.mesh = outfit
+	o.skin = new_skin
+	print("  jersey: %s (%d binds, joints within %.3f m)" % [path, new_skin.get_bind_count(), worst])
+	return o
 
 
 ## Average color of a texture, in linear space (the skin shader divides by it).

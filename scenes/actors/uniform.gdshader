@@ -35,6 +35,11 @@ uniform float bump = 1.0;
 // distance stretched by `yoke_shape` (y: shallower down the chest and back). One smooth
 // shape across body and sleeves, so its edge doesn't step where they meet. 0 = none.
 uniform float yoke_r = 0.0;
+// Officials: `vstripes` vertical stripes in the accent color around the torso (and in
+// proportion around each sleeve), alternating with the jersey color. 0 = none.
+uniform float vstripes = 0.0;
+// Officials: long pants down over the legs instead of socks (socks drawn as pants).
+uniform bool long_pants = false;
 uniform vec3 yoke_shape = vec3(0.8, 2.6, 0.0);   // z 0: depth ignored, so pads poking through the jersey agree with it
 
 varying vec3 rest_p;
@@ -112,7 +117,21 @@ void fragment() {
 		tr = max(tr - acc, yk) + acc * (1.0 - yk);
 		acc *= 1.0 - yk;
 	}
-	vec3 c = jersey * (part.x + part.z - tr) + trim * (tr - acc) + accent_color * acc + pants * part.y + gloves * part.w + skates * sk;
+	vec3 jcol = jersey;
+	if (vstripes > 0.0) {
+		// Around the torso's vertical axis, or around the arm (T-pose: arms along x).
+		float torso_u = atan(rest_p.x, rest_p.z) / 6.2831853 * vstripes;
+		float arm_u = atan(rest_p.y, rest_p.z) / 6.2831853 * max(floor(vstripes * 0.32 + 0.5), 2.0);
+		float aw = COLOR.g / max(COLOR.r + COLOR.g, 1e-3);
+		float u = mix(torso_u, arm_u, step(0.5, aw));
+		float fr = fract(u);
+		float aa = clamp(fwidth(u) * 1.5, 0.002, 0.25);
+		float band = smoothstep(0.25 - aa, 0.25 + aa, fr) * (1.0 - smoothstep(0.75 - aa, 0.75 + aa, fr));
+		jcol = mix(jersey, accent_color, band);
+	}
+	float sock_k = long_pants ? 0.0 : 1.0;
+	vec3 c = jcol * (part.x - tr) + jersey * part.z * sock_k + trim * (tr - acc) + accent_color * acc
+			+ pants * (part.y + part.z * (1.0 - sock_k)) + gloves * part.w + skates * sk;
 	c = c / total;
 
 	vec3 p = rest_p;
@@ -146,10 +165,15 @@ void fragment() {
 		// the body.
 		float fold_arm = noise3(vec3(f * 26.0, p.y * 4.0, p.z * 4.0));
 		float fold_body = noise3(vec3(p.x * 7.0, p.y * 2.0, p.z * 7.0)) * 0.7 + noise3(p * 16.0) * 0.3;
-		float fold = mix(fold_body, fold_arm, COLOR.g);
+		// The modelled jersey (UV2.x < 0) has its folds in the mesh: only a faint body
+		// ripple here, and none of the sleeve rings (they follow UV2.y, which jumps where
+		// the torso hands over to the sleeve).
+		float modelled = step(0.1, -UV2.x);
+		float fold = mix(fold_body, fold_arm, COLOR.g * (1.0 - modelled));
 		fold = smoothstep(0.15, 0.85, fold);
-		float elbow = COLOR.g * exp(-pow((f - 0.45) * 9.0, 2.0));
+		float elbow = COLOR.g * exp(-pow((f - 0.45) * 9.0, 2.0)) * (1.0 - modelled);
 		fold = mix(fold, fold * 1.4, elbow);
+		fold = mix(fold, 0.5 + (fold - 0.5) * 0.3, modelled);
 		// Sewn seams: both edges of every stripe, the hem, the cuff and the shoulder.
 		float s = 0.0;
 		s += pure.r * (seam(f, hem_band.x) + seam(f, hem_band.y));

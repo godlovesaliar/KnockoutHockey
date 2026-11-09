@@ -6,7 +6,7 @@ class_name Rosters
 ## generated players near 57, so ratings are shifted to that center. The differences
 ## between players are kept one for one: a 90 skater plays 15 points above the average.
 ##
-## Columns: team, abbr, number, first, last, nickname, gender, age, position (C/LW/RW/D/G),
+## Columns: team, abbr, conference, number, first, last, nickname, gender, age, position (C/LW/RW/D/G),
 ## hand, height, weight_lbs, playstyle, overall, SKA SHT PAS HND PHY DEF (skaters),
 ## REF POS GLV BLK RBD (goalies).
 

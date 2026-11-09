@@ -18,6 +18,10 @@ Assets from Sketchfab (CC-BY). The male and female character bases are used for 
 | Baseball glove (`baseball_glove.glb`; goalie catcher, recolored) | author to add | CC-BY-4.0 (Sketchfab) | link to add |
 | Tactical combat gloves (`tactical_combat_gloves_-_game_ready.glb`; unused) | author to add | CC-BY-4.0 (Sketchfab) | link to add |
 | CCM Premier Hockey Goalie Stick (`ccm_premier_goaliestick.blend`; brand texture dropped) | CGTrader (free model) | CGTrader Royalty Free License, no AI use, no redistribution of the file | https://www.cgtrader.com/free-3d-models/sports/equipment/ccm-premier-hockey-goalie-stick |
+| Hair and Beard (PUBG Mobile) (`assets/player/hair_and_beard__pubg_mobile_3d_model.glb`; five hairstyles and the beard, cut by tools/build_hair.gd, tinted per player) | author to add | to confirm (Sketchfab) | link to add |
+| Moustache (`assets/player/mostache.glb`) | author to add | to confirm (Sketchfab) | link to add |
+| Long braid hairstyle (`assets/player/ported_hair.glb`) | author to add | to confirm (Sketchfab) | link to add |
+| SRG moto glove (`assets/equip/srg_glove.glb`; tried as the skater glove, not used: the glove is built in tools/build_gear.gd) | author to add | to confirm (Sketchfab) | link to add |
 | Female Character Base - Rigged | Braingapps | CC-BY-4.0 | https://sketchfab.com/3d-models/female-character-base-rigged-9245f75f5d0d45cb9e867d5133d5fdc1 |
 | Male Character Base - Rigged | Braingapps | CC-BY-4.0 | https://sketchfab.com/3d-models/male-character-base-rigged-83d91cbfe6fd48ad87f3a2264d3bcb47 |
 

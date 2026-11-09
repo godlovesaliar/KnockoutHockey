@@ -70,3 +70,46 @@ static func perimeter(offset: float, segs: int) -> PackedVector2Array:
 			var a := a0 + PI * 0.5 * float(i) / float(segs)
 			pts.append(centers[c] + Vector2(cos(a), sin(a)) * r)
 	return pts
+
+
+# --- Benches and penalty boxes (NHL layout) -------------------------------------------
+# Team benches sit along the -X boards in the neutral zone, one per team, each with two
+# doors; the penalty boxes face them across the ice on the +X boards, with the timekeeper
+# between them, one full-height door each. Teams keep their bench and box all game
+# (team 0's are on the +Z half). Z ranges are [from, to] along the boards.
+
+const BENCH_SIDE := -1.0              ## x sign of the bench boards
+const BOX_SIDE := 1.0                 ## x sign of the penalty-box boards
+const BENCH_Z := [Vector2(1.0, 8.6), Vector2(-8.6, -1.0)]   ## per team
+const BENCH_DEPTH := 2.3              ## meters from the boards' outer face to the back wall
+const BOX_Z := [Vector2(1.4, 5.4), Vector2(-5.4, -1.4)]
+const BOX_DEPTH := 1.9
+const TIMEKEEPER_Z := Vector2(-1.2, 1.2)
+const DOOR_W := 0.8
+## The bench doors (one at each end of the bench) and the box door (by the timekeeper),
+## as [z of the hinge, z of the latch]: the door swings out of the rink about the hinge.
+const BENCH_DOORS := [[Vector2(1.2, 2.0), Vector2(8.4, 7.6)], [Vector2(-1.2, -2.0), Vector2(-8.4, -7.6)]]
+const BOX_DOORS := [Vector2(1.6, 2.4), Vector2(-1.6, -2.4)]
+
+
+## Every door opening as [x sign, z0, z1] (z0 < z1), for cutting the boards.
+static func door_gaps() -> Array:
+	var out := []
+	for t in 2:
+		for dz: Vector2 in BENCH_DOORS[t]:
+			out.append([BENCH_SIDE, minf(dz.x, dz.y), maxf(dz.x, dz.y)])
+		var bz: Vector2 = BOX_DOORS[t]
+		out.append([BOX_SIDE, minf(bz.x, bz.y), maxf(bz.x, bz.y)])
+	return out
+
+
+## Where the glass stops: the bench fronts are open above the boards ([x sign, z0, z1]),
+## and the box doors carry their own glass.
+static func glass_gaps() -> Array:
+	var out := []
+	for t in 2:
+		var b: Vector2 = BENCH_Z[t]
+		out.append([BENCH_SIDE, minf(b.x, b.y), maxf(b.x, b.y)])
+		var bz: Vector2 = BOX_DOORS[t]
+		out.append([BOX_SIDE, minf(bz.x, bz.y), maxf(bz.x, bz.y)])
+	return out

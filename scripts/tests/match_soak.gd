@@ -62,11 +62,26 @@ func _play(n: int, period: float, totals: Dictionary) -> void:
 	var carried_ticks := 0
 	var longest_carry := 0
 	var phases_seen := {}
+	var stranded := 0   # benched skaters left standing on the ice / live ones not in the lineup
+	var stranded_note := ""
+	var odd_for := {}
 	var ticks := 0
 	while not done.finished and ticks < limit:
 		await get_tree().physics_frame
 		ticks += 1
 		phases_seen[m.phase] = true
+		if ticks % 60 == 0 and m.phase != MatchDirector.Phase.FIGHT:
+			for t in 2:
+				var lu := m.lineup(t)
+				for s in lu.all_skaters():
+					# Walks through the doors take a few seconds; longer than 10 s is stuck.
+					var on_ice := RinkSpec.sdf(s.global_position.x, s.global_position.z) < 0.0
+					var odd := (s.benched and on_ice) or (not s.benched and not (s in lu.on_ice))
+					odd_for[s] = (odd_for.get(s, 0.0) + 0.5) if odd else 0.0
+					if odd_for[s] > 10.0:
+						stranded += 1
+						if stranded_note == "":
+							stranded_note = "#%d team %d benched %s at %s" % [s.number, t, s.benched, s.global_position]
 		var p := m.puck.global_position
 		if m.puck.in_play and RinkSpec.sdf(p.x, p.z) > 0.5:
 			escapes += 1
@@ -85,6 +100,7 @@ func _play(n: int, period: float, totals: Dictionary) -> void:
 	_check(escapes == 0, "game %d: puck never escapes the rink (%d ticks)" % [n, escapes])
 	_check(longest_carry < 120 * 25, "game %d: nobody holds the puck forever (longest %.1fs)" % [n, longest_carry / 120.0])
 	_check(phases_seen.has(MatchDirector.Phase.PERIOD_END), "game %d: periods advance" % n)
+	_check(stranded == 0, "game %d: everyone off the ice is on the bench or in the box (%d strays%s)" % [n, stranded, (": " + stranded_note) if stranded_note != "" else ""])
 	totals.goals += m.score[0] + m.score[1]
 	totals.shots += st.shots[0] + st.shots[1]
 	totals.saves += st.saves[0] + st.saves[1]

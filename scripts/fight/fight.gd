@@ -4,7 +4,8 @@ extends Node
 ## gloves; it runs while the match is in Phase.FIGHT and reports the result.
 ##
 ## Stages: PROMPT (a human on the team that took the hit decides: A yes / B no) ->
-## SQUARE_UP (sticks and gloves drop, the others form a ring, the camera cuts in) ->
+## SQUARE_UP (sticks and gloves drop, helmets come off, the others form a ring, the
+## camera cuts in) ->
 ## FIGHT -> OVER (knockdown or decision, then the director sends both to the box).
 ##
 ## Each fighter has health (fighting + durability), balance (strength) and stamina
@@ -24,11 +25,14 @@ extends Node
 
 signal finished(winner: Skater, loser: Skater)   ## winner null = draw (loser null too)
 signal declined
+signal knockout(winner: Skater, loser: Skater)   ## the moment one goes down (for the replay)
 
 enum Stage { PROMPT, SQUARE_UP, FIGHT, OVER }
 
 const PROMPT_TIME := 3.0
-const SQUARE_TIME := 1.4
+const SQUARE_TIME := 2.5
+const HELMET_AT := [0.4, 0.55]   ## square-up s each fighter starts taking the helmet off (after the stick drops)
+const GEAR_FALL := 0.35          ## s for the stick and gloves to hit the ice
 const TIME_LIMIT := 25.0
 const OVER_TIME := 3.2
 const GAP := 0.95             ## meters between the fighters' centers when squared up
@@ -59,6 +63,7 @@ const MOVES := {
 }
 const HIT_CLIPS := {"jab": "light_hit_to_head", "hay": "head_hit", "upper": "receive_uppercut_to_the_face", "short": "stomach_hit"}
 const IDLE_CLIP := "bouncing_fight_idle"
+const KO_FROM := 0.9   ## knocked_out clip s where the body starts to turn and drop
 const FULL := Vector3.ONE
 
 
@@ -205,6 +210,14 @@ func _physics_process(delta: float) -> void:
 			_update_prompt(delta)
 		Stage.SQUARE_UP:
 			_move(delta)
+			for k in 2:
+				var f: Fighter = [a, b][k]
+				if _t - delta < HELMET_AT[k] and _t >= HELMET_AT[k]:
+					f.s.visual.take_off_helmet()
+				var idle_at: float = HELMET_AT[k] + SkaterVisual.HELMET_END
+				if _t - delta < idle_at and _t >= idle_at:
+					f.pose = ""
+					_set_pose(f, "idle")
 			if _t > SQUARE_TIME:
 				stage = Stage.FIGHT
 				_t = 0.0
@@ -253,10 +266,10 @@ func _begin_square_up() -> void:
 		s.frozen = true
 		s.place(_spot(f), axis * f.toward())
 		s.visual.snap()
+		var held := s.visual.held_gear()
 		s.visual.set_fight_mode(true)
 		s.visual.yaw_offset = STANCE_YAW
-		_drop_gear(s)
-		_set_pose(f, "idle")
+		_drop_gear(s, held)
 	# Everyone else gathers round, leaving the camera's side open.
 	var others: Array[Skater] = []
 	for t in 2:
@@ -279,23 +292,30 @@ func _begin_square_up() -> void:
 	_hud.banner("GLOVES OFF!")
 
 
-func _drop_gear(s: Skater) -> void:
-	# The stick and gloves land on the ice at the fighter's feet.
+## The stick and gloves fall from the fighter's hands to the ice at their feet. `held`:
+## SkaterVisual.held_gear() from just before they were hidden.
+func _drop_gear(s: Skater, held: Dictionary) -> void:
 	var r := s.global_position + Vector3(_rng.randf_range(-0.6, 0.6), 0.0, _rng.randf_range(-0.6, 0.6))
 	var stick := MeshInstance3D.new()
 	stick.mesh = SkaterVisual.STICK_MESH
 	stick.material_override = MeshUtil.material(Color(0.07, 0.07, 0.08), 0.5)
 	add_child(stick)
-	stick.global_transform = Transform3D(Basis(Vector3.UP, _rng.randf() * TAU) * Basis(Vector3.RIGHT, -PI * 0.5), r + Vector3(0, 0.02, 0))
-	_props.append(stick)
+	_fall(stick, held.stick, Transform3D(Basis(Vector3.UP, _rng.randf() * TAU) * Basis(Vector3.RIGHT, -PI * 0.5), r + Vector3(0, 0.02, 0)))
 	for k in 2:
 		var g := MeshInstance3D.new()
 		g.mesh = SkaterVisual.GLOVE_MESH
-		g.material_override = MeshUtil.material(s.visual.team_colors().gloves, 0.55)
+		g.material_override = SkaterVisual.glove_material(s.visual.team_colors().gloves, s.visual.team_colors().trim)
 		add_child(g)
 		var gp := s.global_position + Vector3(_rng.randf_range(-0.7, 0.7), 0.06, _rng.randf_range(-0.7, 0.7))
-		g.global_transform = Transform3D(Basis(Vector3.UP, _rng.randf() * TAU) * Basis(Vector3.RIGHT, PI * 0.5), gp)
-		_props.append(g)
+		_fall(g, held.gloves[k], Transform3D(Basis(Vector3.UP, _rng.randf() * TAU) * Basis(Vector3.RIGHT, PI * 0.5), gp))
+
+
+## A dropped prop: from `from` (in the hands) down to `to` on the ice, speeding up.
+func _fall(p: Node3D, from: Transform3D, to: Transform3D) -> void:
+	_props.append(p)
+	p.global_transform = from
+	var tw := p.create_tween()
+	tw.tween_property(p, "global_transform", to, GEAR_FALL * _rng.randf_range(0.85, 1.15)).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
 
 
 # --- The fight -----------------------------------------------------------------------
@@ -612,13 +632,15 @@ func _knockdown(w: Fighter, l: Fighter) -> void:
 	l.health = maxf(l.health, 0.0)
 	l.balance = maxf(l.balance, 0.0)
 	l.grabbing = 0.0
-	l.s.visual.play_clip("knocked_out", FULL, OVER_TIME + 1.0, 1.0, 0.1)
+	# The clip stands still for its first ~0.9 s; start at the turn so the fall follows the blow.
+	l.s.visual.play_clip("knocked_out", FULL, OVER_TIME + 1.0, 1.1, 0.05, KO_FROM)
 	w.act = "down"   # done throwing
 	w.grabbing = 0.0
 	w.s.visual.play_clip("taunt" if _rng.randf() < 0.5 else "fist_pump", FULL, OVER_TIME, 1.0, 0.2)
 	_hitstop(140)
 	_shake = 0.14
 	_over(w.s, l.s, "%s DROPS %s!" % [_name(w.s), _name(l.s)])
+	knockout.emit(w.s, l.s)
 
 
 func _decision() -> void:

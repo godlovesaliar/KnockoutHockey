@@ -14,6 +14,8 @@ func _init() -> void:
 		if rows.is_empty():
 			missing.append(t.abbr)
 			continue
+		if str(rows[0].get("conference", t.conference)) != t.conference:
+			print("!! %s: sheet says conference %s, Teams.LIST says %s" % [t.abbr, rows[0].conference, t.conference])
 		if only != "" and t.abbr != only:
 			print("%s %-22s %d players" % [t.abbr, Teams.full_name(i), rows.size()])
 			continue
@@ -23,4 +25,6 @@ func _init() -> void:
 			print("  #%-2s %-3s %-12s %-14s ovr %s  spd %d sht %d pas %d chk %d def %d fgt %d agg %d  | ref %d pos %d" % [
 				p.number, p.position, p.last, p.playstyle, p.overall, s.speed, s.shot_power, s.passing, s.checking, s.defense, s.fighting, s.aggression, s.reflexes, s.positioning])
 	print("generated (no roster): ", missing)
+	for c: String in Teams.CONFERENCES:
+		print("%s (%d): %s" % [c, Teams.in_conference(c).size(), ", ".join(Teams.in_conference(c).map(func(i: int) -> String: return Teams.team(i).abbr))])
 	quit()

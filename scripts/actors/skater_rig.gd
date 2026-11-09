@@ -18,6 +18,10 @@ enum Arms { STICK, FREE }
 var w_legs := 1.0
 var w_spine := 1.0
 var w_arms := 1.0
+## Parked off the ice (SkaterVisual.bench_pose): while a clip owns the whole body, skip the
+## procedural work (breathing, grips) so a full bench stays cheap. Off everywhere else:
+## menu poses still breathe and fight fists still close.
+var clip_only := false
 var hips_drop := 0.0            ## m the pelvis sinks (knees bend to match)
 var hips_shift := Vector3.ZERO  ## extra pelvis offset, skeleton space
 var hips_yaw := 0.0
@@ -36,13 +40,53 @@ var arm_mode := Arms.STICK
 var stick_side := 1.0           ## +1 blade on the character's right (right-handed shot)
 var blade_world := Vector3.ZERO
 var hand_world: Array[Vector3] = [Vector3.ZERO, Vector3.ZERO]   ## [left, right] for ARMS_FREE
+## ARMS_FREE: a hand holding a stick (menu display poses), world space; ZERO = not
+## holding. hold_x: along the shaft, away from where the thumb points; hold_back: the
+## way the back of the glove faces (up: palm down).
+var hold_x: Array[Vector3] = [Vector3.ZERO, Vector3.ZERO]
+var hold_back: Array[Vector3] = [Vector3.ZERO, Vector3.ZERO]
+var grip_from_hand: Array[Vector3] = [Vector3.ZERO, Vector3.ZERO]   ## output, world: hand -> its grip point (last frame)
 ## Elbow directions (skeleton space). The default flares the elbows out to the sides
 ## for an open stance; goalies set their own.
 var elbow_pole: Array[Vector3] = [Vector3(1.0, -0.45, -0.3), Vector3(-1.0, -0.45, -0.3)]
-var grip_spread := 0.46         ## distance between the hands on the stick
+var grip_spread := 0.3         ## distance between the hands on the stick
+## Wrist to the middle of the closed glove, along the forearm: the stick runs through
+## that point (the palm), not through the wrist joint.
+var grip_offset := 0.0
+## ...and from there toward the palm, to the middle of the closed fingers.
+var grip_palm := 0.0
+## How far (0..1) each hand turns to lay the glove's knuckle line along the shaft. All
+## the way bends the wrist past what the cuff can hide.
+var grip_turn := 1.0
+## Most the glove's fingers bend away from the forearm's line (degrees). The cuffs ride
+## the forearms, so the wrists can cock well over.
+var max_wrist_bend := 90.0
+## The top hand (stance posed in Blender, tools/blender/pose_rig.py): how far it reaches
+## from its shoulder (fraction of the arm), and its direction from there: out to the off
+## side, down, ahead (normalized together).
+var top_reach := 0.75
+var top_out := 0.25
+var top_drop := 1.0
+var top_ahead := 0.5
+## As the blade rises (a slap shot windup), the top hand comes up to about chin height
+## and across the chest toward the blade side: added to its down and out directions at a
+## full lift.
+var top_lift_up := 0.85
+var top_lift_across := 1.0
+## Which way the back of each glove faces, both with the thumb down the shaft toward the
+## blade: the top one out to the off side (x = 1 there), tipped this much up and ahead;
+## the bottom one out to the blade side, up and back (palm forward, like a shovel's low
+## hand). Skeleton space: +Z ahead.
+var top_back_up := -0.39
+var top_back_ahead := 0.82
+var bottom_back_up := 0.8
+var bottom_back_ahead := -1.02
 var free_arm := 0.0             ## 0..1: the bottom hand lets go of the stick and swings with the stride
 ## Fights: 0..1 curls the fingers into fists (the clips carry no finger tracks).
 var fist := 0.0
+## Folds the body's own fingers and thumb away (scaled to nothing at their roots) when
+## glove or fist models stand in for the hands. Overrides `fist`.
+var hide_fingers := false
 ## Fights: per arm [left, right], 0..1 pulls that hand onto `reach_world` after everything
 ## else (a punch landing on a face, a hand gripping a jersey), keeping the clip's twist.
 var reach_w: Array[float] = [0.0, 0.0]
@@ -50,13 +94,21 @@ var reach_world: Array[Vector3] = [Vector3.ZERO, Vector3.ZERO]
 ## Full-body clips that step (the jab lunges almost a meter): keep the pelvis over the
 ## feet's spot, only the clip's height and rotation.
 var lock_root := false
+## 0..1: a slow standing idle laid over whatever pose is playing (menus: brings still
+## poses to life): the chest rises with each breath, the torso sways a little side to
+## side, the head drifts.
+var breath := 0.0
+var _breath_t := 0.0
 var _top_lift := 0.0
 
 # --- Outputs (valid after `modification_processed`) ---
 var stick_top_world := Vector3.ZERO     ## butt end of the stick
+var bottom_short := 0.0                ## m the bottom hand's grip is beyond the arm's reach
 var top_hand_world := Vector3.ZERO
 var left_hand_world := Vector3.ZERO
 var right_hand_world := Vector3.ZERO
+## Debugging the grip: per hand [grip point, knuckle axis, finger axis, palm axis] (skeleton space).
+var grip_debug: Array = [[], []]
 
 var ankle_height := 0.105         ## from the body's rest pose
 
@@ -67,6 +119,9 @@ var _rest_l := {}       ## index -> rest local Transform3D
 var _len := {}          ## "leg_l1" etc.
 var _fingers: Array = []   ## [bone, local axis, angle] curled by `fist`
 var _fist_was := false
+var _fore_dir: Array[Vector3] = [Vector3(0, -0.8, 0.6), Vector3(0, -0.8, 0.6)]   ## last frame's finger directions
+var _finger_local: Array = [Vector3.UP, Vector3.UP]     ## glove finger axis in each hand bone's frame
+var _knuckle_local: Array = [Vector3.RIGHT, Vector3.RIGHT]   ## glove knuckle line (thumb at -) in each hand bone's frame
 
 
 func _cache(sk: Skeleton3D) -> void:
@@ -87,6 +142,15 @@ func _cache(sk: Skeleton3D) -> void:
 		_len[side + "Upper"] = _gpos(side + "Arm").distance_to(_gpos(side + "ForeArm"))
 		_len[side + "Fore"] = _gpos(side + "ForeArm").distance_to(_gpos(side + "Hand"))
 	ankle_height = maxf(_gpos("LeftFoot").y, 0.04)
+	# The glove's axes in each hand bone's frame (SkaterVisual attaches it along the
+	# forearm-to-hand line, knuckle line toward the back in the T-pose).
+	for s in 2:
+		var side := "Left" if s == 0 else "Right"
+		var y := (_gpos(side + "Hand") - _gpos(side + "ForeArm")).normalized()
+		var knuckle := -(Vector3.BACK - y * y.z).normalized()
+		var hb := (_rest_g[_b[side + "Hand"]] as Transform3D).basis.inverse()
+		_finger_local[s] = (hb * y).normalized()
+		_knuckle_local[s] = (hb * knuckle).normalized()
 	_cache_fingers(sk)
 	_ok = true
 
@@ -164,6 +228,7 @@ func _process_modification_with_delta(_delta: float) -> void:
 		if not _ok:
 			return
 	var to_skel := sk.global_transform.affine_inverse()
+	_breath_t += _delta
 
 	# --- Pelvis -------------------------------------------------------------------
 	var hi: int = _b["Hips"]
@@ -174,6 +239,8 @@ func _process_modification_with_delta(_delta: float) -> void:
 	if lock_root:
 		var hp0 := sk.get_bone_pose_position(hi)
 		sk.set_bone_pose_position(hi, Vector3(hips_rest.origin.x, hp0.y, hips_rest.origin.z))
+	if clip_only and w_legs <= 0.001 and w_spine <= 0.001 and w_arms <= 0.001:
+		return   # parked on the bench / in the box: the clip is the whole pose
 	var hips := _blend_local(sk, hi, hips_proc, w_legs, true)
 	var gl := {hi: hips}   # bone -> final global this frame
 
@@ -185,14 +252,14 @@ func _process_modification_with_delta(_delta: float) -> void:
 		var extra := Basis(Vector3.UP, twist / 3.0) * Basis(Vector3.RIGHT, lean * spine_parts) * Basis(Vector3.BACK, -sway / 3.0)
 		var proc := Transform3D(r.basis * extra, r.origin)
 		var pg := _gpose(sk, sk.get_bone_parent(i), gl)
-		gl[i] = pg * _blend_local(sk, i, proc, w_spine, false)
+		gl[i] = pg * _breathe(sk, i, _blend_local(sk, i, proc, w_spine, false), false)
 	var g_chest: Transform3D = gl[_b["Spine2"]]
 	for n in ["Neck", "Head"]:
 		var i: int = _b[n]
 		var r: Transform3D = _rest_l[i]
 		var proc := Transform3D(r.basis * Basis(Vector3.RIGHT, -lean * head_level * 0.5) * Basis(Vector3.UP, -twist * 0.35), r.origin)
 		var pg := _gpose(sk, sk.get_bone_parent(i), gl)
-		gl[i] = pg * _blend_local(sk, i, proc, w_spine, false)
+		gl[i] = pg * _breathe(sk, i, _blend_local(sk, i, proc, w_spine, false), true)
 
 	# --- Legs ----------------------------------------------------------------------
 	for s in 2:
@@ -236,7 +303,7 @@ func _process_modification_with_delta(_delta: float) -> void:
 	var first := 0
 	var blade := to_skel * blade_world
 	if arm_mode == Arms.STICK:
-		# Top hand in front of the belly on the side away from the blade, low;
+		# Top hand beside the hip on the side away from the blade, low;
 		# rises with the blade for windups.
 		var top := 0 if stick_side > 0.0 else 1     # right-handed shot: left hand on top
 		first = top
@@ -248,6 +315,7 @@ func _process_modification_with_delta(_delta: float) -> void:
 		targets[0] = to_skel * hand_world[0]
 		targets[1] = to_skel * hand_world[1]
 	var hand_out: Array[Vector3] = [Vector3.ZERO, Vector3.ZERO]
+	var grips: Array[Vector3] = [Vector3.ZERO, Vector3.ZERO]
 	for k in 2:
 		var s := first if k == 0 else 1 - first
 		var side := "Left" if s == 0 else "Right"
@@ -260,14 +328,22 @@ func _process_modification_with_delta(_delta: float) -> void:
 		var target := targets[s]
 		var pole: Vector3 = elbow_pole[s]
 		if arm_mode == Arms.STICK and k == 0:
-			var reach: float = (_len[side + "Upper"] + _len[side + "Fore"]) * 0.78
+			# Well inside full reach so the elbow stays bent; hanging down and a little
+			# out, beside the hip on the off side (not across the belly: the shaft has to
+			# cross the body so the forearms come down onto it, not along it).
+			var reach: float = (_len[side + "Upper"] + _len[side + "Fore"]) * top_reach
 			var rock := Vector3(sin(stride_phase) * 0.05, 0.0, cos(stride_phase) * 0.05) * stride_amt
-			var dir := Vector3(-stick_side * 0.12, -0.75 + _top_lift * 0.9, 0.65 - _top_lift * 0.3).normalized()
+			var dir := Vector3(stick_side * (top_out - _top_lift * top_lift_across), -top_drop + _top_lift * top_lift_up, top_ahead - _top_lift * 0.1).normalized()
 			target = shoulder + dir * reach + rock
 		if arm_mode == Arms.STICK and k == 1:
-			# Bottom hand slides down the shaft from wherever the top hand ended up...
-			var top_hand := hand_out[first]
-			target = top_hand + (blade - top_hand).normalized() * grip_spread
+			# Bottom hand slides down the shaft from wherever the top hand gripped it (its
+			# own grip, not its wrist, lands on the shaft)...
+			var top_grip := grips[first]
+			var axis := (blade - top_grip).normalized()
+			target = top_grip + axis * grip_spread - _fore_dir[s] * grip_offset
+			# Out of reach: SkaterVisual dips this shoulder (a side bend of the spine)
+			# until it isn't, rather than the hand sliding up the shaft.
+			bottom_short = maxf(0.0, shoulder.distance_to(target) - (_len[side + "Upper"] + _len[side + "Fore"]) * 0.97)
 			if free_arm > 0.0:
 				# ...or swings free: forward (and across) as the same-side leg drives back.
 				var sx := 1.0 if s == 0 else -1.0
@@ -287,12 +363,64 @@ func _process_modification_with_delta(_delta: float) -> void:
 		var fore_final := _blend_local(sk, fore_i, g_arm_f.affine_inverse() * g_fore, w_arms, false)
 		var g_fore_f := g_arm_f * fore_final
 		var g_hand := g_fore_f * _pose_local(sk, hand_i)
+		var holding := arm_mode != Arms.STICK and hold_x[s] != Vector3.ZERO
+		if (arm_mode == Arms.STICK or holding) and w_arms > 0.0:
+			# Turn the hand so the glove's knuckle line runs along the shaft, thumb
+			# pointing down it toward the blade: the fingers wrap the stick. With the
+			# forearms hanging onto a shaft that crosses the body, the top glove's back
+			# faces forward and the bottom one's palm does (a real hockey grip). The
+			# fingers bend off the forearm's line at most `max_wrist_bend`; past that the
+			# shaft crosses the fist at a slant. A full frame, knuckle line plus fingers,
+			# is mapped onto the wanted one.
+			var from := g_hand.origin if k == 0 else grips[first]
+			var shaft_x := (from - blade).normalized()
+			if holding:
+				shaft_x = (to_skel.basis * hold_x[s]).normalized()
+			var fore := (g_hand.origin - g_fore_f.origin).normalized()
+			var want_y := fore - shaft_x * shaft_x.dot(fore)
+			want_y = want_y.normalized() if want_y.length() > 0.05 else Vector3.DOWN
+			if holding:
+				var hb0 := (to_skel.basis * hold_back[s]).normalized()
+				hb0 = (hb0 - shaft_x * shaft_x.dot(hb0)).normalized()
+				want_y = (hb0.cross(shaft_x) if s == 1 else shaft_x.cross(hb0)).normalized()
+			elif free_arm < 0.5:
+				# Each glove: thumb down the shaft toward the blade, back facing its set
+				# way (top: palm in, thumb on top; bottom: palm forward). The fingers
+				# follow from those two; the right glove's back is X x Y, the mirrored
+				# left one's Y x X.
+				var back := Vector3(stick_side, top_back_up, top_back_ahead) if k == 0 						else Vector3(-stick_side, bottom_back_up, bottom_back_ahead)
+				back = (back - shaft_x * shaft_x.dot(back)).normalized()
+				want_y = (back.cross(shaft_x) if s == 1 else shaft_x.cross(back)).normalized()
+			var bend := fore.angle_to(want_y)
+			var max_bend := deg_to_rad(max_wrist_bend)
+			if bend > max_bend:
+				want_y = fore.slerp(want_y, max_bend / bend).normalized()
+			var want_x := (shaft_x - want_y * want_y.dot(shaft_x)).normalized()
+			var have_x := (g_hand.basis * (_knuckle_local[s] as Vector3)).normalized()
+			var have_y := g_hand.basis * (_finger_local[s] as Vector3)
+			have_y = (have_y - have_x * have_x.dot(have_y)).normalized()
+			var rot := Basis(want_x, want_y, want_x.cross(want_y)) * Basis(have_x, have_y, have_x.cross(have_y)).transposed()
+			var q := Quaternion.IDENTITY.slerp(Quaternion(rot.orthonormalized()), grip_turn * clampf(w_arms, 0.0, 1.0))
+			var hb := Basis(q) * g_hand.basis
+			sk.set_bone_pose_rotation(hand_i, (g_fore_f.basis.inverse() * hb).get_rotation_quaternion())
+			g_hand = Transform3D(hb, g_hand.origin)
 		hand_out[s] = g_hand.origin
+		var fd := (g_hand.basis * (_finger_local[s] as Vector3)).normalized()
+		var kn := (g_hand.basis * (_knuckle_local[s] as Vector3)).normalized()
+		# Palm side: the left glove is the right one mirrored.
+		var palm := kn.cross(fd).normalized() * (1.0 if s == 0 else -1.0)
+		var off := fd * grip_offset + palm * grip_palm
+		_fore_dir[s] = off / maxf(grip_offset, 0.001)
+		grips[s] = g_hand.origin + off
+		grip_debug[s] = [grips[s], kn, fd, palm]
 
 	for k in 2:
 		if reach_w[k] > 0.001:
 			hand_out[k] = _reach(sk, gl, k, to_skel * reach_world[k], clampf(reach_w[k], 0.0, 1.0))
-	if fist > 0.001 or _fist_was:
+	if hide_fingers:
+		for f: Array in _fingers:
+			sk.set_bone_pose_scale(f[0], Vector3.ONE * 0.001)
+	elif fist > 0.001 or _fist_was:
 		for f: Array in _fingers:
 			var i: int = f[0]
 			var r: Transform3D = sk.get_bone_rest(i)
@@ -300,11 +428,33 @@ func _process_modification_with_delta(_delta: float) -> void:
 		_fist_was = fist > 0.001
 
 	var to_world := sk.global_transform
+	for s in 2:
+		grip_from_hand[s] = to_world.basis * (grips[s] - hand_out[s])
 	left_hand_world = to_world * hand_out[0]
 	right_hand_world = to_world * hand_out[1]
-	top_hand_world = to_world * hand_out[first]
-	var dir := (blade - hand_out[first]).normalized()
-	stick_top_world = to_world * (hand_out[first] - dir * 0.1)
+	var top_grip := grips[first] if arm_mode == Arms.STICK else hand_out[first]
+	top_hand_world = to_world * top_grip
+	var dir := (blade - top_grip).normalized()
+	stick_top_world = to_world * (top_grip - dir * 0.1)
+
+
+## The `breath` idle on one spine (or neck / head) bone's final local pose; writes it.
+func _breathe(sk: Skeleton3D, i: int, local: Transform3D, head: bool) -> Transform3D:
+	if breath <= 0.0:
+		return local
+	var t := _breath_t
+	var b := breath
+	var pitch := sin(t * TAU / 4.2) * 0.014 * b            # in (chest up and back), out
+	var roll := sin(t * TAU / 7.7 + 1.3) * 0.012 * b       # weight easing side to side
+	var yaw := sin(t * TAU / 11.0 + 0.4) * 0.01 * b
+	if head:
+		# Keeps the eyes level through the breath, and looks around a touch.
+		pitch = -pitch * 0.8 + sin(t * TAU / 9.3 + 2.0) * 0.02 * b
+		roll = -roll * 0.6
+		yaw = sin(t * TAU / 13.0) * 0.05 * b
+	var q := local.basis.get_rotation_quaternion() * Quaternion.from_euler(Vector3(-pitch, yaw, roll))
+	sk.set_bone_pose_rotation(i, q)
+	return Transform3D(Basis(q), local.origin)
 
 
 ## Pulls arm k (0 left, 1 right) so its hand moves `w` of the way to `target` (skeleton
