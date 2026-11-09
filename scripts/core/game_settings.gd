@@ -22,6 +22,8 @@ static func default_config() -> Dictionary:
 		"fighting": true,
 		"line_changes": true,
 		"difficulty": 0.5,
+		"camera": "broadcast",      ## BroadcastCamera play angle
+		"camera_follow": false,      ## turn the angle so your team always attacks up
 		"home_team": 0,    ## Teams.LIST index
 		"away_team": 1,
 	}

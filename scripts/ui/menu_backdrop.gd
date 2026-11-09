@@ -24,6 +24,8 @@ func _ready() -> void:
 	var crest := MenuArena.logo(team)
 	if crest:
 		(arena.rink as Rink).set_center_logo(crest)
+	if (arena.rink as Rink).arena:
+		(arena.rink as Rink).arena.set_teams(team, -1)   # the stands and screens in this team's colors
 	skater = MenuArena.make_skater(self, arena, team, team, false, MenuArena.star(team))
 	# Steer for a point a little further round the lap (counter-clockwise from above).
 	skater.brain = ScriptBrain.new(func(s: Skater, i: SkaterIntent, _t: float) -> void:

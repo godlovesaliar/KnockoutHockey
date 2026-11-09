@@ -41,9 +41,24 @@ var _reset_in := -1.0
 var _marked: Skater
 
 
+## The play angle (pause menu / GameSettings); practice never turns with the ends.
+var camera := "broadcast"
+var camera_follow := false
+
+
+func apply_camera(angle: String, _follow: bool) -> void:
+	camera = angle
+	cam.set_mode_name(angle)
+
+
+func human_team() -> int:
+	return -1
+
+
 func _ready() -> void:
 	sun.rotation = Vector3(deg_to_rad(-62.0), deg_to_rad(25.0), 0.0)
 	_build_hud()
+	apply_camera(str(GameSettings.config.get("camera", "broadcast")), false)
 
 	for entry in ROSTER:
 		var s := _spawn(0, entry.number, HOME_COLOR, entry.left)
@@ -116,6 +131,7 @@ func _open_pause() -> void:
 	_pause = PauseMenu.new()
 	_pause.mode = "PRACTICE"
 	_pause.restart_text = "RESTART PRACTICE"
+	_pause.camera_host = self
 	add_child(_pause)
 	_pause.closed.connect(func() -> void: _pause = null)
 
@@ -137,6 +153,7 @@ func _physics_process(_delta: float) -> void:
 
 
 func _process(delta: float) -> void:
+	cam.player = control.controlled_skater() if control else null
 	if _banner_time > 0.0:
 		_banner_time -= delta
 		_banner.visible = _banner_time > 0.0

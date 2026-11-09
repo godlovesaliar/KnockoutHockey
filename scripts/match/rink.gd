@@ -25,8 +25,11 @@ const AD_GAP := 1.6        ## meters of plain board between ads (stretched to fi
 @export var floor_color := Color(0.16, 0.16, 0.18)
 ## How many different sponsors a game shows (picked at random from ADS_DIR each load).
 @export var ad_count := 6
+## Build the arena around the rink (stands, roof, lights, scoreboard: see Arena).
+@export var build_arena := true
 
 var ice_material: ShaderMaterial
+var arena: Arena   ## null when build_arena is off (or in the editor)
 var nets: Array[Net] = []
 ## Teams switch ends every period. Unswapped: team 0 defends the +Z net (bottom of the screen).
 var ends_swapped := false
@@ -42,6 +45,7 @@ const SEAT_HIPS := 0.27          ## a seated player's hips: this far in front of
 
 
 func _ready() -> void:
+	add_to_group("rink")
 	_build_ice()
 	_build_boards()
 	_build_ads()
@@ -50,6 +54,10 @@ func _ready() -> void:
 	_build_benches()
 	_build_doors()
 	_build_nets()
+	if build_arena and not Engine.is_editor_hint():
+		arena = Arena.new()
+		arena.name = "Arena"
+		add_child(arena)
 
 
 func get_net(index: int) -> Net:

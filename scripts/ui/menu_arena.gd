@@ -73,7 +73,6 @@ static func build(root: Node3D, focus: Vector3) -> Dictionary:
 	root.add_child(puck)
 	puck.visible = false
 	_add_ice_dust(root, focus)
-	_add_light_banks(root)
 	return {"rink": rink, "puck": puck}
 
 
@@ -207,25 +206,3 @@ static func _add_ice_dust(root: Node3D, focus: Vector3) -> void:
 	q.material = m
 	p.mesh = q
 	root.add_child(p)
-
-
-## Banks of arena lights hung high around the rink: bright panels that bloom through
-## the haze in the background.
-static func _add_light_banks(root: Node3D) -> void:
-	var m := StandardMaterial3D.new()
-	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	m.albedo_color = Color(1.0, 0.98, 0.94)
-	m.emission_enabled = true
-	m.emission = Color(1.0, 0.98, 0.94)
-	m.emission_energy_multiplier = 5.0
-	var box := BoxMesh.new()
-	box.size = Vector3(2.2, 0.25, 0.9)
-	for i in 22:
-		var a := TAU * i / 22.0
-		var b := MeshInstance3D.new()
-		b.mesh = box
-		b.material_override = m
-		b.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-		b.position = Vector3(cos(a) * 24.0, 11.5, sin(a) * 40.0)
-		b.rotation.y = -a
-		root.add_child(b)

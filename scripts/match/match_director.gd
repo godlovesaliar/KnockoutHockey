@@ -60,6 +60,10 @@ const INTRO_MAX := 20.0           ## ...and at most this long (the intro line no
 @export var rng_seed := 0
 @export var team_ids: Array[int] = [0, 1]   ## Teams.LIST index for home, away
 @export var show_hud := true
+## Play angle (BroadcastCamera: "broadcast", "close", "side", "high") and whether it turns
+## with the ends so the human team always attacks up the screen.
+@export var camera := "broadcast"
+@export var camera_follow := false
 var humans: Array = [{"kind": "any", "pad": 0, "team": 0}]
 
 @onready var rink: Rink = $Rink
@@ -88,6 +92,7 @@ var _last_hitter: Array = [null, null]   ## per team: who last hit them
 var _last_victim: Array = [null, null]
 var _since_fight := 999.0
 var _fight_spot := Vector3.ZERO
+var _cmd_cam := false         ## `-- cam=…` picked the angle (it wins over the settings)
 var _debug_fight := ""        ## `-- fight` / `fight=prompt`: start a fight at the first chance (testing)
 var _showcase: Array[Skater] = []
 var _no_intro := false
@@ -122,10 +127,14 @@ func _ready() -> void:
 	rules.icing = icing
 	rules.penalties = penalties
 	_build_teams()
+	apply_camera(camera if not _cmd_cam else cam.mode_name(), camera_follow)
 	var home_logo: String = Teams.team(team_ids[0]).get("logo", "")
 	if ResourceLoader.exists(home_logo):
 		rink.set_center_logo(load(home_logo))
 	rink.set_bench_colors([MenuStyle.team_color(team_ids[0]), MenuStyle.team_color(team_ids[1])])
+	if rink.arena:
+		rink.arena.set_teams(team_ids[0], team_ids[1])
+		rink.arena.bind_match(self)
 	replay = Replay.new()
 	replay.name = "Replay"
 	add_child(replay)
@@ -169,6 +178,8 @@ func _apply_settings(c: Dictionary, h: Array) -> void:
 	line_changes = bool(c.get("line_changes", line_changes))
 	fighting = bool(c.get("fighting", fighting))
 	difficulty = float(c.get("difficulty", difficulty))
+	camera = str(c.get("camera", camera))
+	camera_follow = bool(c.get("camera_follow", camera_follow))
 	team_ids = [int(c.get("home_team", team_ids[0])), int(c.get("away_team", team_ids[1]))]
 	humans = h.duplicate(true)
 
@@ -180,6 +191,8 @@ func _parse_cmdline() -> void:
 		args[kv[0]] = kv[1] if kv.size() > 1 else ""
 	if args.has("ai"):
 		humans = []
+	if args.has("camfollow"):
+		camera_follow = args["camfollow"] != "0"
 	if args.has("format"):
 		format = 3 if args["format"] == "3" else 5
 	if args.has("period"):
@@ -200,7 +213,8 @@ func _parse_cmdline() -> void:
 	if args.has("cam"):
 		var idx := BroadcastCamera.Mode.keys().find(str(args["cam"]).to_upper())
 		if idx >= 0:
-			cam.call_deferred("set_mode", idx)
+			cam.set_mode(idx as BroadcastCamera.Mode)
+			_cmd_cam = true
 	if args.has("nointro"):
 		_no_intro = true
 	if args.has("fight"):
@@ -423,6 +437,34 @@ func _set_phase(p: Phase) -> void:
 	phase_changed.emit(p)
 
 
+## The play angle: `follow` turns it with the ends for the team the humans play
+## (only when they're all on one team).
+func apply_camera(angle: String, follow: bool) -> void:
+	camera = angle
+	camera_follow = follow
+	cam.set_mode_name(angle)
+	cam.follow_team = human_team() if follow else -1
+	cam.set_mode(cam.mode)
+
+
+## The team every human plays for, or -1 (nobody, or both teams).
+func human_team() -> int:
+	var t := -1
+	for h: Dictionary in humans:
+		var ht := int(h.get("team", 0))
+		if t >= 0 and ht != t:
+			return -1
+		t = ht
+	return t
+
+
+func _process(_delta: float) -> void:
+	# The close camera keeps the player you control in frame too.
+	var t := human_team()
+	var tc: TeamControl = teams[t].get("control") if t >= 0 and t < teams.size() else null
+	cam.player = tc.controlled_skater() if tc else null
+
+
 func _physics_process(delta: float) -> void:
 	_phase_time += delta
 	for t in teams:
@@ -599,6 +641,7 @@ func _open_pause() -> void:
 	if _pause != null or phase == Phase.INTRO or _intermission != null:
 		return
 	_pause = PauseMenu.new()
+	_pause.camera_host = self
 	add_child(_pause)
 	_pause.closed.connect(func() -> void: _pause = null)
 
@@ -1666,6 +1709,8 @@ func _on_goal(net_index: int) -> void:
 	var other := 1 - scoring
 	score[scoring] += 1
 	stats.period_goals[scoring][mini(period, 4) - 1] += 1
+	if rink.arena:
+		rink.arena.goal(scoring)
 	var scorer := puck.last_touch
 	var beaten := lineup(other).goalie
 	var pp := strength(scoring) > strength(other) and lineup(other).box_count() > 0

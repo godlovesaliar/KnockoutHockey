@@ -87,7 +87,7 @@ func move_labels() -> Array:
 
 func update(_skater: Skater, i: SkaterIntent, _delta: float) -> void:
 	_poll()
-	i.move = _cur.move
+	i.move = InputRouter.to_world(_cur.move)   # the stick in screen terms, turned to the camera
 	i.turbo = _cur.turbo
 	i.protect = _cur.protect
 	i.backward = _cur.get("backward", false)
@@ -115,7 +115,8 @@ func _read() -> Dictionary:
 	var s := {}
 	match kind:
 		Kind.ANY:
-			s.move = InputRouter.move_world()
+			var mv := InputRouter.move_vector()
+			s.move = Vector3(mv.x, 0.0, mv.y)
 			s.turbo = Input.is_action_pressed("turbo")
 			s.protect = Input.is_action_pressed("protect")
 			s.backward = Input.is_action_pressed("backward")

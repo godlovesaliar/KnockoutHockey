@@ -70,12 +70,29 @@ func _enter_tree() -> void:
 			InputMap.action_add_event(action, motion)
 
 
-## Left stick / WASD. Screen-up (y < 0) maps to world -Z with the vertical camera.
+## Screen-up on the ice for the gameplay camera (BroadcastCamera keeps it current):
+## -Z for the default end-to-end angle.
+var screen_fwd := Vector3(0, 0, -1)
+
+
+## Left stick / WASD in screen terms (y < 0 is up).
 func move_vector() -> Vector2:
 	return Input.get_vector("move_left", "move_right", "move_up", "move_down")
 
 
-## Movement as a flat world-space direction for the vertical (end-to-end) camera.
+## Movement as a flat world-space direction, matched to the camera.
 func move_world() -> Vector3:
 	var v := move_vector()
-	return Vector3(v.x, 0.0, v.y)
+	return to_world(Vector3(v.x, 0.0, v.y))
+
+
+## A stick direction in screen terms (x right, z down) to the ice under the camera.
+func to_world(v: Vector3) -> Vector3:
+	var right := screen_fwd.cross(Vector3.UP)
+	return right * v.x - screen_fwd * v.z
+
+
+## The inverse of to_world: a world direction back into stick terms.
+func to_screen(w: Vector3) -> Vector3:
+	var right := screen_fwd.cross(Vector3.UP)
+	return Vector3(w.dot(right), 0.0, -w.dot(screen_fwd))

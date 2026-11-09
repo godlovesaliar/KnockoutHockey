@@ -8,6 +8,9 @@ extends CanvasLayer
 ## Any keyboard or pad drives it (MenuInput), the mouse too. Accept picks; Back (B / Esc)
 ## or Start resumes (from the chart: back to the list).
 ## Set `mode` ("EXHIBITION", "PRACTICE") and `restart_text` before adding it.
+## `camera_host` (a MatchDirector or Practice: `camera`, `camera_follow`, `apply_camera()`,
+## `human_team()`) adds CAMERA and CAMERA TURNS items that change the play angle live;
+## the choice is kept in GameSettings for the next game.
 
 signal closed
 
@@ -36,6 +39,7 @@ const ITEM_GAP := 12.0
 
 var mode := "EXHIBITION"
 var restart_text := "RESTART GAME"
+var camera_host: Node
 
 var _canvas: Control
 var _input: MenuInput
@@ -117,9 +121,15 @@ func _build_main() -> void:
 	var entries := [
 		["RESUME", _resume, "Back to the game."],
 		["CONTROLS", _show_controls, "Every button, on pad and both keyboards."],
+	]
+	if camera_host:
+		entries.append(["CAMERA", _next_camera, "The play angle. Pick to switch."])
+		if camera_host.human_team() >= 0:
+			entries.append(["CAMERA TURNS", _toggle_follow, "With my team: the view turns at the change of ends so you always attack up."])
+	entries.append_array([
 		[restart_text, _restart, "Start over from the opening faceoff." if mode != "PRACTICE" else "Start the practice over."],
 		["QUIT TO MENU", _quit, "Leave this game for the main menu."],
-	]
+	])
 	for i in entries.size():
 		var it := MenuItem.new()
 		it.text = entries[i][0]
@@ -136,6 +146,35 @@ func _build_main() -> void:
 		_items.append(it)
 		_actions.append(entries[i][1])
 		_hints.append(entries[i][2])
+	_refresh_camera()
+
+
+func _refresh_camera() -> void:
+	if camera_host == null:
+		return
+	for it in _items:
+		if it.text == "CAMERA":
+			it.value = BroadcastCamera.label_of(camera_host.camera)
+			it.value_w = 190.0
+		elif it.text == "CAMERA TURNS":
+			it.value = "My team" if camera_host.camera_follow else "Never"
+			it.value_w = 190.0
+
+
+func _next_camera() -> void:
+	var modes := BroadcastCamera.PLAY_MODES
+	var cur := BroadcastCamera.Mode.keys().find(str(camera_host.camera).to_upper())
+	var next: int = modes[(modes.find(cur) + 1) % modes.size()]
+	var angle := str(BroadcastCamera.Mode.keys()[next]).to_lower()
+	camera_host.apply_camera(angle, camera_host.camera_follow)
+	GameSettings.config["camera"] = angle
+	_refresh_camera()
+
+
+func _toggle_follow() -> void:
+	camera_host.apply_camera(camera_host.camera, not camera_host.camera_follow)
+	GameSettings.config["camera_follow"] = camera_host.camera_follow
+	_refresh_camera()
 
 
 func _build_controls() -> void:

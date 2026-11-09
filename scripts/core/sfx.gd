@@ -16,6 +16,9 @@ const RATE := 22050
 const VOICES := 24
 const CROWD_DB := -5.0            ## the crowd bed under everything
 
+## A crowd reaction started (the arena's fans stand and cheer with it).
+signal crowd_reacted(sound: String)
+
 var listener := Vector3.ZERO
 ## Prints every announcer line and crowd reaction (set KH_AUDIO_LOG=1 to tune triggers).
 var log_events := OS.has_environment("KH_AUDIO_LOG")
@@ -122,6 +125,7 @@ func crowd_react(sound: String, volume_db := 0.0, priority := 1) -> void:
 		return
 	if _react.playing and priority < _react_priority:
 		return
+	crowd_reacted.emit(sound)
 	if _react_tween:
 		_react_tween.kill()
 	_react.stream = _pick(sound)

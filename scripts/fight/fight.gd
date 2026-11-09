@@ -350,8 +350,9 @@ func _read_input(f: Fighter, delta: float) -> void:
 		# up / down slips to the side.
 		var cam_right := _cam.global_basis.x if _cam else Vector3.RIGHT
 		var toward_screen := signf((axis * f.toward()).dot(cam_right))
-		f.step = clampf(i.move.x * toward_screen, -1.0, 1.0) if absf(i.move.x) > 0.25 else 0.0
-		f.lean_target = clampf(i.move.z * 1.5, -1.0, 1.0) if absf(i.move.z) > 0.3 else 0.0
+		var stick := InputRouter.to_screen(i.move)   # undo the play camera's turn
+		f.step = clampf(stick.x * toward_screen, -1.0, 1.0) if absf(stick.x) > 0.25 else 0.0
+		f.lean_target = clampf(stick.z * 1.5, -1.0, 1.0) if absf(stick.z) > 0.3 else 0.0
 		f.blocking = i.deke_held and (f.act == "" or (f.act in MOVES and f.landed))
 		var want := ""
 		if i.pass_down:
