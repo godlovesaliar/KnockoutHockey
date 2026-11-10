@@ -271,8 +271,8 @@ func _draw_hints() -> void:
 			if sk == null:
 				continue
 			any_human = true
-			if sk is Goalie and not hints.has("GOALIE HAS IT   A pass  ·  X clear  ·  Y cover"):
-				hints.append("GOALIE HAS IT   A pass  ·  X clear  ·  Y cover")
+			if sk is Goalie and not hints.has("GOALIE HAS IT   CROSS pass  ·  SQUARE clear  ·  TRIANGLE cover"):
+				hints.append("GOALIE HAS IT   CROSS pass  ·  SQUARE clear  ·  TRIANGLE cover")
 	if d.phase == MatchDirector.Phase.FACEOFF and any_human:
 		hints.append("FACEOFF   press pass or shoot right as the puck drops")
 	if d.phase in [MatchDirector.Phase.STOPPAGE, MatchDirector.Phase.FACEOFF] and any_human:

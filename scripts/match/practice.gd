@@ -7,7 +7,7 @@ extends Node3D
 ##   A / J   pass (hold = saucer); without the puck = switch player
 ##   X / K   shoot (tap = wrist, hold = slap); hold while a pass comes = one-timer
 ##   Y / I   deke                      LT / Space   protect puck
-##   R reset · C / Back camera · Esc / Start pause menu
+##   R reset · C / Select camera · Esc / Start pause menu
 ##
 ## Command-line (after `--`): cam=…, shot=<png>, wait=<s>, demo=carry|windup|pass, pausemenu[=controls]
 
@@ -167,10 +167,10 @@ func _process(delta: float) -> void:
 			+ "#%d  %3.0f km/h  %s  stamina %s\n" % [c.number, c.flat_speed() * 3.6, "TURBO" if c.turbo_active else "     ", stamina_bar] \
 			+ "Puck %s   Last shot: %s\n" % ["carried" if puck.carrier else "%.0f km/h" % (puck.speed() * 3.6), last_shot] \
 			+ "Camera %s   FPS %d\n\n" % [cam.mode_name(), Engine.get_frames_per_second()] \
-			+ "Stick/WASD skate · RT/Shift turbo · LT/Space protect\n" \
-			+ "A/J pass (hold = saucer) · no puck: switch player\n" \
-			+ "X/K shoot (tap wrist, hold slap) · hold X for a pass = one-timer\n" \
-			+ "Y/I deke · R reset · C camera · Esc pause"
+			+ "Stick/WASD skate · R2/Shift turbo · L1/Space protect\n" \
+			+ "Cross/J pass (hold = saucer) · no puck: switch player\n" \
+			+ "Square/K shoot (tap wrist, hold slap) · hold Square for a pass = one-timer\n" \
+			+ "Triangle/I deke · R reset · C/Select camera · Esc/Start pause"
 
 
 func _on_shot(s: Skater, kind: StringName, spd: float) -> void:

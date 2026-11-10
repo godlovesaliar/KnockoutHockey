@@ -17,6 +17,7 @@ var glyph := ""              ## accept-button label shown on the selected bar
 var glyph_pad := true
 var value := ""               ## a setting's current value, right-aligned (arrows when selected)
 var value_w := 300.0          ## room the value gets at the right end of the bar
+var arrows := true            ## left / right arrows either side of the value
 var _sel := 0.0
 var _shown := 0.0
 var _shake := 0.0
@@ -98,7 +99,7 @@ func _draw() -> void:
 		draw_string(vf, Vector2(center - vw * 0.5, vy), value, HORIZONTAL_ALIGNMENT_LEFT, -1, vs,
 				Color(Color(1, 0.92, 0.6).lerp(Color.WHITE, s), a))
 		var ts2 := h * 0.18
-		for dir in [-1, 1]:
+		for dir in ([-1, 1] if arrows else []):
 			var ax: float = center + dir * (value_w * 0.5 - 6.0)
 			var ay := h * 0.5
 			var tri := PackedVector2Array([Vector2(ax - ts2 * dir * 0.8, ay - ts2), Vector2(ax + ts2 * dir * 0.8, ay), Vector2(ax - ts2 * dir * 0.8, ay + ts2)])

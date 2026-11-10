@@ -1,3 +1,4 @@
+class_name RulesSelect
 extends Control
 ## Game rules, the second step of an exhibition (after TeamSelect): a column of settings
 ## bars over the arena, with the matchup card in the corner. The cursor starts on
@@ -5,7 +6,7 @@ extends Control
 ##
 ## Up / down picks a row, left / right changes it (accept steps it forward too; the mouse:
 ## click a row to step it, right-click to step back). Pad Start starts from anywhere.
-## Back: team select. Choices stay in GameSettings.config for next time.
+## Back: team select. Choices stay in GameSettings.config (and are saved) for next time.
 ##
 ## `-- shot=<png> [wait=<s>] [sel=<n>] [home=<i>] [away=<i>]` saves a screenshot and quits.
 
@@ -201,6 +202,7 @@ func _start() -> void:
 	if _leaving:
 		return
 	GameSettings.config = config
+	GameSettings.save_settings()
 	Sfx.play("glove", Vector3.INF, -4.0)
 	Sfx.stop_music(1.2)
 	_go(MATCH_SCENE)
@@ -210,6 +212,7 @@ func _back() -> void:
 	if _leaving:
 		return
 	GameSettings.config = config   # keep the rules for next time
+	GameSettings.save_settings()
 	Sfx.play("pad", Vector3.INF, -8.0)
 	_go(TEAMS_SCENE)
 

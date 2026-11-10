@@ -164,6 +164,7 @@ static func make_skater(root: Node3D, arena: Dictionary, team: int, opponent: in
 	look.seed = hash("%s %s %s" % [Teams.team(team).abbr, who.get("first", ""), who.get("last", "")])
 	s.skin_tone = SkaterVisual.SKIN_TONES[look.randi() % SkaterVisual.SKIN_TONES.size()]
 	s.gear_style = look.randi() % 2
+	s.visor = Skater.visor_for("%s %s %s" % [Teams.team(team).abbr, who.get("first", ""), who.get("last", "")])
 	var hair := SkaterVisual.random_look(look, s.body_type, s.skin_tone)
 	s.hair_style = hair.hair_style
 	s.facial_hair = hair.facial_hair

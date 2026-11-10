@@ -14,9 +14,23 @@ const INK := Color(0.02, 0.03, 0.06)
 const ICE := Color(0.88, 0.93, 1.0)
 const DIM := Color(0.62, 0.66, 0.74)
 
-## Pad face buttons, Xbox layout (what HumanBrain.button_label names them).
-const PAD_COLORS := {"A": Color(0.33, 0.72, 0.25), "B": Color(0.86, 0.2, 0.18),
-		"X": Color(0.2, 0.45, 0.9), "Y": Color(0.95, 0.72, 0.1)}
+## Pad prompts are PlayStation buttons. Code may still name pad buttons by their Xbox
+## position (A = bottom face, LB = left shoulder...); pad_label() turns either into the
+## PlayStation name, and draw_glyph draws the face buttons as their symbols.
+const PS_NAMES := {"A": "CROSS", "B": "CIRCLE", "X": "SQUARE", "Y": "TRIANGLE",
+		"LB": "L1", "RB": "R1", "LT": "L2", "RT": "R2", "BACK": "SELECT",
+		"LS": "L3", "RS": "R3"}
+## Button glyphs from the PlayStation button font (assets/fonts/PLAYB___.TTF): the face
+## buttons ringed; the shoulder buttons, Start and Select as badges.
+const PS_FONT := "res://assets/fonts/PLAYB___.TTF"
+const PS_SCALE := 1.24   ## font size for a prompt h tall (the ringed glyphs fill about 0.8 em)
+const PS_DROP := 0.4     ## baseline below the glyph's center, in font sizes
+const PS_GLYPHS := {"CROSS": "X", "CIRCLE": "C", "SQUARE": "S", "TRIANGLE": "T",
+		"L1": "l", "R1": "r", "L2": "L", "R2": "R", "START": "A", "SELECT": "B"}
+const SHOULDERS := ["L1", "R1", "L2", "R2", "L3", "R3"]
+## The face buttons' symbol colors.
+const PAD_COLORS := {"CROSS": Color(0.49, 0.7, 0.93), "CIRCLE": Color(1.0, 0.42, 0.42),
+		"SQUARE": Color(0.92, 0.6, 0.8), "TRIANGLE": Color(0.27, 0.88, 0.66)}
 
 const CHROME_SHADER := "
 shader_type canvas_item;
@@ -36,7 +50,15 @@ void fragment() {
 }
 "
 
+## The game title's typeface (chrome_text), upright, with TITLE_SPACING extra pixels
+## between letters per 100 px of size. `-- titlefont=<file in assets/fonts>` and
+## `-- titlespacing=<n>` override them for a run, to compare.
+const TITLE_FONT := "res://assets/fonts/Baron Kuffner.otf"
+const TITLE_SPACING := 12.0
+const FONT_DIR := "res://assets/fonts/"
+
 static var _fonts := {}
+static var _title_fonts := {}
 static var _chrome: Shader
 static var _logos := {}
 
@@ -53,6 +75,30 @@ static func font(slant := 0.2) -> Font:
 	return _fonts[key]
 
 
+## The title face at `size` (TITLE_FONT, or the `titlefont=` override), letter-spaced,
+## leaned by `slant` if it's above 0 (a synthetic oblique). Falls back to font().
+static func title_font(size: int, slant := 0.0) -> Font:
+	var path := TITLE_FONT
+	var spacing := TITLE_SPACING
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("titlefont="):
+			path = FONT_DIR + a.substr(10)
+		elif a.begins_with("titlespacing="):
+			spacing = float(a.substr(13))
+	var key := "%s|%d|%.2f|%.1f" % [path, size, slant, spacing]
+	if not _title_fonts.has(key):
+		var base := load(path) as FontFile if ResourceLoader.exists(path) else null
+		if base == null:
+			_title_fonts[key] = font(slant)
+		else:
+			var v := FontVariation.new()
+			v.base_font = base
+			v.variation_transform = Transform2D(Vector2(1, 0), Vector2(-slant, 1), Vector2.ZERO)
+			v.spacing_glyph = roundi(spacing * size / 100.0)
+			_title_fonts[key] = v
+	return _title_fonts[key]
+
+
 ## Scales `canvas` (a plain Control) so its DESIGN_SIZE height fills the window; its
 ## width grows with wider windows. Call on ready and when the window resizes.
 static func fit(canvas: Control) -> void:
@@ -63,10 +109,58 @@ static func fit(canvas: Control) -> void:
 	canvas.size = Vector2(vp.x / s, DESIGN_SIZE.y)
 
 
+## Room the chrome title leaves left of the text (a fraction of the font size).
+const CHROME_PAD := 0.2
+const TITLE_BAKED := "res://assets/ui/title/"
+
+
+## The Control size chrome_text gives `text` at `size`.
+static func chrome_size(text: String, size: int) -> Vector2:
+	var ts := title_font(size).get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, size)
+	return Vector2(ts.x + size * CHROME_PAD * 2.0, ts.y)
+
+
+## How far a baked title image reaches past chrome_text's Control on every side (rims, shadow).
+static func bake_margin(size: int) -> float:
+	return ceilf(size * 0.35)
+
+
+## The brushed-chrome fill (CHROME_SHADER's gradient), t = 0 at the top of the letters.
+static func chrome_color(t: float) -> Color:
+	t = clampf(t, 0.0, 1.0)
+	if t < 0.48:
+		return Color(1, 1, 1).lerp(Color(0.74, 0.77, 0.82), t / 0.48)
+	if t < 0.56:
+		return Color(0.36, 0.39, 0.46).lerp(Color(0.55, 0.58, 0.64), (t - 0.48) / 0.08)
+	return Color(0.78, 0.81, 0.86).lerp(Color(0.97, 0.98, 1.0), (t - 0.56) / 0.44)
+
+
 ## A word in the game's title style: chrome letters inside a red rim and a dark navy
 ## outer rim, with a drop shadow. Returns a Control sized to the text.
-static func chrome_text(text: String, size: int, slant := 0.22) -> Control:
-	var f := font(slant)
+## When tools/BuildTitle.tscn has baked the word (TITLE_BAKED/<word>_<size>.png) the image
+## is used: its rims go round the letters only, not the font's splatter specks. Otherwise
+## it's built live from layered Labels (rims round everything).
+static func chrome_text(text: String, size: int, slant := 0.0) -> Control:
+	var baked := TITLE_BAKED + "%s_%d.png" % [text.to_lower(), size]
+	var titlefont_override := false   # comparing faces from the command line: build live
+	for a in OS.get_cmdline_user_args():
+		titlefont_override = titlefont_override or a.begins_with("titlefont=") or a.begins_with("titlespacing=")
+	if slant == 0.0 and not titlefont_override and ResourceLoader.exists(baked):
+		var box := Control.new()
+		box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		box.size = chrome_size(text, size)
+		box.custom_minimum_size = box.size
+		var tr := TextureRect.new()
+		tr.texture = load(baked)
+		tr.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		tr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		tr.stretch_mode = TextureRect.STRETCH_SCALE
+		var m := bake_margin(size)
+		tr.position = Vector2(-m, -m)
+		tr.size = tr.texture.get_size() / 2.0
+		box.add_child(tr)
+		return box
+	var f := title_font(size, slant)
 	var holder := Control.new()
 	holder.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var layers := [
@@ -78,7 +172,7 @@ static func chrome_text(text: String, size: int, slant := 0.22) -> Control:
 		[Vector2.ZERO, 0, Color.TRANSPARENT, Color.WHITE],
 	]
 	var text_size := f.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, size)
-	var pad := size * 0.2
+	var pad := size * CHROME_PAD
 	for i in layers.size():
 		var l := Label.new()
 		l.text = text
@@ -109,16 +203,41 @@ static func chrome_text(text: String, size: int, slant := 0.22) -> Control:
 ## Returns the width it took (so prompts can be laid out in a row).
 static func draw_glyph(ci: CanvasItem, pos: Vector2, label: String, pad: bool, h := 34.0) -> float:
 	var f := font(0.0)
+	if pad:
+		label = pad_label(label)
 	if pad and label in PAD_COLORS:
 		var r := h * 0.5
 		var c: Vector2 = pos + Vector2(r, r)
 		ci.draw_circle(c + Vector2(0, 2), r, Color(0, 0, 0, 0.35))
 		ci.draw_circle(c, r, Color(0.1, 0.11, 0.14))
 		ci.draw_circle(c, r - 2.5, Color(0.2, 0.22, 0.26))
-		var fs := int(h * 0.58)
-		var tw := f.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
-		ci.draw_string(f, c + Vector2(-tw * 0.5, fs * 0.36), label, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, PAD_COLORS[label])
+		_draw_ps(ci, c, label, h, PAD_COLORS[label])
 		return h
+	if pad and label in SHOULDERS:
+		# A shoulder button: a light badge with the name in dark, like the font's badges
+		# (drawn here: the font's badges sit unevenly in their cells).
+		var w := glyph_width(label, true, h)
+		var badge := Rect2(pos + Vector2(0, h * 0.2), Vector2(w, h * 0.6))
+		var sb := StyleBoxFlat.new()
+		sb.bg_color = Color(0.93, 0.95, 0.98)
+		sb.border_color = Color(0.1, 0.11, 0.14)
+		sb.set_border_width_all(maxi(1, int(h * 0.05)))
+		sb.set_corner_radius_all(int(h * 0.1))
+		ci.draw_style_box(sb, badge)
+		var bf := font(0.0)
+		var bs := int(h * 0.42)
+		var bw := bf.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, bs).x
+		ci.draw_string(bf, badge.get_center() + Vector2(-bw * 0.5, bs * 0.36), label, HORIZONTAL_ALIGNMENT_LEFT, -1, bs, INK)
+		return w
+	if pad and label in PS_GLYPHS:
+		# Start / Select: the font's glyph, light on a dark rounded plate.
+		var w := h * 1.25
+		var sb := StyleBoxFlat.new()
+		sb.bg_color = Color(0.1, 0.11, 0.14)
+		sb.set_corner_radius_all(int(h * 0.14))
+		ci.draw_style_box(sb, Rect2(pos, Vector2(w, h)))
+		_draw_ps(ci, pos + Vector2(w * 0.5, h * 0.42), label, h * 0.82, Color(0.93, 0.95, 0.98))
+		return w
 	var fs2 := int(h * 0.46)
 	var w := maxf(h, f.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, fs2).x + h * 0.5)
 	var box := Rect2(pos, Vector2(w, h))
@@ -158,9 +277,41 @@ static func draw_footer(ci: CanvasItem, w: float, hint: String, prompts: Array, 
 		x -= 34.0
 
 
+## The PlayStation name for a pad button ("A" -> "CROSS", "LB" -> "L1"); PlayStation
+## names and anything else pass through.
+static func pad_label(label: String) -> String:
+	return PS_NAMES.get(label, label)
+
+
+static var _ps_font: Font
+
+
+static func ps_font() -> Font:
+	if _ps_font == null and ResourceLoader.exists(PS_FONT):
+		_ps_font = load(PS_FONT)
+	return _ps_font
+
+
+## A button's glyph from the PlayStation font, centered on `c`, sized to a prompt `h` tall.
+static func _draw_ps(ci: CanvasItem, c: Vector2, label: String, h: float, col: Color) -> void:
+	var pf := ps_font()
+	if pf == null:
+		return
+	var fs := int(h * PS_SCALE)
+	var ch: String = PS_GLYPHS[label]
+	var w := pf.get_string_size(ch, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
+	ci.draw_string(pf, c + Vector2(-w * 0.5, fs * PS_DROP), ch, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, col)
+
+
 static func glyph_width(label: String, pad: bool, h := 34.0) -> float:
+	if pad:
+		label = pad_label(label)
 	if pad and label in PAD_COLORS:
 		return h
+	if pad and label in SHOULDERS:
+		return h * 1.3
+	if pad and label in PS_GLYPHS:
+		return h * 1.25
 	return maxf(h, font(0.0).get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, int(h * 0.46)).x + h * 0.5)
 
 

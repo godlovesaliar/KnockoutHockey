@@ -6,7 +6,8 @@ extends Node
 ##
 ##   Keyboard 1: W A S D, accept J / Space / Enter, back L / Esc / Backspace, Q / E bumpers.
 ##   Keyboard 2: arrows, accept Num 1 / Num Enter, back Num 3, Num 7 / Num 9 bumpers.
-##   Pads: d-pad or left stick, accept A, back B, Start, LB / RB bumpers.
+##   Pads: d-pad or left stick, accept Cross, back Circle, Start, L1 / R1. (Prompts are
+##   PlayStation buttons; Godot's JOY_BUTTON_A / B are Cross / Circle.)
 ##
 ## Screens that only need one cursor use moved / side / accepted / back. Screens where
 ## each controller acts for itself (team select) use the dev_* signals, which name the
@@ -67,11 +68,11 @@ func _process(delta: float) -> void:
 
 ## Labels for the prompt bar, matching the device in use.
 func accept_label() -> String:
-	return "A" if using_pad else "ENTER"
+	return "CROSS" if using_pad else "ENTER"
 
 
 func back_label() -> String:
-	return "B" if using_pad else "ESC"
+	return "CIRCLE" if using_pad else "ESC"
 
 
 func _device(dev: String, pad: bool, delta: float, v: int, h: int, ok: bool, bk: bool, start: bool, lb: bool, rb: bool) -> void:

@@ -56,10 +56,10 @@ const LIST := [
 	{
 		"city": "Adirondack", "name": "Trailblazers", "abbr": "ADK", "conference": "East", "call": "trailblazers", "logo": "res://assets/characters/logo_trailblazers.png",
 		"colors": {
-			"jersey": Color(0.1, 0.33, 0.18), "trim": Color(0.88, 0.42, 0.1),
-			"pants": Color(0.05, 0.16, 0.09), "gloves": Color(0.1, 0.33, 0.18),
+			"jersey": Color(0.93, 0.4, 0.07), "trim": Color(0.1, 0.33, 0.18),
+			"pants": Color(0.05, 0.16, 0.09), "gloves": Color(0.93, 0.4, 0.07),
 			"helmet": Color(0.1, 0.33, 0.18), "skates": Color(0.05, 0.05, 0.06),
-			"number": Color(0.93, 0.93, 0.9), "number_outline": Color(0.88, 0.42, 0.1),
+			"number": Color(0.93, 0.93, 0.9), "number_outline": Color(0.1, 0.33, 0.18),
 		},
 	},
 	{
@@ -110,10 +110,10 @@ const LIST := [
 	{
 		"city": "Quebec", "name": "Poutine", "abbr": "QCP", "conference": "East", "call": "poutine", "logo": "res://assets/characters/logo_poutine.png",
 		"colors": {
-			"jersey": Color(0.66, 0.1, 0.1), "trim": Color(0.94, 0.7, 0.2),
+			"jersey": Color(0.94, 0.7, 0.2), "trim": Color(0.66, 0.1, 0.1),
 			"pants": Color(0.3, 0.17, 0.08), "gloves": Color(0.66, 0.1, 0.1),
 			"helmet": Color(0.3, 0.17, 0.08), "skates": Color(0.05, 0.05, 0.06),
-			"number": Color(0.94, 0.7, 0.2), "number_outline": Color(0.3, 0.17, 0.08),
+			"number": Color(0.66, 0.1, 0.1), "number_outline": Color(0.3, 0.17, 0.08),
 		},
 	},
 	{
@@ -146,10 +146,10 @@ const LIST := [
 	{
 		"city": "Lake Superior", "name": "Gales", "abbr": "LSG", "conference": "Central", "call": "gales", "logo": "res://assets/characters/logo_gales.png",
 		"colors": {
-			"jersey": Color(0.07, 0.13, 0.27), "trim": Color(0.93, 0.7, 0.2),
-			"pants": Color(0.07, 0.13, 0.27), "gloves": Color(0.07, 0.13, 0.27),
+			"jersey": Color(0.36, 0.4, 0.45), "trim": Color(0.62, 0.82, 0.93),
+			"pants": Color(0.07, 0.13, 0.27), "gloves": Color(0.36, 0.4, 0.45),
 			"helmet": Color(0.07, 0.13, 0.27), "skates": Color(0.05, 0.05, 0.06),
-			"number": Color(0.93, 0.7, 0.2), "number_outline": Color(0.55, 0.58, 0.62),
+			"number": Color(0.95, 0.95, 0.93), "number_outline": Color(0.07, 0.13, 0.27),
 		},
 	},
 	{
@@ -209,10 +209,10 @@ const LIST := [
 	{
 		"city": "Texas", "name": "Armadillos", "abbr": "TXA", "conference": "Central", "call": "armadillos", "logo": "res://assets/characters/logo_armadillos.png",
 		"colors": {
-			"jersey": Color(0.13, 0.55, 0.55), "trim": Color(0.86, 0.66, 0.4),
-			"pants": Color(0.35, 0.2, 0.1), "gloves": Color(0.13, 0.55, 0.55),
+			"jersey": Color(0.68, 0.3, 0.06), "trim": Color(0.86, 0.66, 0.4),
+			"pants": Color(0.35, 0.2, 0.1), "gloves": Color(0.68, 0.3, 0.06),
 			"helmet": Color(0.35, 0.2, 0.1), "skates": Color(0.05, 0.05, 0.06),
-			"number": Color(0.86, 0.66, 0.4), "number_outline": Color(0.35, 0.2, 0.1),
+			"number": Color(0.95, 0.92, 0.84), "number_outline": Color(0.35, 0.2, 0.1),
 		},
 	},
 	{

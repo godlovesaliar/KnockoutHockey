@@ -26,7 +26,10 @@ var _clock: Label
 var _goal: Label
 var _hint: Label
 var _prompt: Control
-var _prompt_bar: ColorRect
+var _prompt_canvas: Control
+var _prompt_art: Control
+var _prompt_share := 1.0
+var _prompt_at := 0     ## ms when the prompt opened (its pop-in runs on real time)
 var _banner: Label
 var _banner_t := 0.0
 var _flash: Label
@@ -90,8 +93,10 @@ func _controls_text(h: HumanBrain) -> String:
 		return ""
 	var b := func(n: String) -> String: return "[%s]" % h.button_label(n)
 	var mv: Array = h.move_labels()
-	return "%s Jab     %s Haymaker     %s Grab / break free     %s Uppercut (while holding)     hold %s Block\n%s: step in / back off     %s: slip a punch" % [
-		b.call("pass"), b.call("shoot"), b.call("check"), b.call("turbo"), b.call("deke"), mv[0], mv[1]]
+	return ("%s Jab   %s Cross   %s Hook   hold %s: to the body   %s Grab   hold %s Block (+%s low)\n"
+			+ "Holding: %s Cross  %s Hook  %s Uppercut   Tied up: mash %s   %s: step in / back off   %s: slip") % [
+		b.call("pass"), b.call("shoot"), b.call("deke"), b.call("protect"), b.call("check"), b.call("block"), b.call("protect"),
+		b.call("pass"), b.call("shoot"), b.call("deke"), b.call("check"), mv[0], mv[1]]
 
 
 func _panel(fighter: Fight.Fighter, side: int) -> Dictionary:
@@ -160,35 +165,84 @@ func _panel(fighter: Fight.Fighter, side: int) -> Dictionary:
 	return out
 
 
+## "Drop the gloves?" in the front-end style (MenuStyle): the game dimmed, a navy panel
+## with the red FIGHT tag and the question, both fighters on their team colors (yours on
+## the left), the yes / no buttons as the device's own glyphs, and a red bar running down
+## the time left to answer.
 func _build_prompt() -> void:
-	_prompt = VBoxContainer.new()
-	_prompt.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
-	_prompt.offset_left = -330
-	_prompt.offset_right = 330
-	_prompt.offset_top = -80
-	_prompt.offset_bottom = 80
+	_prompt = Control.new()
+	_prompt.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_prompt.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_prompt.visible = false
 	add_child(_prompt)
-	var bg := ColorRect.new()
-	bg.color = Color(0.03, 0.04, 0.07, 0.85)
-	bg.custom_minimum_size = Vector2(660, 150)
-	_prompt.add_child(bg)
-	var t := _label("DROP THE GLOVES?", 44, Color(1.0, 0.85, 0.2))
-	t.position = Vector2(0, 14)
-	t.size = Vector2(660, 50)
-	bg.add_child(t)
+	var dim := ColorRect.new()
+	dim.color = Color(0.02, 0.03, 0.06, 0.45)
+	dim.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	dim.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_prompt.add_child(dim)
+	_prompt_canvas = Control.new()
+	_prompt_canvas.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_prompt.add_child(_prompt_canvas)
+	MenuStyle.fit(_prompt_canvas)
+	get_viewport().size_changed.connect(func() -> void: MenuStyle.fit(_prompt_canvas))
+	_prompt_art = Control.new()
+	_prompt_art.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_prompt_art.draw.connect(_draw_prompt)
+	_prompt_canvas.add_child(_prompt_art)
+
+
+func _draw_prompt() -> void:
+	var ci := _prompt_art
+	var w := _prompt_canvas.size.x
+	var k := ease(clampf((Time.get_ticks_msec() - _prompt_at) / 250.0, 0.0, 1.0), -2.0)
+	var pw := 860.0
+	var ph := 330.0
+	var r := Rect2(w * 0.5 - pw * 0.5 + (1.0 - k) * 60.0, 450.0 - ph * 0.5, pw, ph)
+	var a := k
+	MenuStyle.draw_slant(ci, Rect2(r.position + Vector2(10, 12), r.size), Color(0, 0, 0, 0.45 * a), 34)
+	MenuStyle.draw_slant(ci, r.grow(5), Color(MenuStyle.INK, a), 34)
+	MenuStyle.draw_slant(ci, r, Color(MenuStyle.NAVY, 0.96 * a), 34)
+	# The tag and the question.
+	var tag := "FIGHT!"
+	var tw := MenuStyle.text_width(tag, 20, 0.12) + 40.0
+	var tp := r.position + Vector2(56, 28)
+	MenuStyle.draw_slant(ci, Rect2(tp, Vector2(tw, 30)), Color(MenuStyle.RED, a), 12)
+	ci.draw_string(MenuStyle.font(0.12), tp + Vector2(22, 22), tag, HORIZONTAL_ALIGNMENT_LEFT, -1, 20, Color(1, 1, 1, a))
+	MenuStyle.draw_bold(ci, r.position + Vector2(48, 118), "DROP THE GLOVES?", 60, Color(1, 1, 1, a), 0, MenuStyle.INK, 0.2, true)
+	# The pair: yours (the one asked) on the left.
 	var h := fight.prompt_brain
-	var yes := h.button_label("pass") if h else "A"
-	var no := h.button_label("check") if h else "B"
-	var c := _label("%s — Yes        %s — No" % [yes, no], 28, Color.WHITE)
-	c.position = Vector2(0, 72)
-	c.size = Vector2(660, 40)
-	bg.add_child(c)
-	_prompt_bar = ColorRect.new()
-	_prompt_bar.color = Color(1.0, 0.85, 0.2)
-	_prompt_bar.position = Vector2(0, 140)
-	_prompt_bar.size = Vector2(660, 10)
-	bg.add_child(_prompt_bar)
+	var mine: Fight.Fighter = fight.a
+	if h and fight.b.s.team == h.team:
+		mine = fight.b
+	var y := r.position.y + 150.0
+	var chip_w := 330.0
+	for i in 2:
+		var f: Fight.Fighter = mine if i == 0 else mine.other
+		var id: int = fight.director.team_ids[f.s.team]
+		var cx := r.position.x + 40.0 + i * (chip_w + 100.0) - (y - r.position.y) * 34.0 / ph
+		var cr := Rect2(cx, y, chip_w, 54)
+		MenuStyle.draw_slant(ci, cr.grow(3), Color(MenuStyle.INK, a), 14)
+		MenuStyle.draw_slant(ci, cr, Color(MenuStyle.team_color(id), a), 14)
+		var nm := MenuStyle.player_name(f.s)
+		var fs := 30 if MenuStyle.text_width(nm, 30) < chip_w - 40 else 24
+		MenuStyle.draw_bold(ci, Vector2(cx + 22, y + 39), nm, fs, Color(1, 1, 1, a), 6, Color(MenuStyle.INK, a), 0.2, false)
+	MenuStyle.draw_bold(ci, Vector2(r.position.x + 40.0 + chip_w + 26.0 - 150.0 * 34.0 / ph, y + 40), "VS", 32,
+			Color(MenuStyle.RED.lightened(0.2), a), 6, Color(MenuStyle.INK, a), 0.2, false)
+	# Yes / no, on this device's buttons.
+	var pad := h == null or h.kind == HumanBrain.Kind.PAD or (h.kind == HumanBrain.Kind.ANY and not Input.get_connected_joypads().is_empty())
+	var yes := "CROSS" if pad else h.button_label("pass")
+	var no := "CIRCLE" if pad else h.button_label("check")
+	var px := r.position.x + 32.0
+	var py := r.position.y + 228.0
+	var f2 := MenuStyle.font(0.12)
+	for opt: Array in [[yes, "DROP 'EM"], [no, "BACK OFF"]]:
+		px += MenuStyle.draw_glyph(ci, Vector2(px, py), opt[0], pad, 40.0) + 12.0
+		ci.draw_string(f2, Vector2(px, py + 30), opt[1], HORIZONTAL_ALIGNMENT_LEFT, -1, 28, Color(1, 1, 1, a))
+		px += f2.get_string_size(opt[1], HORIZONTAL_ALIGNMENT_LEFT, -1, 28).x + 56.0
+	# Time to answer.
+	var bar := Rect2(r.position.x + 14.0, r.end.y - 30.0, pw - 40.0, 14.0)
+	MenuStyle.draw_slant(ci, bar, Color(0, 0, 0, 0.5 * a), 6)
+	MenuStyle.draw_slant(ci, Rect2(bar.position, Vector2(bar.size.x * _prompt_share, bar.size.y)), Color(MenuStyle.RED, a), 6)
 
 
 func _label(text: String, size: int, color: Color) -> Label:
@@ -205,10 +259,12 @@ func _label(text: String, size: int, color: Color) -> Label:
 
 func show_prompt(on: bool) -> void:
 	_prompt.visible = on
+	_prompt_at = Time.get_ticks_msec()
 
 
 func prompt_left(share: float) -> void:
-	_prompt_bar.size.x = 660.0 * clampf(share, 0.0, 1.0)
+	_prompt_share = clampf(share, 0.0, 1.0)
+	_prompt_art.queue_redraw()
 
 
 func show_fight(on: bool) -> void:
@@ -265,9 +321,9 @@ func _status(f: Fight.Fighter) -> String:
 	if f.act == "down":
 		return ""
 	if f.grabbing > 0.0:
-		return "HOLDING"
+		return ("HOLD ON — MASH! %d%%" % int(f.other.escape * 100.0)) if f.other.escape > 0.3 else "HOLDING"
 	if f.other.grabbing > 0.0:
-		return "HELD — BREAK FREE"
+		return "HELD — MASH TO BREAK FREE %d%%" % int(f.escape * 100.0)
 	if f.act == "hit":
 		return "ROCKED"
 	if f.balance < f.max_balance * 0.3:
@@ -275,7 +331,7 @@ func _status(f: Fight.Fighter) -> String:
 	if f.stamina < f.max_stamina * 0.15:
 		return "WINDED"
 	if f.blocking:
-		return "BLOCKING"
+		return "BLOCKING LOW" if f.block_low else "BLOCKING HIGH"
 	return ""
 
 

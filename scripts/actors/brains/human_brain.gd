@@ -2,9 +2,9 @@ class_name HumanBrain
 extends Brain
 ## One human player's controller. Kinds:
 ##   ANY  – the shared input map (keyboard 1 + any pad), for single-player
-##   KB1  – WASD · J pass · K shoot · L check · I deke · Shift turbo · Space protect · Q backwards
-##   KB2  – Arrows · Num1/, pass · Num2/. shoot · Num3// check · Num5/; deke · Num0/RCtrl turbo · NumEnter/' protect · Num6/M backwards
-##   PAD  – one specific gamepad (A pass, X shoot, B check, Y deke, RT turbo, LT backwards, LB protect)
+##   KB1  – WASD · J pass · K shoot · L check · I deke · Shift turbo · Space protect · Q backwards · U block
+##   KB2  – Arrows · Num1/, pass · Num2/. shoot · Num3// check · Num5/; deke · Num0/RCtrl turbo · NumEnter/' protect · Num6/M backwards · Num4/N block
+##   PAD  – one specific gamepad (A pass, X shoot, B check, Y deke, RT turbo, LT backwards, LB protect, RB block)
 ## Input is read once per physics frame and cached, so if control switches skaters
 ## mid-tick both see the same snapshot.
 
@@ -15,18 +15,18 @@ const PLAYER_COLORS := [Color(1.0, 0.85, 0.15), Color(0.2, 0.9, 1.0), Color(0.4,
 const KB1 := {
 	"left": [KEY_A], "right": [KEY_D], "up": [KEY_W], "down": [KEY_S],
 	"pass": [KEY_J], "shoot": [KEY_K], "check": [KEY_L], "deke": [KEY_I],
-	"turbo": [KEY_SHIFT], "protect": [KEY_SPACE], "backward": [KEY_Q],
+	"turbo": [KEY_SHIFT], "protect": [KEY_SPACE], "backward": [KEY_Q], "block": [KEY_U],
 }
 const KB2 := {
 	"left": [KEY_LEFT], "right": [KEY_RIGHT], "up": [KEY_UP], "down": [KEY_DOWN],
 	"pass": [KEY_KP_1, KEY_COMMA], "shoot": [KEY_KP_2, KEY_PERIOD], "check": [KEY_KP_3, KEY_SLASH],
 	"deke": [KEY_KP_5, KEY_SEMICOLON], "turbo": [KEY_KP_0, KEY_CTRL], "protect": [KEY_KP_ENTER, KEY_APOSTROPHE],
-	"backward": [KEY_KP_6, KEY_M],
+	"backward": [KEY_KP_6, KEY_M], "block": [KEY_KP_4, KEY_N],
 }
 const PAD := {
-	"pass": JOY_BUTTON_A, "shoot": JOY_BUTTON_X, "check": JOY_BUTTON_B, "deke": JOY_BUTTON_Y,
+	"pass": JOY_BUTTON_A, "shoot": JOY_BUTTON_X, "check": JOY_BUTTON_B, "deke": JOY_BUTTON_Y, "block": JOY_BUTTON_RIGHT_SHOULDER,
 }
-const BUTTONS := ["pass", "shoot", "check", "deke"]
+const BUTTONS := ["pass", "shoot", "check", "deke", "block"]
 
 var kind := Kind.ANY
 var pad := 0
@@ -65,14 +65,14 @@ func device_name() -> String:
 	return "Keyboard / Pad"
 
 
-## What to press for a button on this device ("pass" -> "A" on a pad, "J" on keyboard 1).
-## Buttons: pass, shoot, check, deke, turbo, protect, backward.
+## What to press for a button on this device ("pass" -> "CROSS" on a pad, "J" on keyboard 1).
+## Buttons: pass, shoot, check, deke, turbo, protect, backward, block.
 func button_label(b: String) -> String:
 	if kind == Kind.KB1 or kind == Kind.KB2:
 		var map: Dictionary = KB1 if kind == Kind.KB1 else KB2
 		var keys: Array = map.get(b, [])
 		return OS.get_keycode_string(keys[0]) if not keys.is_empty() else "?"
-	return {"pass": "A", "shoot": "X", "check": "B", "deke": "Y", "turbo": "RT", "protect": "LB", "backward": "LT"}.get(b, "?")
+	return {"pass": "CROSS", "shoot": "SQUARE", "check": "CIRCLE", "deke": "TRIANGLE", "turbo": "R2", "protect": "L1", "backward": "L2", "block": "R1"}.get(b, "?")
 
 
 ## The movement control on this device: [left / right, up / down].
@@ -100,6 +100,7 @@ func update(_skater: Skater, i: SkaterIntent, _delta: float) -> void:
 	i.deke_down = _cur.deke and not _prev.get("deke", false)
 	i.deke_held = _cur.deke
 	i.check_down = _cur.check and not _prev.get("check", false)
+	i.block_held = _cur.get("block", false)
 
 
 func _poll() -> void:

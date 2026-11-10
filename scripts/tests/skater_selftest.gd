@@ -122,6 +122,21 @@ func _run() -> void:
 	_check(s.velocity.z > 2.0, "then skates the other way (vz %.1f)" % s.velocity.z)
 	await _reset()
 
+	# Caught mid hockey stop by a whistle and walked to the box: the spray mustn't follow.
+	s = _spawn(0, Vector3(0, 0, 25), Vector3.FORWARD, func(_s: Skater, i: SkaterIntent, t: float) -> void:
+		i.move = Vector3.FORWARD if t < 1.3 else Vector3.BACK)
+	await _ticks(156)
+	var caught := false
+	for k in 30:
+		await get_tree().physics_frame
+		if s.stopping:
+			caught = true
+			break
+	s.walk([s.global_position + Vector3(4, 0, 0)], 3.0, Vector3.LEFT)
+	await _ticks(10)
+	_check(caught and not s.stopping and not s.visual.spray.emitting, "a scripted walk ends the hockey stop's spray")
+	await _reset()
+
 	s = _spawn(0, Vector3(-6, 0, 25), Vector3.FORWARD, func(_s: Skater, i: SkaterIntent, t: float) -> void:
 		i.move = Vector3.FORWARD if t < 1.3 else Vector3.RIGHT)
 	await _ticks(156)

@@ -1,7 +1,7 @@
 # Announcer lines: takes still needed (target 3 per line)
 
-- **Steve Sheldon** (play-by-play, `assets/sound/announcer/pbp/`): 111 takes needed
-- **Bobby Niedemyer** (color, `assets/sound/announcer/color/`): 26 takes needed
+- **Steve Sheldon** (play-by-play, `assets/sound/announcer/pbp/`): 108 takes needed
+- **Bobby Niedemyer** (color, `assets/sound/announcer/color/`): 18 takes needed
 - **Steve & Bobby** (duets, `assets/sound/announcer/both/`): 7 takes needed
 
 ## Game flow
@@ -13,7 +13,7 @@
 | `newperiod` | Steve | 3 (2 / 1 / 0) | — | period_start_01 "And we're underway!"<br>period_start_02 "Puck is dropped, here we go!" | the first period starts (and any period without its own line) |
 | `second_period` | Steve | 4 (3 / 1 / 0) | — | second_period_01 "Start of the second period." | the second period starts |
 | `third_period` | Steve | 4 (3 / 1 / 0) | — | third_period_01 "Here we go, start of the third." | the third period starts |
-| `third_stakes` | Bobby | 0 | 3 | third_stakes_01 "Twenty minutes to decide it."<br>third_stakes_02 "Third period, and everything is on the line." | after the third period's call ("Twenty minutes to decide it.") |
+| `third_stakes` | Bobby | 3 (0 / 3 / 0) | — | third_stakes_01 "Twenty minutes to decide it."<br>third_stakes_02 "Third period, and everything is on the line." | after the third period's call ("Twenty minutes to decide it.") |
 | `overtime` | Steve | 3 (3 / 0 / 0) | — | overtime_01 "We're going to overtime!"<br>overtime_02 "Sudden death! Next goal wins!" | overtime starts |
 | `shootout` | Steve | 2 (2 / 0 / 0) | 1 | shootout_01 "It comes down to a shootout!" | the shootout starts |
 | `final_minute` | Steve | 3 (3 / 0 / 0) | — | final_minute_01 "One minute remaining!"<br>final_minute_02 "Under a minute to go, this is it!" | one minute left in the last period |
@@ -78,17 +78,17 @@
 
 | Line | Records new takes | Takes (Steve / Bobby / duet) | Still needed | CSV scripts | Plays when |
 |---|---|---|---|---|---|
-| `goal` | Steve | 4 (0 / 4 / 0) | — | goal_01 "He scores!"<br>goal_02 "GOAL!"<br>goal_04 "Lights the lamp!"<br>goal_05 "It's in! It's in!" | a goal |
-| `goal_topshelf` | Steve | 0 | 3 | goal_topshelf_01 "Top shelf!" | a goal up high |
+| `goal` | Steve | 8 (4 / 4 / 0) | — | goal_01 "He scores!"<br>goal_02 "GOAL!"<br>goal_04 "Lights the lamp!"<br>goal_05 "It's in! It's in!" | a goal |
+| `goal_topshelf` | Steve | 3 (3 / 0 / 0) | — | goal_topshelf_01 "Top shelf!" | a goal up high |
 | `goal_calm` | Steve | 0 | 3 | goal_calm_01 "And he scores."<br>goal_calm_02 "That one finds the back of the net." | a goal by a team already up three or more |
 | `goal_tie` | Steve | 0 | 3 | goal_tie_01 "That ties it up!" | after a goal that ties it |
 | `goal_lead` | Steve | 0 | 3 | goal_lead_01 "And they take the lead!" | after a goal that breaks a tie |
-| `goal_insurance` | Bobby | 0 | 3 | goal_insurance_01 "That's an insurance goal right there." | after a goal that makes it a two-goal lead in the last period |
+| `goal_insurance` | Bobby | 3 (0 / 3 / 0) | — | goal_insurance_01 "That's an insurance goal right there." | after a goal that makes it a two-goal lead in the last period |
 | `goal_hattrick` | Steve | 0 | 3 | goal_hattrick_01 "That's a hat trick!" | after a player's third goal |
 | `goal_powerplay` | Steve | 0 | 3 | goal_powerplay_01 "Power play goal!" | after a power-play goal |
 | `goal_shorthanded` | Steve | 0 | 3 | goal_shorthanded_01 "Short-handed goal!" | after a short-handed goal |
 | `goal_comeback` | Steve | 0 | 3 | goal_comeback_01 "What a comeback!" | after a goal that erases a deficit of two or more |
-| `goal_react` | Bobby | 0 | 3 | goal_react_02 "You won't see a prettier one than that."<br>goal_react_03 "The goalie had no chance on that one." | after a goal, when nothing above fits |
+| `goal_react` | Bobby | 2 (0 / 2 / 0) | 1 | goal_react_02 "You won't see a prettier one than that."<br>goal_react_03 "The goalie had no chance on that one." | after a goal, when nothing above fits |
 | `goal_react_home` | Steve | 0 | 3 | goal_react_home_01 "The crowd goes wild!" | after a home goal ("The crowd goes wild!") |
 
 ## Hits and fights

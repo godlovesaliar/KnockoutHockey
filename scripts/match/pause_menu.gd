@@ -5,7 +5,7 @@ extends CanvasLayer
 ## and the prompt bar. Controls opens a button chart in place. The game tree is paused
 ## while it's open; the menu runs anyway (PROCESS_MODE_ALWAYS).
 ##
-## Any keyboard or pad drives it (MenuInput), the mouse too. Accept picks; Back (B / Esc)
+## Any keyboard or pad drives it (MenuInput), the mouse too. Accept picks; Back (Circle / Esc)
 ## or Start resumes (from the chart: back to the list).
 ## Set `mode` ("EXHIBITION", "PRACTICE") and `restart_text` before adding it.
 ## `camera_host` (a MatchDirector or Practice: `camera`, `camera_follow`, `apply_camera()`,
@@ -19,18 +19,18 @@ const MENU_SCENE := "res://scenes/ui/MainMenu.tscn"
 ## Every control: [action, pad, keyboard 1, keyboard 2].
 const CONTROLS := [
 	["Skate", "L-STICK", "W A S D", "ARROWS"],
-	["Pass (tap) · saucer (hold) · switch player on defense", "A", "J", "NUM 1"],
-	["Shoot (tap wrist, hold slap) · hook on defense", "X", "K", "NUM 2"],
-	["Check (hold for a bigger hit)", "B", "L", "NUM 3"],
-	["Deke · poke check on defense", "Y", "I", "NUM 5"],
-	["Turbo", "RT", "SHIFT", "NUM 0"],
-	["Skate backwards (hold)", "LT", "Q", "NUM 6"],
-	["Protect the puck (hold): slower, harder to strip", "LB", "SPACE", "NUM ENTER"],
+	["Pass (tap) · saucer (hold) · switch player on defense", "CROSS", "J", "NUM 1"],
+	["Shoot (tap wrist, hold slap) · hook on defense", "SQUARE", "K", "NUM 2"],
+	["Check (hold for a bigger hit)", "CIRCLE", "L", "NUM 3"],
+	["Deke · poke check on defense", "TRIANGLE", "I", "NUM 5"],
+	["Turbo", "R2", "SHIFT", "NUM 0"],
+	["Skate backwards (hold)", "L2", "Q", "NUM 6"],
+	["Protect the puck (hold): slower, harder to strip", "L1", "SPACE", "NUM ENTER"],
 	["Pause", "START", "ESC", "ESC"],
 ]
 const TIPS := [
-	"One-timer: hold shoot while a pass is on its way.   Goalie with the puck: A pass out, X clear, Y cover.",
-	"Fights: A jab · X haymaker · B grab / break free · RT uppercut (while holding) · hold Y block · stick toward / away steps in / backs off, up / down slips.",
+	"One-timer: hold shoot while a pass is on its way.   Goalie with the puck: Cross pass out, Square clear, Triangle cover.",
+	"Fights: Cross jab · Square cross · Triangle hook · hold L1 for body shots · Circle grab (holding: Cross cross, Square hook, Triangle uppercut) · mash Circle to break free or hang on · hold R1 block (+L1 low) · stick up / down slips.",
 ]
 
 const ITEM_POS := Vector2(118, 250)
@@ -127,7 +127,7 @@ func _build_main() -> void:
 		if camera_host.human_team() >= 0:
 			entries.append(["CAMERA TURNS", _toggle_follow, "With my team: the view turns at the change of ends so you always attack up."])
 	entries.append_array([
-		[restart_text, _restart, "Start over from the opening faceoff." if mode != "PRACTICE" else "Start the practice over."],
+		[restart_text, _restart, {"PRACTICE": "Start the practice over.", "KNOCKOUT MODE": "Start the card over: new fighters, new pairs."}.get(mode, "Start over from the opening faceoff.")],
 		["QUIT TO MENU", _quit, "Leave this game for the main menu."],
 	])
 	for i in entries.size():
@@ -168,12 +168,14 @@ func _next_camera() -> void:
 	var angle := str(BroadcastCamera.Mode.keys()[next]).to_lower()
 	camera_host.apply_camera(angle, camera_host.camera_follow)
 	GameSettings.config["camera"] = angle
+	GameSettings.save_settings()
 	_refresh_camera()
 
 
 func _toggle_follow() -> void:
 	camera_host.apply_camera(camera_host.camera, not camera_host.camera_follow)
 	GameSettings.config["camera_follow"] = camera_host.camera_follow
+	GameSettings.save_settings()
 	_refresh_camera()
 
 
@@ -260,29 +262,33 @@ func _quit() -> void:
 ## The button chart: a dark panel, one striped row per action, pad buttons as colored
 ## face buttons and keys as key caps.
 func _draw_chart() -> void:
-	var w := _canvas.size.x
+	draw_controls_chart(_chart, _canvas.size.x)
+
+
+## The controls chart, drawn into `ci` on the 1600 x 900 menu canvas `w` wide (the options
+## screen shows it too).
+static func draw_controls_chart(ci: CanvasItem, w: float, y := 175.0) -> void:
 	var x := 80.0
 	var pw := minf(w - 160.0, 1440.0)
-	var y := 175.0
 	var row_h := 48.0
 	var cols := [x + pw * 0.56, x + pw * 0.68, x + pw * 0.84]
 	var f := MenuStyle.font(0.12)
-	_chart.draw_rect(Rect2(x, y, pw, 70 + row_h * CONTROLS.size() + 112), Color(0.03, 0.05, 0.1, 0.82))
-	_chart.draw_rect(Rect2(x, y, pw, 3), MenuStyle.RED)
+	ci.draw_rect(Rect2(x, y, pw, 70 + row_h * CONTROLS.size() + 112), Color(0.03, 0.05, 0.1, 0.82))
+	ci.draw_rect(Rect2(x, y, pw, 3), MenuStyle.RED)
 	for c in 3:
-		_chart.draw_string(f, Vector2(cols[c], y + 44), ["PAD", "KEYBOARD 1", "KEYBOARD 2"][c],
+		ci.draw_string(f, Vector2(cols[c], y + 44), ["PAD", "KEYBOARD 1", "KEYBOARD 2"][c],
 				HORIZONTAL_ALIGNMENT_LEFT, -1, 20, MenuStyle.DIM)
 	for i in CONTROLS.size():
 		var r: Array = CONTROLS[i]
 		var ry := y + 64 + i * row_h
 		if i % 2 == 0:
-			_chart.draw_rect(Rect2(x + 10, ry, pw - 20, row_h), Color(1, 1, 1, 0.04))
-		_chart.draw_string(f, Vector2(x + 30, ry + 32), r[0], HORIZONTAL_ALIGNMENT_LEFT, cols[0] - x - 50, 21, Color.WHITE)
+			ci.draw_rect(Rect2(x + 10, ry, pw - 20, row_h), Color(1, 1, 1, 0.04))
+		ci.draw_string(f, Vector2(x + 30, ry + 32), r[0], HORIZONTAL_ALIGNMENT_LEFT, cols[0] - x - 50, 21, Color.WHITE)
 		for c in 3:
-			MenuStyle.draw_glyph(_chart, Vector2(cols[c], ry + 8), r[c + 1], c == 0, 32.0)
+			MenuStyle.draw_glyph(ci, Vector2(cols[c], ry + 8), r[c + 1], c == 0, 32.0)
 	var ty := y + 64 + CONTROLS.size() * row_h + 34
 	for t: String in TIPS:
-		_chart.draw_string(f, Vector2(x + 30, ty), t, HORIZONTAL_ALIGNMENT_LEFT, pw - 60, 18, Color(1.0, 0.86, 0.7))
+		ci.draw_string(f, Vector2(x + 30, ty), t, HORIZONTAL_ALIGNMENT_LEFT, pw - 60, 18, Color(1.0, 0.86, 0.7))
 		ty += 32
 
 

@@ -122,10 +122,16 @@ var uniform := {}                ## team palette (Teams.LIST colors); empty = de
 var crest: Texture2D             ## team logo on the jersey front (null = none)
 var skin_tone := Color(0.91, 0.73, 0.60)   ## sRGB; see SkaterVisual.SKIN_TONES
 var gear_style := 0              ## helmet model (goalies: mask model); see SkaterVisual.HELMETS / GoalieVisual.MASKS
+var visor := true                ## a visor on the helmet (skaters); see Skater.visor_for
 var hair_style := ""              ## SkaterVisual.HAIR_STYLES / "braid"; "" = none showing
 var facial_hair := ""             ## "beard", "moustache" or ""
 var hair_color := Color(0.16, 0.1, 0.06)
 var eye_color := Color(0.34, 0.2, 0.09)   ## sRGB; see SkaterVisual.EYE_COLORS
+var stick_style := "black"        ## SkaterVisual.STICK_STYLES: "wood", "black", "black_white", ...
+var stick_tape := "white"         ## SkaterVisual.TAPES: "white", "black", "team" or "none"
+## The club's home and road jersey colors, for team-colored sticks and tape (empty: the
+## uniform's jersey on white).
+var club_colors: Array[Color] = []
 var human_index := -1             ## which human (P1..P4) controls this skater, -1 = AI
 var visual: SkaterVisual
 
@@ -172,8 +178,15 @@ func _make_visual() -> SkaterVisual:
 
 
 ## Teleports the skater, stopped, facing `face`.
+## Whether a player wears a visor, fixed by a key (their team and name): about three in
+## four do. Hashed rather than drawn from the look RNG, so other looks don't shift.
+static func visor_for(key: String) -> bool:
+	return absi(hash(key + " visor")) % 100 < 75
+
+
 func place(pos: Vector3, face := Vector3.FORWARD) -> void:
 	_stop_walk()
+	_clear_motion_flags()
 	global_position = Vector3(pos.x, 0.0, pos.z)
 	velocity = Vector3.ZERO
 	heading = face.normalized() if face.length() > 0.01 else Vector3.FORWARD
@@ -239,6 +252,7 @@ func set_benched(b: bool) -> void:
 	benched = b
 	process_mode = Node.PROCESS_MODE_DISABLED if b else Node.PROCESS_MODE_INHERIT
 	_stop_walk()
+	_clear_motion_flags()
 	if b:
 		if has_puck():
 			puck.strip(self, Vector3.ZERO)
@@ -291,6 +305,7 @@ func _park_pose() -> void:
 ## heading at the end. `done` runs at the end (unless the walk is cut off by a teleport).
 func walk(path: Array, speed: float, face: Vector3, done := Callable()) -> void:
 	_stop_walk()
+	_clear_motion_flags()
 	if path.is_empty():
 		return
 	process_mode = Node.PROCESS_MODE_DISABLED
@@ -339,6 +354,14 @@ func _stop_walk() -> void:
 			_resume_live()
 
 
+## Per-tick movement flags (the hockey stop's spray and crouch, the carve lean) are only
+## refreshed by _update_movement; anything that takes over from it clears them, or a
+## skater caught mid-stop keeps spraying on the way to the box and sitting in it.
+func _clear_motion_flags() -> void:
+	stopping = false
+	turn_speed = 0.0
+
+
 ## Back to normal play after a scripted walk: physics, processing, interpolation.
 func _resume_live() -> void:
 	process_mode = Node.PROCESS_MODE_INHERIT
@@ -356,6 +379,7 @@ func _physics_process(delta: float) -> void:
 		brain.update(self, intent, delta)
 	if frozen:
 		velocity = Vector3.ZERO
+		_clear_motion_flags()
 		return
 	_state_time += delta
 	_tick_timers(delta)

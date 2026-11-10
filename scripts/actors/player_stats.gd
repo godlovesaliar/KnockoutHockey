@@ -40,6 +40,20 @@ static func random_around(rng: RandomNumberGenerator, base := 50, spread := 12) 
 	return s
 
 
+## How this player fights (Fight.Style): 1 brawler if aggression is 85+ (the heavyweights);
+## else 2 grinder if strength beats agility and aggression beats fighting (more muscle and
+## temper than footwork and technique); else 0 boxer. Ratings move together (strength,
+## fighting and aggression all follow PHY in the rosters), so this compares them rather
+## than adding them up. On the rosters: enforcers brawl; grinders and stay-at-home /
+## shutdown D grind; everyone else boxes.
+func fighting_style() -> int:
+	if aggression >= 85:
+		return 1
+	if strength > agility and aggression > fighting:
+		return 2
+	return 0
+
+
 ## Maps a 1–99 rating linearly onto [lo, hi].
 static func lerp_stat(value: int, lo: float, hi: float) -> float:
 	return lerpf(lo, hi, (clampf(value, 1, 99) - 1.0) / 98.0)

@@ -12,6 +12,16 @@ const UNIFORM_SHADER := preload("res://scenes/actors/uniform.gdshader")
 const SKIN_SHADER := preload("res://scenes/actors/skin.gdshader")
 const GLOVE_SHADER := preload("res://scenes/actors/glove.gdshader")
 const RING_SHADER := preload("res://scenes/actors/player_ring.gdshader")
+const STICK_SHADER := preload("res://scenes/actors/stick.gdshader")
+## Stick finishes (Skater.stick_style): "X on Y" is X graphics on a Y stick; home / away
+## are the club's home and road jersey colors (Skater.club_colors).
+const STICK_STYLES := ["wood", "black", "black_white", "white_black", "home_away", "away_home"]
+const STICK_STYLE_NAMES := ["Plain Wood", "Plain Black", "Black on White", "White on Black", "Home on Away", "Away on Home"]
+## Blade tape (Skater.stick_tape): round the middle of the blade, heel and toe bare.
+const TAPES := ["white", "black", "team", "none"]
+const TAPE_NAMES := ["White", "Black", "Team Color", "No Tape"]
+const STICK_WHITE := Color(0.93, 0.93, 0.91)
+const STICK_BLACK := Color(0.05, 0.05, 0.06)
 ## Skin tones to pick from (sRGB), light to dark. The player editor (M7) will set them.
 const SKIN_TONES: Array[Color] = [
 	Color(0.96, 0.80, 0.69), Color(0.91, 0.73, 0.60), Color(0.82, 0.62, 0.47),
@@ -96,16 +106,24 @@ var _clip_fade := 6.0
 ## the opponent.
 var yaw_offset := 0.0
 var roll_offset := 0.0   ## fights: sideways tilt (rad) while slipping a punch
+var hold_breath := 0.0   ## fights: SkaterRig.breath over a held one-frame pose (the guard)
 
 static var _materials := {}
 static var _visor: StandardMaterial3D
-## Helmet models (tools/build_gear.gd), picked by Skater.gear_style. fit = helmet width /
-## head width; raise = shell center above the head's center, in head heights; back =
-## shell center behind the head's center, in head depths.
+## Helmet models (tools/blender/helmet_gear.py via tools/build_gear.gd), picked by
+## Skater.gear_style: A modern two-piece, B classic one-piece. Surfaces: 0 shell, 1 trim, 2 dark
+## (straps, liner, ear surrounds), 3 visor, 4 visor clips (3 and 4 only with Skater.visor).
+## Both are modeled on the male head with their origin at its head box center: the crown
+## HELMET_CROWN above it, HELMET_HEAD_W the head's width. Every body's helmet is scaled by
+## its head width and set on its crown, which also lands the chin strap under its chin
+## (both bodies' crown-to-chin heights follow their head widths).
 const HELMETS := [
-	{"mesh": preload("res://assets/characters/helmet.res"), "fit": 1.18, "raise": 0.2, "back": 0.04},
-	{"mesh": preload("res://assets/characters/helmet_b.res"), "fit": 1.16, "raise": 0.2, "back": 0.04},
+	{"mesh": preload("res://assets/characters/helmet.res")},
+	{"mesh": preload("res://assets/characters/helmet_b.res")},
 ]
+const HELMET_CROWN := 0.1447
+const HELMET_HEAD_W := 0.1939
+static var _no_visor := {}   ## helmet mesh -> the same without its visor surfaces
 const STICK_MESH := preload("res://assets/characters/stick.res")
 const SKATE_MESH := preload("res://assets/characters/skate.res")
 const GLOVE_MESH := preload("res://assets/characters/glove.res")   ## a right glove, origin at the wrist, sized for 1.8 m
@@ -116,14 +134,20 @@ const DIGITS := preload("res://assets/characters/digits.png")   ## tools/build_d
 const DIGIT_FILL := 0.84        ## share of a digit-sheet cell's height the digit fills
 const LETTERS := preload("res://assets/characters/letters.png")   ## tools/build_letters.gd
 const LETTER_CHARS := "ABCDEFGHIJKLMNOPQRSTUVWXYZÉÑÔÚÛ0123456789-'.!"   ## the sheet's cells, in order
-const NUMBER_LOWER := 0.2        ## m the back number sits below where it used to (room for the name)
+const NUMBER_LOWER := 0.15       ## m the back number sits below where it used to (room for the name)
 const NAME_HEIGHT := 0.056       ## nameplate cap height for a 1.8 m body
-const NAME_GAP := 0.025          ## m between the nameplate and the top of the number
-const NAME_MAX_W := 0.29        ## widest nameplate (longer names are squeezed to fit)
+const NAME_GAP := 0.012          ## m between the nameplate and the top of the number
+const NAME_MAX_W := 0.24        ## widest nameplate (longer names are squeezed to fit): kept
+                                 ## off the back's sides, where the decal fades with the curve
 const NICKNAME_MAX := 8          ## nicknames this short go on the back instead of the last name
 const NUMBER_HEIGHT := 0.24     ## back number height for a 1.8 m body
-const CREST_WIDTH := 0.34       ## jersey crest width for a 1.8 m body
-const STICK_PUCK := 0.1        ## where on the blade the puck sits, from the heel (m)
+const CREST_WIDTH := 0.34       ## jersey crest box width for a 1.8 m body (the widest a crest gets)
+const CREST_MAX_H := 0.9         ## ...and its height, as a share of that width
+const CREST_INK := 0.6           ## the logo's own (opaque) area, as a share of the box: crests of
+                                 ## any shape come out the same visual size, inside the box
+const DECAL_NORMAL_FADE := 0.5   ## Decal.normal_fade for crests, names and numbers: fades only
+                                 ## where the jersey turns well away (sides), not on the chest's curve
+const STICK_PUCK := 0.16       ## where on the blade the puck sits, from the heel corner (m): mid-blade
 const GRIP_OFFSET := 0.065     ## wrist to the glove's knuckle line, for a 1.8 m body...
 const GRIP_PALM := 0.05        ## ...and in toward the palm to the middle of the fist
 var stance_blade_forward := 0.8   ## the ready stance's blade without the puck (m ahead, 1.8 m body)
@@ -161,11 +185,14 @@ var _helmet_spin := Vector3.ZERO
 var _helmet_pts := PackedVector3Array()   ## a sample of its vertices (landing on the ice)
 const HELMET_CLIP := "focus"
 const HELMET_FROM := 0.6      ## clip seconds skipped (the hands are already up)
-const HELMET_SPEED := 1.5
-const HELMET_LIFT := 1.1      ## s: the hands come off the head, the helmet with the right one
-const HELMET_DROP := 1.45     ## s: let go
-const HELMET_END := 1.7       ## s: the clip fades out
+const HELMET_SPEED := 2.6
+## The moments below are clip seconds (lift 2.25, let go 2.78, done 3.15) turned into
+## real seconds at HELMET_SPEED, so changing the speed keeps the hand and helmet in step.
+const HELMET_LIFT := (2.25 - HELMET_FROM) / HELMET_SPEED   ## s: the hands come off the head, the helmet with the right one
+const HELMET_DROP := (2.78 - HELMET_FROM) / HELMET_SPEED   ## s: let go
+const HELMET_END := (3.15 - HELMET_FROM) / HELMET_SPEED    ## s: the clip fades out (about 1 s)
 static var _numbers := {}         ## "number|fill|outline" -> ImageTexture
+static var _crest_ink := {}       ## crest texture path -> share of it that is opaque
 static var _names := {}           ## "NAME|fill|outline" -> [ImageTexture, cap height share]
 static var _letter_sheet: Image
 static var _letter_spans := {}    ## char -> [x0 in the sheet, width]
@@ -213,6 +240,16 @@ func _build_body() -> void:
 	rig.modification_processed.connect(_after_rig)
 
 
+## A helmet mesh with only its first three surfaces (no visor or visor clips), cached.
+static func without_visor(m: Mesh) -> Mesh:
+	if not _no_visor.has(m):
+		var out := ArrayMesh.new()
+		for s in mini(3, m.get_surface_count()):
+			out.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, m.surface_get_arrays(s))
+		_no_visor[m] = out
+	return _no_visor[m]
+
+
 static func visor_material() -> StandardMaterial3D:
 	if _visor == null:
 		_visor = StandardMaterial3D.new()
@@ -220,6 +257,9 @@ static func visor_material() -> StandardMaterial3D:
 		_visor.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 		_visor.roughness = 0.1
 		_visor.cull_mode = BaseMaterial3D.CULL_DISABLED
+		# After the brows (FaceRig draws them at priority 1, over the skin), so the
+		# shield tints them like the rest of the face behind it.
+		_visor.render_priority = 2
 	return _visor
 
 
@@ -356,15 +396,18 @@ func _build_gear() -> void:
 	var head := anchor_box("head", "Head", Vector3(0.2, 0.25, 0.22) * hs)
 	# Helmet model (tools/build_gear.gd): sized to the head's width, shell over the crown.
 	var hspec: Dictionary = HELMETS[skater.gear_style % HELMETS.size()]
-	var hmesh: Mesh = hspec.mesh
-	var fit: float = head.size.x * hspec.fit / hmesh.get_aabb().size.x
-	var hm := attach("Head", hmesh, null, head.get_center() + Vector3(0, head.size.y * hspec.raise, -head.size.z * hspec.back), Basis.from_scale(Vector3.ONE * fit))
+	var hmesh: Mesh = hspec.mesh if skater.visor else without_visor(hspec.mesh)
+	var fit: float = head.size.x / HELMET_HEAD_W
+	var hat := Vector3(head.get_center().x, head.end.y - HELMET_CROWN * fit, head.get_center().z)
+	var hm := attach("Head", hmesh, null, hat, Basis.from_scale(Vector3.ONE * fit))
 	hm.material_override = null
 	hm.name = "Helmet"
 	hm.set_surface_override_material(0, helmet)
 	hm.set_surface_override_material(1, MeshUtil.material(Color(0.92, 0.92, 0.9), 0.4))
 	hm.set_surface_override_material(2, dark)
-	hm.set_surface_override_material(3, visor_material())
+	if skater.visor:
+		hm.set_surface_override_material(3, visor_material())
+		hm.set_surface_override_material(4, MeshUtil.material(Color(0.08, 0.08, 0.09), 0.35))
 	_helmet = hm
 	_helmet_rest = hm.transform
 	_add_hair(head)
@@ -552,15 +595,43 @@ func _fall_helmet(delta: float) -> void:
 	_helmet.global_transform = xf
 
 
+## The PUBG strand textures are white strands on black, which reads as dark sketch lines
+## on an opaque mesh. Squeeze them into a narrow light band (gaps at HAIR_FLAT_LOW, strands
+## at 1.0) so the hair is a near-flat color with a faint strand grain, like the rest of
+## the character. Mipmapped so the grain doesn't shimmer at a distance. Cached per file.
+const HAIR_FLAT_LOW := 0.86
+const HAIR_FLAT_MEAN := 0.93
+static var _flat_hair: Dictionary = {}
+
+
+static func _flat_hair_texture(path: String) -> Texture2D:
+	if _flat_hair.has(path):
+		return _flat_hair[path]
+	var img: Image = (load(path) as Texture2D).get_image()
+	if img.is_compressed():
+		img.decompress()
+	img.convert(Image.FORMAT_RGBA8)
+	for y in img.get_height():
+		for x in img.get_width():
+			var c := img.get_pixel(x, y)
+			var v := lerpf(HAIR_FLAT_LOW, 1.0, c.get_luminance())
+			img.set_pixel(x, y, Color(v, v, v, c.a))
+	img.generate_mipmaps()
+	var t := ImageTexture.create_from_image(img)
+	_flat_hair[path] = t
+	return t
+
+
 static func hair_material(id: String, color: Color) -> StandardMaterial3D:
 	var key := "hair|%s|%s" % [id, color.to_html()]
 	if not _materials.has(key):
 		var m := StandardMaterial3D.new()
 		var tex := HAIR_DIR + id + ".png"
 		if ResourceLoader.exists(tex):
-			m.albedo_texture = load(tex)
-			# The strand textures are light gray: lift the tint so it lands on `color`.
-			m.albedo_color = Color(minf(color.r * 1.6, 1.0), minf(color.g * 1.6, 1.0), minf(color.b * 1.6, 1.0))
+			m.albedo_texture = _flat_hair_texture(tex)
+			# The flattened strands average about HAIR_FLAT_MEAN: lift the tint to land on `color`.
+			var k := 1.0 / HAIR_FLAT_MEAN
+			m.albedo_color = Color(minf(color.r * k, 1.0), minf(color.g * k, 1.0), minf(color.b * k, 1.0))
 		else:
 			m.albedo_color = color
 		m.roughness = 0.7
@@ -736,7 +807,7 @@ func _back_decal(tex: Texture2D, size: Vector2, at: Vector3) -> void:
 	var d := Decal.new()
 	d.texture_albedo = tex
 	d.size = Vector3(size.x, 0.36 * hs, size.y)
-	d.normal_fade = 0.72
+	d.normal_fade = DECAL_NORMAL_FADE
 	d.upper_fade = 0.05
 	d.lower_fade = 0.05
 	# Projects along its -Y: here body +Z (into the back). Texture right = the
@@ -841,21 +912,55 @@ static func _load_letters() -> void:
 
 ## Team crest on the jersey front: a Decal projected backward onto the chest from just
 ## in front of `at` (a point on the chest's surface, T-pose), so it wraps with the
-## jersey like the back number.
+## jersey like the back number. `width` is the crest box's width (see crest_size).
 func _add_crest(at: Vector3, width: float) -> void:
 	if skater.crest == null:
 		return
 	var tex := skater.crest
+	var size := crest_size(tex, width)
 	var d := Decal.new()
 	d.texture_albedo = tex
-	d.size = Vector3(width, 0.36 * hs, width * tex.get_height() / float(tex.get_width()))
-	d.normal_fade = 0.72
+	d.size = Vector3(size.x, 0.36 * hs, size.y)
+	d.normal_fade = DECAL_NORMAL_FADE
 	d.upper_fade = 0.05
 	d.lower_fade = 0.05
 	# Projects along its -Y: here body -Z (into the chest). Texture right = the
 	# viewer's right facing the player (body +X), texture down = body down.
 	var b := Basis(Vector3(1, 0, 0), Vector3(0, 0, 1), Vector3(0, -1, 0))
 	attach_node("Spine2", d, Transform3D(b, at - Vector3(0, 0, 0.04 * hs)))
+
+
+## A crest's size (width, height) in a box `width` wide and CREST_MAX_H of that tall:
+## scaled so its opaque area is CREST_INK of the box (a tall pine tree and a round badge
+## read the same size), then shrunk to fit the box if that overflows it.
+static func crest_size(tex: Texture2D, width: float) -> Vector2:
+	var aspect := tex.get_width() / float(tex.get_height())
+	var ink := crest_ink(tex)
+	var area := width * width * CREST_MAX_H * CREST_INK / ink
+	var w := sqrt(area * aspect)
+	var h := w / aspect
+	var fit := minf(1.0, minf(width / w, width * CREST_MAX_H / h))
+	return Vector2(w, h) * fit
+
+
+## The share of a crest texture that is opaque (sampled on a coarse grid). Cached.
+static func crest_ink(tex: Texture2D) -> float:
+	var key := tex.resource_path if tex.resource_path != "" else str(tex.get_rid())
+	if _crest_ink.has(key):
+		return _crest_ink[key]
+	var img := tex.get_image()
+	if img.is_compressed():
+		img.decompress()
+	var n := 0
+	var hit := 0
+	for y in range(0, img.get_height(), 4):
+		for x in range(0, img.get_width(), 4):
+			n += 1
+			if img.get_pixel(x, y).a > 0.5:
+				hit += 1
+	var ink := clampf(hit / float(maxi(n, 1)), 0.15, 1.0)
+	_crest_ink[key] = ink
+	return ink
 
 
 ## A number's digits from the digit sheet (tools/build_digits.gd), face and outline
@@ -933,14 +1038,70 @@ func attach_node(bone: String, node: Node3D, rest_xform: Transform3D) -> void:
 ## One stick model (tools/build_gear.gd), stretched each frame from the heel to the top
 ## of the shaft (see _place_stick); `shaft` and `blade` both point at it.
 func _build_stick() -> void:
-	var black := MeshUtil.material(Color(0.05, 0.05, 0.06), 0.5)
-	black.cull_mode = BaseMaterial3D.CULL_DISABLED
-	var tape := MeshUtil.material(Color(0.92, 0.92, 0.9), 0.6)
-	tape.cull_mode = BaseMaterial3D.CULL_DISABLED
 	shaft = _add_mesh(self, STICK_MESH, null, Vector3.ZERO)
-	shaft.set_surface_override_material(0, black)
-	shaft.set_surface_override_material(1, tape)
+	var mats := stick_materials(skater, STICK_MESH)
+	shaft.set_surface_override_material(0, mats[0])
+	shaft.set_surface_override_material(1, mats[1])
 	blade = shaft
+
+
+## The club's [home, road] jersey colors for a skater's stick and tape.
+static func club_pair(s: Skater) -> Array[Color]:
+	if s.club_colors.size() >= 2:
+		return s.club_colors
+	var home: Color = s.uniform.get("jersey", s.team_color) if not s.uniform.is_empty() else s.team_color
+	return [home, STICK_WHITE]
+
+
+## [body, tape] materials for a skater's stick (stick.gdshader), from its style and
+## tape. `mesh`: the stick model (its "blade" / "shaft" metas place the graphics).
+## The tape material also covers the butt-end knob on skater sticks. Cached.
+static func stick_materials(s: Skater, mesh: Mesh) -> Array[ShaderMaterial]:
+	var club := club_pair(s)
+	var style := s.stick_style if s.stick_style in STICK_STYLES else "black"
+	var tape := s.stick_tape if s.stick_tape in TAPES else "white"
+	var key := "stick|%s|%s|%s|%s|%s" % [style, tape, club[0].to_html(), club[1].to_html(), mesh.resource_path]
+	if _materials.has(key):
+		return _materials[key]
+	var body := ShaderMaterial.new()
+	body.shader = STICK_SHADER
+	var kind := 1
+	var base := STICK_BLACK
+	var graphic := STICK_BLACK
+	match style:
+		"wood":
+			kind = 0
+		"black_white":
+			kind = 2
+			base = STICK_WHITE
+			graphic = STICK_BLACK
+		"white_black":
+			kind = 2
+			base = STICK_BLACK
+			graphic = STICK_WHITE
+		"home_away":
+			kind = 2
+			base = club[1]
+			graphic = club[0]
+		"away_home":
+			kind = 2
+			base = club[0]
+			graphic = club[1]
+	body.set_shader_parameter("style", kind)
+	body.set_shader_parameter("base", base)
+	body.set_shader_parameter("graphic", graphic)
+	body.set_shader_parameter("shaft_len", float(mesh.get_meta("shaft", 1.5)))
+	body.set_shader_parameter("blade_vec", Vector3(mesh.get_meta("blade", Vector3(0, -0.2369, 0.2369))))
+	var tm := body.duplicate() as ShaderMaterial
+	tm.set_shader_parameter("tape_layer", true)
+	var tc: Color = {"white": STICK_WHITE, "black": Color(0.07, 0.07, 0.08), "team": club[0]}.get(tape, STICK_WHITE)
+	tm.set_shader_parameter("tape_color", tc)
+	tm.set_shader_parameter("bare_blade", tape == "none")
+	# The knob is taped either way: the blade's tape, or white with none on the blade.
+	tm.set_shader_parameter("knob_color", tc if tape != "none" else STICK_WHITE)
+	var out: Array[ShaderMaterial] = [body, tm]
+	_materials[key] = out
+	return out
 
 
 ## Poses the stick model: heel at `heel`, shaft up to `top`, the blade flat along the ice
@@ -961,8 +1122,9 @@ func _place_stick(top: Vector3, heel: Vector3, face: Vector3, out := Vector3.ZER
 		f = -f
 	var db: Vector3 = shaft.mesh.get_meta("blade")
 	var l0: float = shaft.mesh.get_meta("shaft")
-	# The blade hooks toward -X in the model, so -X is the forehand face.
-	var world := Basis(-f, s / l0, out * Vector3(db.x, 0.0, db.z).length())
+	# The blade hooks toward -X in the model, so -X is the forehand face. The blade line
+	# drops at the stick's lie in the model and lies flat here, at its full length.
+	var world := Basis(-f, s / l0, out * Vector2(db.y, db.z).length())
 	var local := Basis(Vector3.RIGHT, Vector3.UP, db)
 	shaft.transform = Transform3D(world * local.inverse(), heel)
 
@@ -1298,7 +1460,7 @@ func _pose(delta: float) -> void:
 	_free_arm = lerpf(_free_arm, 1.0 if free else 0.0, _ease(5.0 if free else 9.0, delta))
 	rig.free_arm = _free_arm
 
-	rig.breath = 0.0
+	rig.breath = hold_breath
 	if display_pose != "":
 		_display_pose(delta)
 	var pitch := 0.0
@@ -1382,6 +1544,9 @@ func _update_stick(delta: float) -> void:
 				var p := skater.puck.get_global_transform_interpolated().origin
 				target = p - global_position
 				target += (target * Vector3(1, 0, 1)).normalized() * 0.05
+				# Cupped behind the puck, not on top of it: the puck rides against the
+				# blade's front face.
+				target -= Vector3(h.x, 0.0, h.z).normalized() * (skater.puck.visual_radius() + 0.01)
 				target.y = 0.03
 				follow = 1.0
 			elif skater.intent.shoot_held or skater._shoot_buffer > 0.0:
@@ -1394,7 +1559,10 @@ func _update_stick(delta: float) -> void:
 		target = (rig.top_hand_world - global_position) + h * 0.5 + Vector3.DOWN * 1.1
 		follow = _ease(10.0, delta)
 	_blade = _blade.lerp(target, follow) if delta > 0.0 else target
-	rig.blade_world = global_position + _blade
+	# The hands close on the shaft's line, which runs down to the heel (not to the puck
+	# point out along the blade); last frame's butt end gives its direction.
+	var top := to_local(rig.stick_top_world) if rig.stick_top_world != Vector3.ZERO else _blade
+	rig.blade_world = global_position + _heel(top, _blade)
 
 
 ## Menu display poses: a clip on the whole body (looping, or held on its last frame;
@@ -1420,7 +1588,7 @@ const DISPLAY_SPEC := {
 		# way the back of the glove faces: under it (palm up) at the blade end, over it
 		# (palm down) at the butt end.
 		"grips": [[0.32, "under"], [0.8, "over"]]},
-	"shoulders": {"clip": "back_squat", "hold": 9.3, "stick": "level", "back": 0.12},
+	"shoulders": {"clip": "back_squat", "hold": 9.3, "stick": "level"},
 	"hips": {"clip": "female_standing_pose", "stick": "low", "still": true},
 	"hips_b": {"clip": "female_standing_pose_2", "stick": "low", "still": true},
 }
@@ -1519,11 +1687,15 @@ func _after_rig() -> void:
 		_place_stick(_disp_top, _disp_heel, skater.heading, _disp_out, true)
 		return
 	var top := to_local(rig.stick_top_world)
-	var bl := _blade
-	# The puck point is part-way down the blade; the heel sits back toward the hands.
+	_place_stick(top, _heel(top, _blade), skater.heading - skater.right_dir() * skater.forehand_side())
+
+## The heel (the corner where the shaft's line meets the blade's bottom line) for the
+## puck point `bl`: back along the blade toward the hands, down on the ice under the puck.
+func _heel(top: Vector3, bl: Vector3) -> Vector3:
 	var flat := Vector3(bl.x - top.x, 0.0, bl.z - top.z)
-	var heel := bl - flat.normalized() * STICK_PUCK if flat.length() > 0.05 else bl
-	_place_stick(top, heel, skater.heading - skater.right_dir() * skater.forehand_side())
+	var heel := bl - flat.normalized() * STICK_PUCK * hs if flat.length() > 0.05 else bl
+	heel.y = maxf(heel.y - 0.03, 0.0)
+	return heel
 
 
 # --- Mesh helpers ----------------------------------------------------------------

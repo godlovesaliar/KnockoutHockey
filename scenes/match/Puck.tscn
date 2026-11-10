@@ -1,6 +1,7 @@
 [gd_scene format=3]
 
 [ext_resource type="Script" path="res://scripts/match/puck.gd" id="1_puck"]
+[ext_resource type="Shader" path="res://scenes/match/puck_hidden.gdshader" id="2_hidden"]
 
 [sub_resource type="SphereShape3D" id="SphereShape3D_puck"]
 radius = 0.0381
@@ -9,31 +10,46 @@ radius = 0.0381
 top_radius = 0.0381
 bottom_radius = 0.0381
 height = 0.0254
-radial_segments = 24
+radial_segments = 48
 rings = 1
 
-[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_outline"]
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_hidden"]
 render_priority = 1
-transparency = 1
-no_depth_test = true
-cull_mode = 1
-shading_mode = 0
-albedo_color = Color(1, 1, 1, 0.85)
-grow = true
-grow_amount = 0.012
+shader = ExtResource("2_hidden")
 
-[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_xray"]
-next_pass = SubResource("StandardMaterial3D_outline")
-render_priority = 2
-transparency = 1
-no_depth_test = true
-shading_mode = 0
-albedo_color = Color(0.02, 0.02, 0.03, 0.9)
+[sub_resource type="FastNoiseLite" id="FastNoiseLite_grain"]
+frequency = 0.09
+fractal_octaves = 3
+
+[sub_resource type="NoiseTexture2D" id="NoiseTexture2D_grain"]
+width = 256
+height = 256
+seamless = true
+as_normal_map = true
+bump_strength = 6.0
+noise = SubResource("FastNoiseLite_grain")
+
+[sub_resource type="FastNoiseLite" id="FastNoiseLite_wear"]
+frequency = 0.02
+
+[sub_resource type="NoiseTexture2D" id="NoiseTexture2D_wear"]
+width = 128
+height = 128
+seamless = true
+noise = SubResource("FastNoiseLite_wear")
 
 [sub_resource type="StandardMaterial3D" id="StandardMaterial3D_puck"]
-next_pass = SubResource("StandardMaterial3D_xray")
-albedo_color = Color(0.03, 0.03, 0.035, 1)
-roughness = 0.4
+next_pass = SubResource("ShaderMaterial_hidden")
+albedo_color = Color(0.028, 0.028, 0.03, 1)
+metallic_specular = 0.35
+roughness = 0.8
+roughness_texture = SubResource("NoiseTexture2D_wear")
+normal_enabled = true
+normal_scale = 0.5
+normal_texture = SubResource("NoiseTexture2D_grain")
+rim_enabled = true
+rim = 0.25
+rim_tint = 0.2
 
 [node name="Puck" type="CharacterBody3D"]
 script = ExtResource("1_puck")

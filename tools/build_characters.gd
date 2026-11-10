@@ -14,7 +14,7 @@ extends SceneTree
 ##     deforms with the body. The body keeps its skin texture (`skin_tex` / `skin_avg`
 ##     metas) and hides covered skin in its shader.
 ##   -> res://assets/characters/body_<name>.scn
-##   * every clip in assets/animations is retargeted from its own rest pose onto this
+##   * every clip under assets/animations (all subfolders) is retargeted from its own rest pose onto this
 ##     body's rest pose (A-pose vs T-pose, different bone rolls), with hip drift removed
 ##   -> res://assets/characters/anims_<name>.res
 
@@ -86,8 +86,14 @@ static func clip_name_for(file: String) -> String:
 # --- Clips -----------------------------------------------------------------------
 
 func _load_clips() -> void:
+	# Clips sit in use-based subfolders (fight/, hits/, bench/…); the folder never
+	# changes the clip name, so file names must stay unique across folders.
 	var files: Array[String] = []
-	for dir: String in [ANIM_DIR, ANIM_DIR + "menuposes/"]:
+	var dirs: Array[String] = [ANIM_DIR]
+	while not dirs.is_empty():
+		var dir: String = dirs.pop_back()
+		for sub in DirAccess.get_directories_at(dir):
+			dirs.append(dir + sub + "/")
 		for f in DirAccess.get_files_at(dir):
 			if f.ends_with(".fbx") and not f in SKIP_ANIMS:
 				files.append(dir + f)
@@ -254,6 +260,10 @@ func _build_body(spec: Dictionary) -> Skeleton3D:
 			arr[Mesh.ARRAY_VERTEX] = verts
 			arr[Mesh.ARRAY_NORMAL] = norms
 			arr[Mesh.ARRAY_TANGENT] = null
+			# No hands: gloves, glove cuffs and the bare fight fists always cover them, and
+			# the body's own fingers only ever showed through those (in replays, which don't
+			# carry the rig's finger tricks). Gone from the skin and the uniform shell alike.
+			_drop_hands(arr, dom)
 			# The skin textures come from the glTF versions of these bodies; the FBX exports
 			# store their texture coordinates upside down relative to them.
 			if spec.get("flip_v", false) and arr[Mesh.ARRAY_TEX_UV] != null:
@@ -309,6 +319,31 @@ func _build_body(spec: Dictionary) -> Skeleton3D:
 	src.free()
 	root.free()
 	return keep
+
+
+## Whether a bone is part of a hand (the hand itself, the thumb or a finger).
+static func is_hand_bone(bone: String) -> bool:
+	var b := bone.trim_prefix("x_")
+	return b.contains("Hand") or b.contains("Thumb") or b.contains("Finger") or b.contains("Index") 			or b.contains("Middle") or b.contains("Ring") or b.contains("Pinky")
+
+
+## Removes every triangle with a corner on a hand (by each vertex's dominant bone, `dom`)
+## from a surface's arrays. The forearm keeps its edge at the wrist, inside the cuff.
+static func _drop_hands(arr: Array, dom: PackedStringArray) -> void:
+	var idx: PackedInt32Array = arr[Mesh.ARRAY_INDEX] if arr[Mesh.ARRAY_INDEX] != null else PackedInt32Array()
+	if idx.is_empty():
+		idx.resize(dom.size())
+		for i in dom.size():
+			idx[i] = i
+	var hand := PackedByteArray()
+	hand.resize(dom.size())
+	for i in dom.size():
+		hand[i] = 1 if is_hand_bone(dom[i]) else 0
+	var keep := PackedInt32Array()
+	for t in range(0, idx.size(), 3):
+		if hand[idx[t]] == 0 and hand[idx[t + 1]] == 0 and hand[idx[t + 2]] == 0:
+			keep.append_array([idx[t], idx[t + 1], idx[t + 2]])
+	arr[Mesh.ARRAY_INDEX] = keep
 
 
 static func anchor_for(bone: String) -> String:

@@ -16,6 +16,7 @@ const KEYS := {
 	"turbo": [KEY_SHIFT],
 	"protect": [KEY_SPACE],
 	"backward": [KEY_Q],
+	"block": [KEY_U],
 	"pause": [KEY_ESCAPE],
 	"debug_camera": [KEY_C],
 }
@@ -28,6 +29,7 @@ const PAD_BUTTONS := {
 	"pause": JOY_BUTTON_START,
 	"debug_camera": JOY_BUTTON_BACK,
 	"protect": JOY_BUTTON_LEFT_SHOULDER,
+	"block": JOY_BUTTON_RIGHT_SHOULDER,
 }
 
 ## action -> [axis, direction]

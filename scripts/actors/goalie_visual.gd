@@ -29,14 +29,34 @@ const BOOT_MESH := preload("res://assets/characters/goalie_boot.res")    ## the 
 const THIGH_MESH := preload("res://assets/characters/goalie_thigh.res")
 const BLOCKER_MESH := preload("res://assets/characters/blocker.res")
 const PAD_SHIN := 0.42
+## The stick is held at its own lie (the blade-to-shaft angle of the model): the shaft
+## runs down through the blocker hand to the ice at that angle, the paddle leaned back
+## toward the goalie this much, and the blade lies across the crease from there.
+const STICK_TILT := deg_to_rad(15.0)
+## The blocker's ready position (model space, 1.8 m body): low and out beside the pad.
+const BLOCKER_READY := Vector3(0.42, 0.68, -0.42)
+
+## Skating somewhere instead of tending the net (out of the bench door, to and from the
+## crease): upright and loose, a long relaxed stride, the glove swinging with it and the
+## stick carried in the blocker hand, its blade skimming the ice ahead.
+const CARRY_GLOVE := Vector3(-0.36, 0.8, -0.1)
+const CARRY_BLOCKER := Vector3(0.36, 0.8, -0.34)
+## Farther than this out from the goal line (m) the goalie is traveling, not in the crease.
+const CREASE_OUT := 4.0
 
 var goalie: Goalie
 var _drop := 0.0
+var _blocker_k := 0.0   ## how far a blocker save has the stick following the hand instead
+var _travel := 0.0      ## 0 in the crease .. 1 skating somewhere (see CARRY_GLOVE)
+var _swing := 0.0       ## the arms' swing with the stride (-1..1), eased
+var _was_traveling := false
 
 
 func build(sk: Skater) -> void:
 	goalie = sk as Goalie
 	super.build(sk)
+	if face != null:
+		face.set_expression("focused")
 
 
 func _build_gear() -> void:
@@ -57,6 +77,9 @@ func _build_gear() -> void:
 	var mm := attach("Head", mmesh, null, at, Basis.from_scale(Vector3.ONE * fit))
 	mm.material_override = null
 	mm.name = "Helmet"   # as the skater's helmet: tools and views find the head gear by name
+	# Hair (the flattened under-helmet cut, which the mask covers but the cage shows at
+	# the hairline) and facial hair: without them the face behind the cage was bald.
+	_add_hair(head)
 	var shell := MeshUtil.material(c.jersey.lerp(Color.WHITE, 0.15), 0.35)
 	shell.cull_mode = BaseMaterial3D.CULL_DISABLED
 	var cage := MeshUtil.material(Color(0.12, 0.12, 0.13), 0.3)
@@ -132,11 +155,11 @@ static func _pad_basis(up: Vector3, mirror: float) -> Basis:
 
 ## Goalie stick model (tools/build_gear.gd): body, grip, blade tape.
 func _build_stick() -> void:
-	var body := MeshUtil.material(Color(0.07, 0.07, 0.08), 0.45)
+	var mats := stick_materials(skater, GOALIE_STICK_MESH)
+	var body: Material = mats[0]
+	var tape: Material = mats[1]
 	var grip := MeshUtil.material(Color(0.02, 0.02, 0.02), 0.8)
-	var tape := MeshUtil.material(Color(0.93, 0.93, 0.9), 0.6)
-	for m in [body, grip, tape]:
-		(m as BaseMaterial3D).cull_mode = BaseMaterial3D.CULL_DISABLED
+	grip.cull_mode = BaseMaterial3D.CULL_DISABLED
 	shaft = _add_mesh(self, GOALIE_STICK_MESH, null, Vector3.ZERO)
 	shaft.set_surface_override_material(0, body)
 	shaft.set_surface_override_material(1, grip)
@@ -156,24 +179,36 @@ func _pose(delta: float) -> void:
 	var want_drop := 1.0 if (goalie.butterfly or low_save) else 0.0
 	_drop = lerpf(_drop, want_drop, _ease(18.0, delta))
 	var spd := goalie.flat_speed()
+	var traveling := _is_traveling()
+	_travel = lerpf(_travel, 1.0 if traveling else 0.0, _ease(4.0, delta))
+	var tr := _travel
 
-	_stride += delta * (5.0 + spd * 2.0)
-	_stride_amt = lerpf(_stride_amt, clampf(spd / 3.0, 0.0, 1.0) * 0.35 * (1.0 - _drop), _ease(6.0, delta))
-	rig.hips_drop = 0.24 + 0.36 * _drop
-	rig.lean = 0.42 - 0.1 * _drop
-	rig.twist = 0.0
-	rig.sway = 0.0
+	# Stride. In the crease: short quick shuffles. Traveling: the skater's long, unhurried
+	# cadence and a full push, so the legs keep pace with the ground instead of pattering.
+	_stride += delta * lerpf(5.0 + spd * 2.0, 3.6 + spd * 0.5, tr)
+	var amt := clampf(spd / 3.0, 0.0, 1.0) * lerpf(0.35, 0.8, tr) * (1.0 - _drop)
+	_stride_amt = lerpf(_stride_amt, amt, _ease(5.0, delta))
+	var st := sin(_stride)
+	var sa := _stride_amt * tr   # the upper body only rides the stride when traveling
+	rig.hips_drop = lerpf(0.24, 0.15, tr) + 0.36 * _drop
+	rig.lean = lerpf(0.42, 0.26, tr) - 0.1 * _drop
+	# The torso turns against the pushing leg and rocks over it, the head steadier.
+	rig.twist = -st * 0.2 * sa
+	rig.sway = st * 0.11 * sa
+	rig.head_level = lerpf(0.85, 0.95, tr)
 	rig.stride_phase = _stride
 	rig.stride_amt = _stride_amt
 	rig.stride_dir = 1.0
-	rig.stance = 0.27
-	rig.toe_out = 0.25
-	rig.hips_shift = Vector3(0, 0, -0.05 - 0.08 * _drop)
+	rig.stance = lerpf(0.27, 0.19, tr)
+	rig.toe_out = lerpf(0.25, 0.1, tr)
+	rig.hips_shift = Vector3(-st * 0.05 * sa, 0, lerpf(-0.05, -0.01, tr) - 0.08 * _drop)
+	# Breathing over the ready stance, so a goalie waiting on a faceoff isn't a statue.
+	rig.breath = 0.6 * (1.0 - _drop) * (1.0 - tr)
 	# Butterfly: knees pinch together in front, feet flare out behind.
 	rig.foot_offset[0] = Vector3(0.24, 0.0, -0.3) * _drop
 	rig.foot_offset[1] = Vector3(-0.24, 0.0, -0.3) * _drop
-	rig.knee_pole[0] = Vector3(0.25 - 0.55 * _drop, -0.6 * _drop, 1.0)
-	rig.knee_pole[1] = Vector3(-0.25 + 0.55 * _drop, -0.6 * _drop, 1.0)
+	rig.knee_pole[0] = Vector3(lerpf(0.25, 0.12, tr) - 0.55 * _drop, -0.6 * _drop, 1.0)
+	rig.knee_pole[1] = Vector3(-lerpf(0.25, 0.12, tr) + 0.55 * _drop, -0.6 * _drop, 1.0)
 
 	# Glove / blocker: ready position, reaching toward the last save.
 	rig.arm_mode = SkaterRig.Arms.FREE
@@ -185,31 +220,102 @@ func _pose(delta: float) -> void:
 	var glove_reach := reach if goalie.save_point.x > 0.0 else Vector3.ZERO
 	var blocker_reach := reach if goalie.save_point.x <= 0.0 else Vector3.ZERO
 	var y_drop := -0.3 * _drop
-	var glove_p := Vector3(-0.42, 1.0 + y_drop, -0.42) + glove_reach
-	var blocker_p := Vector3(0.36, 0.78 + y_drop, -0.4) + blocker_reach
+	# The arms swing against the legs: the glove (left) comes forward with the right foot.
+	# (Rig: the left foot is ahead at cos(stride) = 1; model space has -Z ahead.)
+	_swing = lerpf(_swing, cos(_stride) * sa, _ease(12.0, delta))
+	var ready_glove := Vector3(-0.42, 1.0 + y_drop, -0.42)
+	var carry_glove := CARRY_GLOVE + Vector3(0.0, absf(_swing) * 0.08, _swing * 0.32)
+	var glove_p := ready_glove.lerp(carry_glove * Vector3(1, hs, 1), tr) + glove_reach
 	var mt := model.global_transform
 	rig.hand_world[0] = mt * glove_p
-	rig.hand_world[1] = mt * blocker_p
-	rig.elbow_pole[0] = Vector3(0.7, -0.6, -0.4)
-	rig.elbow_pole[1] = Vector3(-0.7, -0.7, -0.3)
+	rig.hand_world[1] = mt * (_blocker_ready() + blocker_reach)
+	_blocker_k = a if blocker_reach != Vector3.ZERO else 0.0
+	# Elbows out for the ready stance; in at the sides, hanging back, when traveling.
+	rig.elbow_pole[0] = Vector3(0.7, -0.6, -0.4).lerp(Vector3(0.3, -0.8, -0.6), tr)
+	rig.elbow_pole[1] = Vector3(-0.7, -0.7, -0.3).lerp(Vector3(-0.35, -0.8, -0.5), tr)
 	model.rotation = Vector3(0.0, _yaw, 0.0)
+	_face(traveling)
+
+
+## Skating out of the bench or back to it (scripted walks), or anywhere well out of the crease.
+func _is_traveling() -> bool:
+	if goalie.walking():
+		return true
+	if goalie.net == null or goalie.butterfly or goalie.save_anim > 0.0:
+		return false
+	return goalie.net.to_local(goalie.global_position).z > CREASE_OUT and goalie.flat_speed() > 1.0
+
+
+## The face behind the cage: eyes on the puck in the crease, set and focused; skating
+## out, looking where it's going, loose, a word or a smirk now and then.
+func _face(traveling: bool) -> void:
+	if face == null:
+		return
+	if traveling != _was_traveling:
+		_was_traveling = traveling
+		face.chatty = traveling
+		face.set_expression("neutral" if traveling else "focused")
+	var eye := bone_world("Head")
+	if traveling:
+		face.look_target = eye + goalie.heading * 8.0 + Vector3(0, -0.4, 0)
+	elif goalie.puck != null and is_instance_valid(goalie.puck):
+		face.look_target = goalie.puck.global_position
+	else:
+		face.look_target = null
+
+
+## The blocker's ready position (model space), lower in the butterfly; held lower and
+## nearer the body, swinging a little with the stride, when traveling.
+func _blocker_ready() -> Vector3:
+	var ready_p := BLOCKER_READY + Vector3(0, -0.3 * _drop, 0)
+	var carry := CARRY_BLOCKER + Vector3(0.0, absf(_swing) * 0.04, -_swing * 0.16)
+	return ready_p.lerp(carry, _travel) * Vector3(1, hs, 1)
 
 
 func _update_stick(delta: float) -> void:
-	# Paddle flat on the ice in front of the pads, a little toward the blocker side.
-	var target := model.global_transform * Vector3(0.08, 0.0, -0.62 - 0.1 * _drop) - global_position
+	# The blade flat on the ice where the shaft through the blocker's ready position
+	# meets it at the stick's lie, across the crease toward the glove side.
+	var hand := model.global_transform * _blocker_ready() - global_position
+	var target := _heel_below(hand) + _across() * _blade_len() * 0.5
 	target.y = 0.05
 	_blade = _blade.lerp(target, _ease(30.0, delta)) if delta > 0.0 else target
 	rig.blade_world = global_position + _blade
 
 
+func _across() -> Vector3:
+	var a := model.global_basis * Vector3.LEFT
+	return Vector3(a.x, 0.0, a.z).normalized()
+
+
+func _blade_len() -> float:
+	return Vector3(GOALIE_STICK_MESH.get_meta("blade")).length() * hs
+
+
+## The shaft's direction up from the heel (world axes): at the stick's lie off the blade
+## (the model's angle between its shaft, +Y, and the blade), rising toward the blocker
+## side, leaned back toward the goalie by STICK_TILT.
+func _shaft_dir() -> Vector3:
+	var back := model.global_basis * Vector3.BACK
+	back = Vector3(back.x, 0.0, back.z).normalized()
+	var rise := PI - Vector3.UP.angle_to(Vector3(GOALIE_STICK_MESH.get_meta("blade")))
+	return (-_across() * cos(rise) + (Vector3.UP * cos(STICK_TILT) + back * sin(STICK_TILT)) * sin(rise)).normalized()
+
+
+## Where the shaft through `p` (relative to the goalie) reaches the ice.
+func _heel_below(p: Vector3) -> Vector3:
+	var d := _shaft_dir()
+	var h := p - d * (p.y / d.y)
+	h.y = 0.0
+	return h
+
+
 func _after_rig() -> void:
-	# Blade across the crease toward the glove side, centered on the paddle point; the
-	# shaft runs up through the blocker hand and on past it at the model's length.
-	var across := model.global_basis * Vector3.LEFT
-	var blade_len := Vector3(GOALIE_STICK_MESH.get_meta("blade")).length()
-	var heel := _blade - Vector3(across.x, 0.0, across.z).normalized() * blade_len * 0.5
+	# The shaft runs through the blocker hand at the stick's lie, at the model's length.
+	# During a blocker save the blade stays put and the shaft swings out to the hand.
 	var hand := to_local(rig.right_hand_world)
+	var rest := _blade - _across() * _blade_len() * 0.5
+	rest.y = 0.0
+	var heel := _heel_below(hand).lerp(rest, _blocker_k)
 	var l0: float = GOALIE_STICK_MESH.get_meta("shaft") * hs
 	var top := heel + (hand - heel).normalized() * maxf(l0, heel.distance_to(hand) + 0.1)
-	_place_stick(top, heel, goalie.heading, across)
+	_place_stick(top, heel, goalie.heading, _across())

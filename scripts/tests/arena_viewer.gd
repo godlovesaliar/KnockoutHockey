@@ -49,11 +49,20 @@ func _ready() -> void:
 	cam.look_at_from_position(Vector3(v[0], v[1], v[2]), Vector3(v[3], v[4], v[5]))
 	cam.current = true
 	if args.has("shot"):
+		var vp := get_viewport().get_viewport_rid()
+		RenderingServer.viewport_set_measure_render_time(vp, true)
 		await get_tree().create_timer(float(args.get("wait", "2"))).timeout
-		await RenderingServer.frame_post_draw
+		# GPU time averaged over a second of frames (fps is capped by v-sync).
+		var gpu := 0.0
+		var frames := 0
+		var until := Time.get_ticks_msec() + 1000
+		while Time.get_ticks_msec() < until:
+			await RenderingServer.frame_post_draw
+			gpu += RenderingServer.viewport_get_measured_render_time_gpu(vp)
+			frames += 1
 		get_viewport().get_texture().get_image().save_png(str(args["shot"]))
 		if args.has("stats"):
-			print("fps %d  draw calls %d  primitives %d" % [Engine.get_frames_per_second(),
+			print("fps %d  gpu %.2f ms  draw calls %d  primitives %d" % [Engine.get_frames_per_second(), gpu / maxi(frames, 1),
 					RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_TOTAL_DRAW_CALLS_IN_FRAME),
 					RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_TOTAL_PRIMITIVES_IN_FRAME)])
 		get_tree().quit()

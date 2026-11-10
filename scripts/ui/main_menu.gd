@@ -1,26 +1,45 @@
 extends Control
 ## Title screen: the chrome KNOCKOUT HOCKEY title over a live arena shot, a column of
 ## slanted menu bars, and a prompt bar along the bottom. Any keyboard or pad drives it
-## (MenuInput); the mouse works too. GAME MODES opens a second list in place.
+## (MenuInput); the mouse works too. GAME MODES, CUSTOMIZE and GAME EXTRAS open a second
+## list in place.
 ##
-## `-- shot=<png> [wait=<s>] [sel=<n>] [list=modes]` saves a screenshot and quits.
+## `-- shot=<png> [wait=<s>] [sel=<n>] [list=modes|customize|extras]` saves a screenshot and quits.
 
 const SETUP_SCENE := "res://scenes/ui/TeamSelect.tscn"
 const PRACTICE_SCENE := "res://scenes/match/Practice.tscn"
+const OPTIONS_SCENE := "res://scenes/ui/Options.tscn"
+const CREDITS_SCENE := "res://scenes/ui/Credits.tscn"
+const CREATE_PLAYER_SCENE := "res://scenes/ui/CreatePlayer.tscn"
 
 const MAIN := [
 	{"id": "play", "text": "PLAY NOW", "hint": "Pick your teams and controllers, then drop the puck."},
 	{"id": "modes", "text": "GAME MODES", "hint": "Exhibition, practice and more."},
 	{"id": "season", "text": "SEASON MODE", "soon": true, "hint": "Take a team through a full season and the playoffs."},
-	{"id": "create", "text": "CREATE TEAM", "soon": true, "hint": "Build your own club: name, colors, logo and roster."},
-	{"id": "options", "text": "RULES AND OPTIONS", "soon": true, "hint": "Default rules, controls, audio and video."},
-	{"id": "extras", "text": "GAME EXTRAS", "soon": true, "hint": "Credits, records and unlockables."},
+	{"id": "customize", "text": "CUSTOMIZE", "hint": "Create your own players, teams, arenas and uniforms."},
+	{"id": "options", "text": "RULES AND OPTIONS", "hint": "Default rules, controls, audio and video."},
+	{"id": "extras", "text": "GAME EXTRAS", "hint": "Credits, records and unlockables."},
 	{"id": "quit", "text": "QUIT", "hint": "Back to the desktop."},
 ]
 const MODES := [
 	{"id": "play", "text": "EXHIBITION", "hint": "A single game: any two teams, your rules."},
+	{"id": "knockout", "text": "KNOCKOUT MODE", "hint": "Pick two teams: five fights between random players. Best score wins."},
 	{"id": "practice", "text": "PRACTICE", "hint": "Free skate with your line against pylons. Esc to come back."},
 	{"id": "shootout", "text": "SHOOTOUT", "soon": true, "hint": "Straight to the shootout."},
+	{"id": "back", "text": "BACK", "hint": "Back to the main menu."},
+]
+const CUSTOMIZE := [
+	{"id": "create_player", "text": "CREATE PLAYER", "hint": "Build a skater or goalie: look, equipment and ratings."},
+	{"id": "create_team", "text": "CREATE TEAM", "soon": true, "hint": "Build your own club: name, colors, logo and roster."},
+	{"id": "create_arena", "text": "CREATE ARENA", "soon": true, "hint": "Design a home rink: ice, boards, seats and lights."},
+	{"id": "create_uniform", "text": "CREATE UNIFORM", "soon": true, "hint": "Design jerseys, pants, socks and helmets."},
+	{"id": "edit_roster", "text": "EDIT ROSTER", "soon": true, "hint": "Sign free agents (your created players) and move players between teams."},
+	{"id": "back", "text": "BACK", "hint": "Back to the main menu."},
+]
+const EXTRAS := [
+	{"id": "credits", "text": "CREDITS", "hint": "Who made what: models, music, sound and code."},
+	{"id": "records", "text": "RECORDS", "soon": true, "hint": "Your best games and season records."},
+	{"id": "unlockables", "text": "UNLOCKABLES", "soon": true, "hint": "Secret teams, rinks and cheats."},
 	{"id": "back", "text": "BACK", "hint": "Back to the main menu."},
 ]
 
@@ -109,7 +128,14 @@ func _ready() -> void:
 	add_child(_fade)
 	create_tween().tween_property(_fade, "color:a", 0.0, 0.6)
 
-	_show_list(MODES if _arg("list", "") == "modes" else MAIN, int(_arg("sel", "0")))
+	var lists := {"modes": MODES, "customize": CUSTOMIZE, "extras": EXTRAS}
+	var sel := int(_arg("sel", str(maxi(GameSettings.menu_select, 0))))
+	var list := _arg("list", GameSettings.menu_list)
+	GameSettings.menu_select = -1
+	GameSettings.menu_list = ""
+	if list != "":
+		_main_index = MAIN.map(func(d: Dictionary) -> String: return d.id).find(list)
+	_show_list(lists.get(list, MAIN), sel)
 
 
 func _process(delta: float) -> void:
@@ -127,7 +153,7 @@ func _show_list(entries: Array, select := 0) -> void:
 		it.queue_free()
 	_items.clear()
 	_entries = entries
-	_heading.text = "GAME MODES" if entries == MODES else ""
+	_heading.text = _heading_for(entries)
 	var top := ITEM_POS + Vector2(0, 56 if _heading.text != "" else 0)   # room for the heading
 	_heading.position = top + Vector2(30, -46)
 	for i in entries.size():
@@ -147,6 +173,17 @@ func _show_list(entries: Array, select := 0) -> void:
 		_list.add_child(it)
 		_items.append(it)
 	_select(clampi(select, 0, entries.size() - 1), true)
+
+
+## The heading shown over a second-level list (none over MAIN).
+func _heading_for(entries: Array) -> String:
+	if entries == MODES:
+		return "GAME MODES"
+	if entries == CUSTOMIZE:
+		return "CUSTOMIZE"
+	if entries == EXTRAS:
+		return "GAME EXTRAS"
+	return ""
 
 
 func _select(i: int, quiet := false) -> void:
@@ -176,6 +213,10 @@ func _accept() -> void:
 	Sfx.play("glove", Vector3.INF, -4.0)
 	match d.id:
 		"play":
+			GameSettings.mode = "exhibition"
+			_go(SETUP_SCENE)
+		"knockout":
+			GameSettings.mode = "knockout"
 			_go(SETUP_SCENE)
 		"practice":
 			Sfx.stop_music(1.0)
@@ -183,6 +224,18 @@ func _accept() -> void:
 		"modes":
 			_main_index = _index
 			_show_list(MODES)
+		"customize":
+			_main_index = _index
+			_show_list(CUSTOMIZE)
+		"extras":
+			_main_index = _index
+			_show_list(EXTRAS)
+		"options":
+			_go(OPTIONS_SCENE)
+		"credits":
+			_go(CREDITS_SCENE)
+		"create_player":
+			_go(CREATE_PLAYER_SCENE)
 		"back":
 			_show_list(MAIN, _main_index)
 		"quit":
@@ -197,7 +250,7 @@ func _back() -> void:
 	if _leaving:
 		return
 	Sfx.play("pad", Vector3.INF, -8.0)
-	if _entries == MODES:
+	if _entries != MAIN:
 		_show_list(MAIN, _main_index)
 	elif _index != MAIN.size() - 1:
 		_select(MAIN.size() - 1, true)   # back on the main list lands on QUIT

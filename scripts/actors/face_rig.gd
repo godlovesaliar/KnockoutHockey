@@ -190,7 +190,7 @@ func blink() -> void:
 ## Faces follow what the body is doing: clip names from SkaterVisual.play_clip.
 func react_to_clip(clip: String, seconds: float) -> void:
 	var t := seconds if seconds > 0.0 and seconds < 30.0 else 2.5
-	if clip == "knocked_out":
+	if clip in Fight.FINISHES:   # out cold, however they go down
 		set_expression("ko", t)
 	elif clip == "taunt":
 		set_expression("smirk", t)
@@ -524,7 +524,8 @@ static func _face_mesh(mesh: Mesh, d: Dictionary) -> ArrayMesh:
 	out.add_blend_shape("jaw")
 	out.add_blend_shape("smile")
 	out.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr, [jaw, smile], {}, _keep_flags(mesh.surface_get_format(0)))
-	out.custom_aabb = mesh.get_aabb()
+	# (No custom_aabb: a fixed one overrides the skinned mesh's pose-following bounds, and
+	# a skater down on the ice had the skin culled out from under the eyes and hair.)
 	return out
 
 

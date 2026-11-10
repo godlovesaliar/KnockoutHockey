@@ -29,6 +29,7 @@ var lean := 0.0                 ## rad forward bend of the spine (+ = chest forw
 var twist := 0.0                ## rad torso yaw (+ = turn to the left)
 var sway := 0.0                 ## rad side bend (+ = toward the character's left)
 var head_level := 0.85          ## how much the head counters the spine lean
+var bow := 0.0                  ## rad forward bend added over any pose, clips included (fight body shots)
 var stride_phase := 0.0
 var stride_amt := 0.0           ## 0 glide .. 1 full sprint stride
 var stride_dir := 1.0           ## +1 forward skating, -1 backward (C-cuts)
@@ -252,14 +253,22 @@ func _process_modification_with_delta(_delta: float) -> void:
 		var extra := Basis(Vector3.UP, twist / 3.0) * Basis(Vector3.RIGHT, lean * spine_parts) * Basis(Vector3.BACK, -sway / 3.0)
 		var proc := Transform3D(r.basis * extra, r.origin)
 		var pg := _gpose(sk, sk.get_bone_parent(i), gl)
-		gl[i] = pg * _breathe(sk, i, _blend_local(sk, i, proc, w_spine, false), false)
+		var loc := _blend_local(sk, i, proc, w_spine, false)
+		if bow != 0.0:
+			loc.basis = loc.basis * Basis(Vector3.RIGHT, bow / 3.0)
+			sk.set_bone_pose_rotation(i, loc.basis.get_rotation_quaternion())
+		gl[i] = pg * _breathe(sk, i, loc, false)
 	var g_chest: Transform3D = gl[_b["Spine2"]]
 	for n in ["Neck", "Head"]:
 		var i: int = _b[n]
 		var r: Transform3D = _rest_l[i]
 		var proc := Transform3D(r.basis * Basis(Vector3.RIGHT, -lean * head_level * 0.5) * Basis(Vector3.UP, -twist * 0.35), r.origin)
 		var pg := _gpose(sk, sk.get_bone_parent(i), gl)
-		gl[i] = pg * _breathe(sk, i, _blend_local(sk, i, proc, w_spine, false), true)
+		var hl := _blend_local(sk, i, proc, w_spine, false)
+		if bow != 0.0:   # eyes stay up on the target through the bend
+			hl.basis = hl.basis * Basis(Vector3.RIGHT, -bow * 0.3)
+			sk.set_bone_pose_rotation(i, hl.basis.get_rotation_quaternion())
+		gl[i] = pg * _breathe(sk, i, hl, true)
 
 	# --- Legs ----------------------------------------------------------------------
 	for s in 2:

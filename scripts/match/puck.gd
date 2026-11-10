@@ -18,6 +18,7 @@ signal released(by: Skater, at: Vector3)   ## a pass or shot leaves the stick
 const GRAVITY := 9.81
 const MAX_SPEED := 50.0
 const MAX_SWEEPS := 4
+const VISUAL_THICK := 1.5         ## visual thickness scale (visual_scale widens it)
 const LOSE_DISTANCE := 0.45       ## carried puck this far from the blade = lost
 const RECEIVER_TIMEOUT := 2.5     ## seconds a pass stays "intended" for its receiver
 const PASS_HOMING := 4.5          ## rad/s a pass on the ice can curve toward its receiver...
@@ -36,7 +37,7 @@ const SURFACES := {
 @export var ice_drag := 0.12          ## extra deceleration per m/s of speed
 @export var air_drag := 0.05
 @export var ice_bounce := 0.3         ## restitution when landing hard on the ice
-@export var visual_scale := 2.8       ## readability from the broadcast camera
+@export var visual_scale := 2.0       ## readability from the broadcast camera
 
 var on_ice := true
 var in_play := true
@@ -60,7 +61,9 @@ func _ready() -> void:
 	collision_layer = 1 << 5
 	collision_mask = 1 | (1 << 1) | (1 << 3)
 	safe_margin = 0.001
-	$Visual.scale = Vector3(visual_scale, 1.5, visual_scale)
+	$Visual.scale = Vector3(visual_scale, VISUAL_THICK, visual_scale)
+	# The thickened visual grows from the ice up instead of sinking half into it.
+	$Visual.position.y = RinkSpec.PUCK_THICKNESS * (VISUAL_THICK - 1.0) * 0.5
 
 
 ## Teleports the puck (to the ice if pos.y is at or below ice level), stops it and clears possession.
@@ -87,6 +90,11 @@ func launch(v: Vector3) -> void:
 	velocity = v.limit_length(MAX_SPEED)
 	if velocity.y > 0.01:
 		on_ice = false
+
+
+## Radius of the drawn (enlarged) puck, so a stick blade can sit against its edge.
+func visual_radius() -> float:
+	return RinkSpec.PUCK_RADIUS * visual_scale
 
 
 func speed() -> float:

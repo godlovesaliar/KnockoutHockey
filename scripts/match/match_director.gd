@@ -96,6 +96,8 @@ var _cmd_cam := false         ## `-- cam=…` picked the angle (it wins over the
 var _debug_fight := ""        ## `-- fight` / `fight=prompt`: start a fight at the first chance (testing)
 var _showcase: Array[Skater] = []
 var _no_intro := false
+var knockout := false        ## Knockout Mode: a card of fights instead of a game (KnockoutMode)
+var knockout_mode: KnockoutMode
 
 var _phase_time := 0.0
 var _stoppage_len := 0.0
@@ -116,6 +118,7 @@ func _ready() -> void:
 	process_physics_priority = -10 # roles and phases update before skaters move
 	if use_game_settings:
 		_apply_settings(GameSettings.config, GameSettings.humans)
+		knockout = GameSettings.mode == "knockout"
 	_parse_cmdline()
 	if rng_seed != 0:
 		_rng.seed = rng_seed
@@ -157,7 +160,11 @@ func _ready() -> void:
 		_hud = MatchHud.new()
 		add_child(_hud)
 		_hud.setup(self)
-	if show_hud and not _no_intro:
+	if knockout:
+		knockout_mode = KnockoutMode.new()
+		add_child(knockout_mode)
+		knockout_mode.setup(self)
+	elif show_hud and not _no_intro:
 		_start_intro()
 	else:
 		_set_phase(Phase.PREGAME)
@@ -217,6 +224,8 @@ func _parse_cmdline() -> void:
 			_cmd_cam = true
 	if args.has("nointro"):
 		_no_intro = true
+	if args.has("knockout"):   # Knockout Mode straight away (testing)
+		knockout = true
 	if args.has("fight"):
 		_debug_fight = str(args["fight"]) if args["fight"] in ["prompt", "ko"] else "on"
 	if args.has("pausemenu"):   # open the pause menu at once (screenshots); pausemenu=controls for that page
@@ -373,6 +382,7 @@ func _setup_player(s: Skater, t: int, number: int, left: bool, p := {}) -> void:
 		s.skin_tone = SkaterVisual.SKIN_TONES[_rng.randi() % SkaterVisual.SKIN_TONES.size()]
 		s.gear_style = _rng.randi() % 2
 		_set_look(s, SkaterVisual.random_look(_rng, s.body_type, s.skin_tone))
+		s.visor = Skater.visor_for("%s %d" % [info.get("abbr", ""), number])
 	else:
 		s.stats = Rosters.stats(p)
 		s.body_type = "female" if p.gender == "Female" else "male"
@@ -387,6 +397,7 @@ func _setup_player(s: Skater, t: int, number: int, left: bool, p := {}) -> void:
 		s.skin_tone = SkaterVisual.SKIN_TONES[look.randi() % SkaterVisual.SKIN_TONES.size()]
 		s.gear_style = look.randi() % 2
 		_set_look(s, SkaterVisual.random_look(look, s.body_type, s.skin_tone))
+		s.visor = Skater.visor_for("%s %s %s" % [p.abbr, p.first, p.last])
 	s.puck = puck
 	s.rink = rink
 	add_child(s)
@@ -642,6 +653,9 @@ func _open_pause() -> void:
 		return
 	_pause = PauseMenu.new()
 	_pause.camera_host = self
+	if knockout:
+		_pause.mode = "KNOCKOUT MODE"
+		_pause.restart_text = "RESTART KNOCKOUT"
 	add_child(_pause)
 	_pause.closed.connect(func() -> void: _pause = null)
 
@@ -734,7 +748,7 @@ func _start_fight(a: Skater, b: Skater, prompt: HumanBrain) -> void:
 	_fight.finished.connect(_on_fight_over)
 	_fight.knockout.connect(func(w: Skater, l: Skater) -> void:
 		if replay and show_hud:
-			replay.capture("ko", "KNOCKOUT  ·  %s" % MenuStyle.player_name(w), [w, l], 2.8, 1.6,
+			replay.capture("ko", "KNOCKOUT  ·  %s" % MenuStyle.player_name(w), [w, l], 2.8, maxf(1.6, _fight.ko_fall + 0.8),
 					{"play_now": true, "speed": 0.45, "cam": "orbit"}))
 	_fight.declined.connect(_on_fight_declined)
 	_fight.setup(self, a, b, prompt)

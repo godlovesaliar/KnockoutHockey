@@ -1,12 +1,13 @@
 extends SceneTree
 ## Offline build step for equipment models:
-##   godot --headless --path . -s res://tools/build_gear.gd [-- only=helmet|mask|stick|goalie_stick|skate|glove|catcher|goalie_gear]
+##   godot --headless --path . -s res://tools/build_gear.gd [-- only=helmet|mask|stick|goalie_stick|skate|glove|goalie_gear]
 ##
 ## Source models (assets/equip/, credits in assets/CREDITS.md) become plain meshes in
 ## meters, with their textures dropped (they carry real team and brand logos) and
 ## surfaces split by role, so the game paints them per team:
-## * Helmets (HELMETS): one surface per role: 0 shell, 1 trim, 2 dark, 3 visor. Front +Z,
-##   centered on the shell.
+## * Helmets (HELMETS, modeled by tools/blender/helmet_gear.py): one surface per role:
+##   0 shell, 1 trim, 2 dark, 3 visor, 4 visor hardware. Front +Z; the origin is the male
+##   body's head box center, crown and chin strap fitted to that head (see SkaterVisual).
 ## * Goalie masks (MASKS): 0 shell, 1 cage. Front +Z, centered.
 ## * Stick: 0 shaft, 1 blade. Heel at the origin, shaft up +Y (STICK_SHAFT m long), the
 ##   blade in the YZ plane toward +Z; its heel-to-toe vector is saved as the "blade" meta.
@@ -14,30 +15,35 @@ extends SceneTree
 ## * Skate: 0 boot, 1 steel. Toe +Z, origin under the middle of the runner.
 ## * Glove: one surface. A right glove gripping: fingers along +Y curled toward -Z (the
 ##   palm), back of the hand +Z, thumb -X, origin at the wrist.
-## * Catcher (goalie glove): one surface. Fingers +Y, pocket +Z, origin at the hand.
 ## Dense scans are welded and simplified with Godot's mesh optimizer.
 ##   -> res://assets/characters/<out>.res
 
 const OUT_DIR := "res://assets/characters/"
 const EQUIP := "res://assets/equip/"
 
+## Already in game axes, one glTF node per role (helmet_gear.py), so only copied over.
 const HELMETS := [
-	{"out": "helmet", "src": EQUIP + "hockey_helmet_washington_capitals.glb", "front": Vector3.RIGHT, "length": 0.29, "tris": 0},
-	{"out": "helmet_b", "src": EQUIP + "hockeyhelmet/source/hockey_helmet_whiteblackwithlogo.glb", "front": Vector3.BACK, "length": 0.29, "tris": 7000,
-		"roles": {0: 2, 11: 0}},   # chin strap dark, the front shell piece in team color too
+	{"out": "helmet", "src": EQUIP + "helmet_a.glb"},     # modern two-piece
+	{"out": "helmet_b", "src": EQUIP + "helmet_b.glb"},   # classic one-piece
 ]
-## (`roles` overrides the automatic role of a part by index: 0 shell, 1 trim, 2 dark, 3 visor.)
+const HELMET_NODES := ["shell", "trim", "dark", "visor", "visor_hw"]
 ## cage: "node" = nodes named *cage*, "surface1" = the model's second surface;
 ## front: the model's front axis (default +Z).
 const MASKS := [
 	{"out": "goalie_mask", "src": EQUIP + "helmet-for-puck/source/helmet_sketchfab.fbx", "cage": "node", "height": 0.53, "tris": [0, 0]},
 	{"out": "goalie_mask_b", "src": EQUIP + "GMask.obj", "cage": "surface1", "height": 0.36, "tris": [7000, 3000], "front": Vector3.LEFT},
 ]
-const STICK_SRC := EQUIP + "hockey-stick/source/untitled.fbx"
-const STICK_SHAFT := 1.45        ## heel to butt end, meters
-const GOALIE_STICK_SRC := EQUIP + "ccm_premier_goaliestick.blend"
-const GOALIE_STICK_NODES := ["Cube", "Cube_002"]   ## the rest of the .blend is a display scene
-const GOALIE_STICK_SHAFT := 1.4
+## Both sticks are modeled by tools/blender/stick_gear.py in game axes, one glTF node per
+## surface. Shaft (heel to butt) and blade (heel corner to toe along the bottom line, at
+## the lie) match its SKATER / GOALIE specs; build_all() there prints the blade vectors.
+const STICK_SRC := EQUIP + "stick.glb"
+const STICK_NODES := ["shaft", "tape"]
+const STICK_SHAFT := 1.5
+const STICK_BLADE := Vector3(0.0, -0.2369, 0.2369)
+const GOALIE_STICK_SRC := EQUIP + "goalie_stick.glb"
+const GOALIE_STICK_NODES := ["body", "grip", "tape"]
+const GOALIE_STICK_SHAFT := 1.55
+const GOALIE_STICK_BLADE := Vector3(0.0, -0.2, 0.3464)
 ## Skater glove sources: upright right gloves (fingers +Y, palm -Z, thumb -X) with the
 ## fingers more or less flat. GLOVE picks the one the game uses.
 ##   length: cuff to fingertips before curling (m) · knuckle: the fingers bend from here
@@ -47,16 +53,11 @@ const GOALIE_STICK_SHAFT := 1.4
 ##   isn't curled · curl: finger curl (rad) · thumb_fold: the thumb swings in toward the
 ##   palm this far (rad, more toward its tip) · puff: bulk scale · tris: simplify to.
 const GLOVES := {
-	# Armored moto glove: knuckle guard, finger armor, short strapped cuff.
-	"srg": {"src": EQUIP + "srg_glove.glb", "length": 0.27, "knuckle": 0.42, "wrist": 0.66,
-		"thumb_x": -0.27, "thumb_z": 0.1, "curl": 2.0, "thumb_fold": 1.1, "thumb_reach": 0.35, "puff": Vector3(1.18, 1.0, 1.25), "tris": 9000, "cluster": false, "weld": 0.004},
-	# Long-cuff leather gauntlet (the first glove; its cuff flared out of the grip).
-	"leather": {"src": EQUIP + "glove.glb", "length": 0.36, "knuckle": 0.27, "wrist": 0.48,
-		"thumb_x": -0.29, "thumb_z": 0.12, "curl": 1.6, "puff": Vector3(1.12, 1.0, 1.3), "tris": 0},
+	# (none at the moment: the scanned gloves were removed; the Blender glove is used)
 }
 ## "blender" takes the glove modeled by tools/blender/hand_gear.py: already closed around
 ## the stick and in game axes, so it's only copied over. "hockey" builds the older padded
-## glove from scratch (_build_hockey_glove); the scans above stay as options.
+## glove from scratch (_build_hockey_glove); a scan listed in GLOVES can be picked too.
 const GLOVE := "blender"
 const BLENDER_GLOVE := EQUIP + "hockey_glove.glb"
 ## Its cuff, a separate mesh the game hangs on the forearm (same axes, origin at the wrist).
@@ -68,10 +69,6 @@ const FIST_SRC := EQUIP + "fist.glb"
 const GRIP_UP := 0.065
 const GRIP_IN := 0.05
 const GOALIE_GEAR := ["goalie_pad", "goalie_boot", "goalie_thigh", "blocker", "goalie_catcher"]
-const CATCHER_SRC := EQUIP + "baseball_glove.glb"
-const CATCHER_HEIGHT := 0.42
-const CATCHER_TRIS := 3500
-const CATCHER_HAND := 0.38      ## where the hand (model origin) sits, from the bottom (fraction of height)
 
 
 func _init() -> void:
@@ -81,7 +78,7 @@ func _init() -> void:
 			what = a.substr(5)
 	if what in ["all", "helmet"]:
 		for spec: Dictionary in HELMETS:
-			_build_helmet(spec)
+			_save(_nodes(spec.src, HELMET_NODES), spec.out)
 	if what in ["all", "mask"]:
 		for spec: Dictionary in MASKS:
 			_build_mask(spec)
@@ -95,8 +92,6 @@ func _init() -> void:
 		_build_glove()
 	if what in ["all", "glove", "fist"]:
 		_save([_simplify(_merge(_parts(FIST_SRC)), 0)], "fist")
-	if what in ["all", "catcher"]:
-		_build_catcher()
 	if what in ["all", "goalie_gear"]:
 		# Leg pads, thigh rises and blocker from tools/blender/goalie_gear.py: modeled in
 		# game axes with their shading baked into vertex colors, so only copied over.
@@ -353,21 +348,6 @@ func _save(surfaces: Array, out: String, metas := {}) -> ArrayMesh:
 	return mesh
 
 
-## Splits a part's triangles in two by `pick(centroid) -> bool` (true = second).
-func _split(p: Dictionary, pick: Callable) -> Array:
-	var ia := PackedInt32Array()
-	var ib := PackedInt32Array()
-	var v: PackedVector3Array = p.verts
-	var idx: PackedInt32Array = p.idx
-	for t in range(0, idx.size(), 3):
-		var c := (v[idx[t]] + v[idx[t + 1]] + v[idx[t + 2]]) / 3.0
-		if pick.call(c):
-			ib.append_array([idx[t], idx[t + 1], idx[t + 2]])
-		else:
-			ia.append_array([idx[t], idx[t + 1], idx[t + 2]])
-	return [{"verts": v, "norms": p.norms, "idx": ia}, {"verts": v, "norms": p.norms, "idx": ib}]
-
-
 func _avg_color(mat: BaseMaterial3D) -> Color:
 	if mat == null:
 		return Color.WHITE
@@ -387,41 +367,6 @@ func _avg_color(mat: BaseMaterial3D) -> Color:
 			k += 1
 	c /= maxf(k, 1)
 	return Color(c.x * tint.r, c.y * tint.g, c.z * tint.b, c.w * tint.a)
-
-
-# --- Helmets -----------------------------------------------------------------------
-
-## Parts by role: the biggest is the shell, see-through ones the visor, the rest trim
-## (bright) or dark.
-func _build_helmet(spec: Dictionary) -> void:
-	var parts := _parts(spec.src)
-	var shell := 0
-	var total := 0
-	for i in parts.size():
-		total += _tris(parts[i])
-		if _tris(parts[i]) > _tris(parts[shell]):
-			shell = i
-	var rot := orient(spec.front, Vector3.UP)
-	for p: Dictionary in parts:
-		_map(p, func(v: Vector3) -> Vector3: return rot * v, rot)
-	var shell_box := _bounds([parts[shell]])
-	var scale: float = spec.length / shell_box.size.z
-	var center := shell_box.get_center()
-	var roles := [[], [], [], []]
-	for i in parts.size():
-		var p: Dictionary = parts[i]
-		_map(p, func(v: Vector3) -> Vector3: return (v - center) * scale, Basis.IDENTITY)
-		var c: Color = p.avg
-		var role := 0 if i == shell else (3 if c.a < 0.7 else (1 if c.get_luminance() > 0.55 else 2))
-		role = (spec.get("roles", {}) as Dictionary).get(i, role)
-		roles[role].append(p)
-		print("  %s part %2d: %5d tris  avg %s -> %s" % [spec.out, i, _tris(p), c.to_html(true), ["shell", "trim", "dark", "visor"][role]])
-	var surfaces := []
-	for r: Array in roles:
-		var m := _merge(r)
-		var target: int = 0 if spec.tris <= 0 else maxi(12, int(spec.tris * _tris(m) / float(total)))
-		surfaces.append(_simplify(m, target))
-	_save(surfaces, spec.out)
 
 
 # --- Goalie masks ------------------------------------------------------------------
@@ -446,41 +391,24 @@ func _build_mask(spec: Dictionary) -> void:
 
 # --- Stick -------------------------------------------------------------------------
 
-## The source lies flat: shaft along +X, the blade bending off toward -Z at the heel,
-## blade faces toward ±Y.
+## Already in game axes (tools/blender/stick_gear.py): the surfaces are its nodes, in
+## STICK_NODES order (0 shaft, 1 tape: blade and butt-end knob).
 func _build_stick() -> void:
-	var p: Dictionary = _merge(_parts(STICK_SRC))
-	var v: PackedVector3Array = p.verts
-	var box := _bounds([p])
-	# Shaft: the vertices within its thickness of the far +Z side.
-	var thick := 0.0
-	var heel_x := INF
-	var top_x := -INF
-	var zmax := box.end.z
-	for q in v:
-		top_x = maxf(top_x, q.x)
-	# Thickness of the shaft = its Z extent near the butt end.
-	var zmin_butt := INF
-	for q in v:
-		if q.x > top_x - box.size.x * 0.1:
-			zmin_butt = minf(zmin_butt, q.z)
-	thick = zmax - zmin_butt
-	for q in v:
-		if q.z > zmin_butt - thick * 0.25:
-			heel_x = minf(heel_x, q.x)
-	var toe := v[0]
-	for q in v:
-		if q.z < toe.z:
-			toe = q
-	var heel := Vector3(heel_x, box.get_center().y, zmax - thick * 0.5)
-	var scale := STICK_SHAFT / (top_x - heel_x)
-	# Model (x, y, z) -> (y, x, -z): shaft to +Y, blade to +Z, faces to ±X.
-	var rot := Basis(Vector3(0, 1, 0), Vector3(1, 0, 0), Vector3(0, 0, -1))
-	_map(p, func(q: Vector3) -> Vector3: return rot * (q - heel) * scale, rot)
-	var blade := rot * (toe - heel) * scale
-	var parts := _split(p, func(c: Vector3) -> bool: return c.y < 0.04 or c.z > 0.025)
-	print("  stick: heel %s  blade %s  shaft %.2f m" % [heel, blade, STICK_SHAFT])
-	_save([_simplify(parts[0], 0), _simplify(parts[1], 0)], "stick", {"blade": blade, "shaft": STICK_SHAFT})
+	_save(_nodes(STICK_SRC, STICK_NODES), "stick", {"blade": STICK_BLADE, "shaft": STICK_SHAFT})
+
+
+## A model's parts merged per node name, in `names` order.
+func _nodes(path: String, names: Array) -> Array:
+	var by_name := {}
+	for q: Dictionary in _parts(path):
+		if not by_name.has(q.name):
+			by_name[q.name] = []
+		by_name[q.name].append(q)
+	var out := []
+	for n: String in names:
+		assert(by_name.has(n), "%s has no node %s" % [path, n])
+		out.append(_simplify(_merge(by_name[n]), 0))
+	return out
 
 
 # --- Skate -------------------------------------------------------------------------
@@ -677,66 +605,10 @@ func _blob(p: Dictionary, c: Vector3, r: Vector3) -> void:
 	p.idx = idx
 
 
-## Baseball glove as the goalie's catcher: fingers +Y, pocket +Z in the source.
-func _build_catcher() -> void:
-	var p := _simplify(_merge(_parts(CATCHER_SRC)), CATCHER_TRIS)
-	var box := _bounds([p])
-	var scale := CATCHER_HEIGHT / box.size.y
-	# The hand sits in the lower part of the glove, not at the bottom of its flaps.
-	var hand := Vector3(box.get_center().x, box.position.y + box.size.y * CATCHER_HAND, box.get_center().z)
-	_map(p, func(q: Vector3) -> Vector3: return (q - hand) * scale, Basis.IDENTITY)
-	_save([p], "catcher")
-
-
 # --- Goalie stick ------------------------------------------------------------------
 
-## The source stands diagonally in its YZ plane; the frame is found from the parts: the
-## blade runs along the tape's long axis, the butt end is the body's farthest point from
-## the tape, and the heel is the tape end nearest the butt.
+## Already in game axes (tools/blender/stick_gear.py): 0 body (shaft, paddle), 1 grip,
+## 2 tape (blade).
 func _build_goalie_stick() -> void:
-	var parts := []
-	for q: Dictionary in _parts(GOALIE_STICK_SRC):
-		if q.name in GOALIE_STICK_NODES:
-			parts.append(q)
-	var body := []
-	var grip := []
-	var tape := []
-	for q: Dictionary in parts:
-		if q.name == "Cube_002":
-			tape.append(q)
-		elif q.surf == 1:
-			grip.append(q)
-		else:
-			body.append(q)
-	var tv: PackedVector3Array = _merge(tape).verts
-	var tc := Vector3.ZERO
-	for q in tv:
-		tc += q
-	tc /= tv.size()
-	# Long axis of the tape: the pair of tape vertices farthest apart (sampled).
-	var a := tv[0]
-	for q in tv:
-		if q.distance_squared_to(tc) > a.distance_squared_to(tc):
-			a = q
-	var b := a
-	for q in tv:
-		if q.distance_squared_to(a) > b.distance_squared_to(a):
-			b = q
-	var butt := tc
-	for p: Dictionary in body + grip:
-		for q: Vector3 in p.verts:
-			if q.distance_squared_to(tc) > butt.distance_squared_to(tc):
-				butt = q
-	var heel := a if a.distance_squared_to(butt) < b.distance_squared_to(butt) else b
-	var toe := b if heel == a else a
-	var up := (butt - heel).normalized()
-	var n := up.cross(toe - heel).normalized()
-	var fwd := n.cross(up)
-	var rot := Basis(n, up, fwd).transposed()   # n -> X, up -> Y, fwd -> Z
-	var scale := GOALIE_STICK_SHAFT / heel.distance_to(butt)
-	for p: Dictionary in parts:
-		_map(p, func(q: Vector3) -> Vector3: return rot * (q - heel) * scale, rot)
-	var blade := rot * (toe - heel) * scale
-	print("  goalie stick: blade %s  shaft %.2f m" % [blade, GOALIE_STICK_SHAFT])
-	_save([_simplify(_merge(body), 0), _simplify(_merge(grip), 0), _simplify(_merge(tape), 0)], "goalie_stick",
-			{"blade": blade, "shaft": GOALIE_STICK_SHAFT})
+	_save(_nodes(GOALIE_STICK_SRC, GOALIE_STICK_NODES), "goalie_stick",
+			{"blade": GOALIE_STICK_BLADE, "shaft": GOALIE_STICK_SHAFT})

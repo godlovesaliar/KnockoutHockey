@@ -3,6 +3,5 @@
 *.tmp
 /screenshots/
 
-# Local test models and old roster backups
-/assets/fortest/
+# Old roster backups
 /data/knockout_hockey_rostersold.*

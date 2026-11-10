@@ -63,21 +63,27 @@ func _ready() -> void:
 	_load_recordings()
 	for i in VOICES:
 		var p := AudioStreamPlayer.new()
+		p.bus = "Effects"
 		add_child(p)
 		_voices.append(p)
 	_crowd = AudioStreamPlayer.new()
 	_crowd.stream = _pick("crowd")
 	_crowd.volume_db = CROWD_DB
+	_crowd.bus = "Crowd"
 	add_child(_crowd)
 	_react = AudioStreamPlayer.new()
+	_react.bus = "Crowd"
 	add_child(_react)
 	_organ = AudioStreamPlayer.new()
+	_organ.bus = "Crowd"
 	add_child(_organ)
 	_voice = AudioStreamPlayer.new()
 	_voice.volume_db = ANNOUNCER_DB
+	_voice.bus = "Announcer"
 	add_child(_voice)
 	_voice.finished.connect(_on_voice_finished)
 	_music = AudioStreamPlayer.new()
+	_music.bus = "Music"
 	add_child(_music)
 	_music.finished.connect(func() -> void:
 		if _music_on:

@@ -3,9 +3,10 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://dy7j7cs3hwcrs"
-path="res://.godot/imported/hair_and_beard__pubg_mobile_3d_model_4.png-cb94ab65881b32d3b14693d586e56de4.ctex"
+path.s3tc="res://.godot/imported/hair_and_beard__pubg_mobile_3d_model_4.png-cb94ab65881b32d3b14693d586e56de4.s3tc.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc"],
+"vram_texture": true
 }
 generator_parameters={
 "md5": "9cea0dbad6e17901b1783a78e92ca4fc"
@@ -14,11 +15,11 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/player/hair_and_beard__pubg_mobile_3d_model_4.png"
-dest_files=["res://.godot/imported/hair_and_beard__pubg_mobile_3d_model_4.png-cb94ab65881b32d3b14693d586e56de4.ctex"]
+dest_files=["res://.godot/imported/hair_and_beard__pubg_mobile_3d_model_4.png-cb94ab65881b32d3b14693d586e56de4.s3tc.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0
@@ -40,4 +41,4 @@ process/normal_map_invert_y=false
 process/hdr_as_srgb=false
 process/hdr_clamp_exposure=false
 process/size_limit=0
-detect_3d/compress_to=1
+detect_3d/compress_to=0

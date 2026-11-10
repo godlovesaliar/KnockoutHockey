@@ -66,6 +66,7 @@ func _ready() -> void:
 		s.body_type = _arg("body", ["male", "female"][k % 2])
 		s.skin_tone = SkaterVisual.SKIN_TONES[k % SkaterVisual.SKIN_TONES.size()]
 		s.gear_style = int(_arg("style", str(k / 2)))
+		s.visor = _arg("visor", str(k % 2 if k < 4 else 1)) != "0"   # `visor=0|1`; default: a mix
 		var rng := RandomNumberGenerator.new()
 		rng.seed = int(_arg("seed", "3")) * 31 + k
 		var look := SkaterVisual.random_look(rng, s.body_type, s.skin_tone)
@@ -88,6 +89,14 @@ func _ready() -> void:
 	goalie.stats = PlayerStats.new()
 	goalie.body_type = _arg("body", "female")
 	goalie.gear_style = int(_arg("style", "0"))
+	goalie.skin_tone = SkaterVisual.SKIN_TONES[int(_arg("gskin", "1")) % SkaterVisual.SKIN_TONES.size()]
+	var grng := RandomNumberGenerator.new()
+	grng.seed = int(_arg("seed", "3")) * 31 + 99
+	var glook := SkaterVisual.random_look(grng, goalie.body_type, goalie.skin_tone)
+	goalie.hair_style = _arg("hair", glook.hair_style)
+	goalie.facial_hair = _arg("facial", glook.facial_hair)
+	goalie.hair_color = glook.hair_color
+	goalie.eye_color = Color.html(_arg("eyes", glook.eye_color.to_html()))
 	goalie.puck = puck
 	goalie.rink = rink
 	add_child(goalie)
@@ -311,6 +320,16 @@ func _run() -> void:
 	goalie.net = rink.get_net(0)
 	if goalie.has_method("reset_in_net"):
 		goalie.reset_in_net()
+	if _arg("gwalk", "") != "":
+		# `gwalk=1`: the goalie skates a long loop at the period opener's pace, as when
+		# coming out of the bench door (Skater.walk); `focus=6` follows it.
+		var c := Vector3(0, 0, 8.0)
+		var path := []
+		for k in 13:
+			var a := TAU * k / 12.0
+			path.append(c + Vector3(sin(a) * 7.0, 0, -cos(a) * 4.0))
+		goalie.place(path[0], Vector3.RIGHT)
+		goalie.walk(path + path + path, 5.0, Vector3.BACK)
 	await get_tree().create_timer(0.3).timeout
 	skaters[3].visual.play_clip("knocked_down", Vector3.ONE, -1.0, 1.7, 0.08)
 	# `rig.<property>=<number>` / `vis.<property>=<number>` tune every skater's rig or
@@ -347,8 +366,11 @@ func _run() -> void:
 		skaters[4].visual.set_fight_mode(true)
 	if _arg("helmetoff", "") != "":   # `helmetoff=<s>`: skater 4 takes the helmet off after s
 		get_tree().create_timer(float(_arg("helmetoff", "0"))).timeout.connect(skaters[4].visual.take_off_helmet)
-	if _arg("clip", "") != "":
-		skaters[4].visual.play_clip(_arg("clip", ""), Vector3(float(_arg("legs", "0")), 1, 1), -1.0)
+	if _arg("clip", "") != "":   # `at=<s>`: one frame held (fight guards); `bow=<rad>`: SkaterRig.bow over it
+		var held := _arg("at", "") != ""
+		skaters[4].visual.play_clip(_arg("clip", ""), Vector3(float(_arg("legs", "0")), 1, 1), -1.0,
+				0.0 if held else 1.0, 0.12, float(_arg("at", "0")))
+		skaters[4].visual.rig.bow = float(_arg("bow", "0"))
 	else:
 		skaters[4].visual.celebrate()
 	var shot := _arg("shot", "")

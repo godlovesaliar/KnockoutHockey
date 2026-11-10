@@ -7,11 +7,13 @@ extends Control
 ## Each controller: left / right picks a side; up / down changes that side's team
 ## (from the middle: the home team); the bumpers change the other team (from the
 ## middle: the away team). The mouse can click the up / down arrows on the plates.
-## Accept: on to the rules (RulesSelect). Back: the main menu.
+## Accept: on to the rules (RulesSelect), or for Knockout Mode straight into the fights.
+## Back: the main menu.
 ##
 ## `-- shot=<png> [wait=<s>] [home=<i>] [away=<i>]` saves a screenshot and quits.
 
 const RULES_SCENE := "res://scenes/ui/RulesSelect.tscn"
+const MATCH_SCENE := "res://scenes/match/Match.tscn"
 const MENU_SCENE := "res://scenes/ui/MainMenu.tscn"
 
 const PLAYER_X := 1.25        ## meters left / right of center for each team's player
@@ -310,13 +312,20 @@ func _continue() -> void:
 	GameSettings.config["away_team"] = teams[1]
 	GameSettings.humans = humans
 	Sfx.play("glove", Vector3.INF, -4.0)
-	_go(RULES_SCENE)
+	if GameSettings.mode == "knockout":
+		GameSettings.save_settings()
+		Sfx.stop_music(1.2)
+		_go(MATCH_SCENE)
+	else:
+		_go(RULES_SCENE)
 
 
 func _back() -> void:
 	if _leaving:
 		return
 	Sfx.play("pad", Vector3.INF, -8.0)
+	if GameSettings.mode == "knockout":
+		GameSettings.menu_list = "modes"
 	_go(MENU_SCENE)
 
 
@@ -330,7 +339,7 @@ func _go(scene: String) -> void:
 # --- Drawing --------------------------------------------------------------------
 
 func _draw_header(c: Control) -> void:
-	MenuStyle.draw_tag(c, Vector2(60, 40), "EXHIBITION", "SELECT TEAMS")
+	MenuStyle.draw_tag(c, Vector2(60, 40), "KNOCKOUT MODE" if GameSettings.mode == "knockout" else "EXHIBITION", "SELECT TEAMS")
 
 
 func _draw_plates() -> void:
@@ -446,7 +455,7 @@ func _draw_chips() -> void:
 
 
 func _draw_footer() -> void:
-	var hint := "Left / right: pick a side.   Up / down: your team.   %s: the other team." % ("LB / RB" if _input.using_pad else "Q / E")
+	var hint := "Left / right: pick a side.   Up / down: your team.   %s: the other team." % ("L1 / R1" if _input.using_pad else "Q / E")
 	MenuStyle.draw_footer(_footer, _canvas.size.x, hint,
 			[[_input.accept_label(), "CONTINUE"], [_input.back_label(), "BACK"]], _input.using_pad)
 

@@ -527,55 +527,58 @@ def build_glove(voxel=0.0013, tris=6000):
 
 # --- The bare fist -----------------------------------------------------------------
 
-def build_fist(voxel=0.0022, tris=2600):
+def build_fist(voxel=0.002, tris=3200, scale=1.15):
+    """The bare fight fist (right hand). Soft masses, not boxes: a thick wrist that
+    flares out of the sleeve, a domed back of the hand, fingers wide enough to touch so
+    they fuse with shallow grooves (not separate bony segments), a fleshy thumb.
+    Built at a 1.8 m body's real size, then scaled up by `scale` (game bodies read
+    better with chunky hands)."""
     bm = bmesh.new()
-    # Wrist stub, pushed up into the forearm so the cut-off hand's opening is filled.
-    add_tube(bm, [(g(0, -0.04, 0.0), 0.029, 0.0215), (g(0, -0.01, 0.0), 0.0285, 0.0205),
-                  (g(0, 0.012, 0.0), 0.031, 0.02)], segs=24, cap_top=True, cap_bottom=True)
-    # Back of the hand / palm (the metacarpals), slightly wider at the knuckles.
-    add_box(bm, g(0, 0.046, -0.001), (0.08, 0.03, 0.07), 0.012)
-    add_box(bm, g(0.002, 0.07, -0.003), (0.086, 0.034, 0.034), 0.013)
-    # Heel of the palm and the thumb's mound.
-    add_sphere(bm, g(0.014, 0.024, -0.01), 0.018, scale=(1.3, 0.9, 0.8))
-    add_sphere(bm, g(-0.024, 0.03, -0.014), 0.018, scale=(0.9, 0.85, 1.3))
-    # The inside of the fist: closed fingers leave no gap between them and the palm.
-    add_box(bm, g(0.0, 0.066, -0.034), (0.074, 0.034, 0.04), 0.008)
-    # Fingers, curled tight: proximal forward over the palm, middle down, tips tucked in.
+    X, Y, Z = g(1, 0, 0) - g(0, 0, 0), g(0, 1, 0) - g(0, 0, 0), g(0, 0, 1) - g(0, 0, 0)
+    # Wrist: from deep in the sleeve, slightly flattened, flaring into the hand.
+    # It runs on up inside the hand, so the two blend with no step.
+    # The part up the sleeve tapers away, so it never pokes through the jersey.
+    wrist = [(-0.075, 0.022, 0.017), (-0.05, 0.028, 0.021), (-0.028, 0.033, 0.025), (-0.01, 0.034, 0.025),
+             (0.012, 0.037, 0.026), (0.03, 0.041, 0.026), (0.05, 0.038, 0.022)]
+    add_sweep(bm, [g(0, y, -0.008) for y, _, _ in wrist], [(rx, rz) for _, rx, rz in wrist], segs=28, across=X)
+    # Back of the hand and palm: one domed pillow, a little wider at the knuckles.
+    _ellipsoid(bm, g(0, 0.05, -0.008), (X, Y, Z), (0.044, 0.038, 0.027), squareness=0.7)
+    _ellipsoid(bm, g(0.001, 0.072, -0.01), (X, Y, Z), (0.047, 0.018, 0.026), squareness=0.65)
+    # Heel of the palm and the thumb's mound (fleshy).
+    _ellipsoid(bm, g(0.012, 0.03, -0.018), (X, Y, Z), (0.027, 0.024, 0.022))
+    _ellipsoid(bm, g(-0.024, 0.032, -0.02), (X, Y, Z), (0.02, 0.024, 0.024))
+    # The curled fingers sit on a solid core, so there's no gap between them and the palm.
+    _ellipsoid(bm, g(0.0, 0.066, -0.04), (X, Y, Z), (0.042, 0.026, 0.026), squareness=0.6)
+    # ...and the curled fingertips press into the palm: fill the fold under them, so only
+    # a soft crease is left there (a deep one reads as a hole).
+    _ellipsoid(bm, g(0.006, 0.044, -0.034), (X, Y, Z), (0.036, 0.013, 0.014))
+    _ellipsoid(bm, g(0.006, 0.042, -0.048), (X, Y, Z), (0.037, 0.014, 0.015))
+    # Fingers: wide enough to touch their neighbours; only shallow grooves survive the fuse.
     # [x, width, length scale, knuckle height]
-    fingers = [(-0.03, 0.0205, 1.0, 0.087), (-0.0098, 0.021, 1.06, 0.089),
-               (0.0104, 0.0202, 1.0, 0.088), (0.0298, 0.018, 0.86, 0.084)]
+    fingers = [(-0.0305, 0.0235, 1.0, 0.086), (-0.0102, 0.024, 1.05, 0.088),
+               (0.0104, 0.0232, 1.0, 0.087), (0.0300, 0.021, 0.88, 0.083)]
     for x, w, s, ky in fingers:
-        k = g(x, ky, 0.002)
-        a = g(x, ky + 0.003 * s, -0.043 * s)
-        b = g(x, ky - 0.028 * s, -0.05 * s)
-        c = g(x, ky - 0.044 * s, -0.03 * s)
-        add_segment(bm, k, a, w, w * 0.92, 0.0085, segs=2, grow=0.01)
-        add_segment(bm, a, b, w * 0.95, w * 0.88, 0.008, segs=2, grow=0.012)
-        add_segment(bm, b, c, w * 0.9, w * 0.82, 0.0075, segs=2, grow=0.008)
-        add_sphere(bm, k + Vector((0, 0, 0.002)), w * 0.5, segs=10, rings=6)   # knuckle
-    # Thumb: up the side, then across the front of the index and middle fingers.
-    t0 = g(-0.034, 0.026, -0.012)
-    t1 = g(-0.043, 0.05, -0.044)
-    t2 = g(-0.014, 0.058, -0.063)
-    add_segment(bm, t0, t1, 0.024, 0.021, 0.009, segs=2, across=g(0, 0, 1) - g(0, 0, 0))
-    add_segment(bm, t1, t2, 0.021, 0.019, 0.0085, segs=2, across=g(0, 0, 1) - g(0, 0, 0), grow=0.006)
+        k = g(x, ky, -0.002)
+        a = g(x, ky + 0.004 * s, -0.042 * s)
+        b = g(x, ky - 0.026 * s, -0.052 * s)
+        c = g(x, ky - 0.042 * s, -0.034 * s)
+        add_segment(bm, k, a, w, w * 0.95, 0.0095, segs=2, grow=0.012)
+        add_segment(bm, a, b, w * 0.98, w * 0.92, 0.009, segs=2, grow=0.012)
+        add_segment(bm, b, c, w * 0.94, w * 0.88, 0.0085, segs=2, grow=0.01)
+    # Thumb: thick at the base, up the side, then across the front of the index and middle.
+    t0 = g(-0.034, 0.024, -0.014)
+    t1 = g(-0.044, 0.05, -0.046)
+    t2 = g(-0.014, 0.059, -0.066)
+    add_segment(bm, t0, t1, 0.029, 0.026, 0.011, segs=2, across=Z)
+    add_segment(bm, t1, t2, 0.025, 0.022, 0.01, segs=2, across=Z, grow=0.006)
 
     obj = make_object("Fist", bm)
     obj.data.materials.append(material("SkinMat", (0.8, 0.58, 0.45, 1.0)))
-    # Fuse the pieces into one skin: voxel remesh, smooth a little, then decimate.
-    rm = obj.modifiers.new("Remesh", "REMESH")
-    rm.mode = "VOXEL"
-    rm.voxel_size = voxel
-    rm.use_smooth_shade = True
-    sm = obj.modifiers.new("Smooth", "SMOOTH")
-    sm.factor = 0.6
-    sm.iterations = 4
-    _apply_all(obj)
-    faces = len(obj.data.polygons)
-    dec = obj.modifiers.new("Decimate", "DECIMATE")
-    dec.ratio = min(1.0, tris / max(1, faces * 2))
-    _apply_all(obj)
-    obj.data.shade_smooth()
+    # Fuse into one skin, smooth enough that the joins read as flesh, then decimate.
+    _fuse(obj, voxel, smooth_iters=10, smooth_factor=0.7)
+    obj.data.transform(Matrix.Scale(scale, 4))
+    obj.data.update()
+    _decimate(obj, tris)
     return obj
 
 

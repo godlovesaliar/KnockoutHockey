@@ -61,7 +61,11 @@ const REACTIONS := {
 const CALM := 0.04
 const CASUAL := [Color(0.12, 0.13, 0.16), Color(0.85, 0.85, 0.83), Color(0.22, 0.28, 0.42),
 		Color(0.4, 0.42, 0.45), Color(0.55, 0.12, 0.12), Color(0.16, 0.3, 0.2), Color(0.62, 0.55, 0.42),
-		Color(0.08, 0.08, 0.09), Color(0.3, 0.45, 0.65), Color(0.7, 0.62, 0.2)]
+		Color(0.08, 0.08, 0.09), Color(0.3, 0.45, 0.65), Color(0.7, 0.62, 0.2), Color(0.18, 0.18, 0.2),
+		Color(0.5, 0.5, 0.52), Color(0.42, 0.3, 0.22), Color(0.6, 0.36, 0.42), Color(0.92, 0.9, 0.86)]
+## Jackets and dark hoodies.
+const DARK_WEAR := [Color(0.07, 0.07, 0.08), Color(0.12, 0.13, 0.17), Color(0.1, 0.12, 0.2),
+		Color(0.22, 0.22, 0.24), Color(0.2, 0.15, 0.1), Color(0.14, 0.18, 0.14), Color(0.32, 0.33, 0.35)]
 
 @export var seat_color := Color(0.2, 0.24, 0.36)      ## before the home team is known
 @export var concrete := Color(0.27, 0.27, 0.29)
@@ -486,7 +490,7 @@ func _build_seating() -> void:
 			seats.append([2, _seat_xf(s, suite_y() + r * 0.25), _sector(s[0])])
 
 	var seat_mesh := _seat_mesh()
-	var fan_mesh := _fan_mesh()
+	var fan_meshes := [_fan_mesh(8), _fan_mesh(6), _fan_mesh(8)]   # the upper bowl is far off
 	var occupancy := [0.9, 0.82, 0.55]
 	var buckets := {}
 	for s: Array in seats:
@@ -527,14 +531,15 @@ func _build_seating() -> void:
 			fm.transform_format = MultiMesh.TRANSFORM_3D
 			fm.use_colors = true
 			fm.use_custom_data = true
-			fm.mesh = fan_mesh
+			fm.mesh = fan_meshes[bowl]
 			fm.instance_count = fan_xfs.size()
 			var kinds := PackedFloat32Array()
 			for k in fan_xfs.size():
 				fm.set_instance_transform(k, fan_xfs[k])
-				# phase, stand threshold (suites are hard to get up), skin, pants/hair.
+				# seed (phase, looks), stand threshold (suites are hard to get up); the
+				# outfit goes in z and w when the teams are known (_recolor).
 				var keen := _rng.randf() * (0.9 if bowl < 2 else 1.6) + 0.05
-				fm.set_instance_custom_data(k, Color(_rng.randf(), keen, pow(_rng.randf(), 1.6), _rng.randf()))
+				fm.set_instance_custom_data(k, Color(_rng.randf(), keen, 0.0, 0.0))
 				kinds.append(_rng.randf())
 			var fmi := MultiMeshInstance3D.new()
 			fmi.name = "Fans_%d_%d" % [bowl, sector]
@@ -565,38 +570,157 @@ static func _seat_mesh() -> ArrayMesh:
 	return st.commit()
 
 
-## A seated fan in the seat's frame (facing +Z). Body part in UV.x (see crowd.gdshader).
-static func _fan_mesh() -> ArrayMesh:
+## A seated fan in the seat's frame (facing +Z): rounded tubes with smooth normals, the
+## body part in UV.x and the position along it in UV.y (see crowd.gdshader). `sides` is
+## the torso and head detail (limbs get two fewer).
+static func _fan_mesh(sides: int) -> ArrayMesh:
 	var st := _st()
-	_box(st, Vector3(-0.17, 0.44, -0.24), Vector3(0.17, 0.58, 0.2), 0.1)        # thighs
-	_box(st, Vector3(-0.16, 0.0, 0.12), Vector3(0.16, 0.52, 0.26), 0.1, true)    # shins
-	_hex(st, [Vector3(-0.17, 0.3, -0.32), Vector3(0.17, 0.3, -0.32), Vector3(0.17, 0.3, -0.08), Vector3(-0.17, 0.3, -0.08),
-			Vector3(-0.21, 1.04, -0.31), Vector3(0.21, 1.04, -0.31), Vector3(0.21, 1.04, -0.09), Vector3(-0.21, 1.04, -0.09)], 0.35, true)
+	var limb := maxi(sides - 2, 4)
+	# Torso up into the neck. Ring: [center, half width, half depth, along, part of the band below].
+	_tube(st, [
+		[Vector3(0.0, 0.36, -0.2), 0.165, 0.12, 0.0, 0.0],
+		[Vector3(0.0, 0.64, -0.19), 0.152, 0.11, 0.4, 0.35],
+		[Vector3(0.0, 0.9, -0.2), 0.195, 0.118, 0.75, 0.35],
+		[Vector3(0.0, 1.01, -0.2), 0.175, 0.095, 0.95, 0.35],
+		[Vector3(0.0, 1.06, -0.2), 0.058, 0.052, 1.0, 0.35],
+		[Vector3(0.0, 1.14, -0.19), 0.048, 0.045, 1.0, 0.8]], sides)
 	for sx: float in [-1.0, 1.0]:
-		_beam(st, Vector3(sx * 0.25, 1.0, -0.2), Vector3(sx * 0.22, 0.62, 0.08), 0.05, 0.6)
-	_box(st, Vector3(-0.05, 1.03, -0.24), Vector3(0.05, 1.1, -0.14), 0.85)       # neck
-	# Head: an eight-sided lathe, hair on the crown and the back.
-	var c := Vector3(0.0, 1.21, -0.19)
-	var prof := [[-0.12, 0.05], [-0.08, 0.095], [0.03, 0.105], [0.09, 0.085], [0.13, 0.0]]
-	for r in prof.size() - 1:
-		for k in 8:
-			var a0 := TAU * k / 8.0
-			var a1 := TAU * (k + 1) / 8.0
-			var p := []
-			for q: Array in [[prof[r], a0], [prof[r], a1], [prof[r + 1], a1], [prof[r + 1], a0]]:
-				var pr: Array = q[0]
-				var ang: float = q[1]
-				p.append(c + Vector3(sin(ang) * pr[1], pr[0], cos(ang) * pr[1]))
-			var fc: Vector3 = (p[0] + p[1] + p[2] + p[3]) / 4.0
-			var back := cos((a0 + a1) * 0.5) < -0.2
-			var part := 0.95 if (r >= 2 or (back and r >= 1)) else 0.85
-			var uv := Vector2(part, 0.0)
-			MeshUtil.quad(st, p[0], p[1], p[2], p[3], (fc - c).normalized(), uv, uv, uv, uv)
+		# Thigh, bent knee, shin, and a shoe.
+		_tube(st, [
+			[Vector3(sx * 0.088, 0.5, -0.26), 0.085, 0.08, 0.0, 0.0],
+			[Vector3(sx * 0.095, 0.5, 0.17), 0.07, 0.07, 0.5, 0.1],
+			[Vector3(sx * 0.1, 0.07, 0.21), 0.052, 0.052, 1.0, 0.1]], 4)   # mostly hidden by the row in front
+		if sides >= 8:
+			_box(st, Vector3(sx * 0.1 - 0.05, 0.0, 0.13), Vector3(sx * 0.1 + 0.05, 0.085, 0.31), 0.12, true)
+		# Arm: shoulder, elbow, wrist, then the hand (capped) resting on the knee.
+		_tube(st, [
+			[Vector3(sx * 0.2, 0.98, -0.2), 0.06, 0.062, 0.0, 0.0],
+			[Vector3(sx * 0.235, 0.72, -0.17), 0.05, 0.05, 0.45, 0.6],
+			[Vector3(sx * 0.19, 0.6, 0.06), 0.04, 0.037, 0.85, 0.6],
+			[Vector3(sx * 0.16, 0.585, 0.15), 0.046, 0.028, 1.0, 0.65]], limb, 0.035)
+	_fan_head(st, sides)
+	st.index()   # share the smooth-shaded corners: about a third of the vertices to animate
 	return st.commit()
 
 
-## Seat colors from the home team; fans: most in the home jersey, some in the visitors',
-## the rest in everyday clothes.
+## The fan's head: a lathe around FAN_HEAD with a little nose, and a cap brim the shader
+## folds away unless the fan wears a cap. Hair, hats and the face are painted on.
+const FAN_HEAD := Vector3(0.0, 1.21, -0.19)
+
+static func _fan_head(st: SurfaceTool, sides: int) -> void:
+	var c := FAN_HEAD
+	var prof := [[-0.12, 0.05], [-0.08, 0.095], [-0.02, 0.104], [0.04, 0.102], [0.095, 0.078], [0.13, 0.0]]
+	if sides < 8:
+		prof = [[-0.12, 0.05], [-0.08, 0.095], [0.03, 0.105], [0.09, 0.085], [0.13, 0.0]]
+	var rings := []
+	for pr: Array in prof:
+		var ring := []
+		for k in sides:
+			var ang := TAU * k / sides
+			ring.append(c + Vector3(sin(ang) * pr[1], pr[0], cos(ang) * pr[1]))
+		rings.append(ring)
+	var uv := Vector2(0.85, 0.0)
+	for r in rings.size() - 1:
+		for k in sides:
+			var k1 := (k + 1) % sides
+			var p := [rings[r][k], rings[r][k1], rings[r + 1][k1], rings[r + 1][k]]
+			var n := []
+			for q: Vector3 in p:
+				n.append(((q - c) * Vector3(1.0, 1.4, 1.0)).normalized())
+			_quad_n(st, p, n, [uv, uv, uv, uv])
+	if sides >= 8:
+		# Nose: a small wedge on the front of the face.
+		var tip := c + Vector3(0.0, -0.025, 0.125)
+		var base := [c + Vector3(-0.018, -0.035, 0.1), c + Vector3(0.0, 0.005, 0.104), c + Vector3(0.018, -0.035, 0.1)]
+		var nuv := Vector2(0.86, 0.0)
+		for i in 2:
+			var a: Vector3 = base[i]
+			var b: Vector3 = base[i + 1]
+			var nn := (a - tip).cross(b - tip).normalized()
+			if nn.z < 0.0:
+				nn = -nn
+			_tri_n(st, [tip, a, b], [nn, nn, nn], nuv)
+		var under := Vector3(0.0, -0.6, 0.8).normalized()
+		_tri_n(st, [tip, base[0], base[2]], [under, under, under], nuv)
+	# Cap brim, both faces.
+	var brim := [c + Vector3(-0.09, 0.05, 0.06), c + Vector3(0.09, 0.05, 0.06),
+			c + Vector3(0.075, 0.035, 0.2), c + Vector3(-0.075, 0.035, 0.2)]
+	var buv := Vector2(0.97, 0.0)
+	var up := Vector3(0.0, 1.0, 0.1).normalized()
+	_quad_n(st, brim, [up, up, up, up], [buv, buv, buv, buv])
+	_quad_n(st, brim, [-up, -up, -up, -up], [buv, buv, buv, buv])
+
+
+## A tube through `rings` ([center, half width, half depth, along, part of the band
+## below]) with `sides` sides and smooth normals, its last end capped `cap` long (0 = open).
+static func _tube(st: SurfaceTool, rings: Array, sides: int, cap := 0.0) -> void:
+	var pts := []
+	var nrm := []
+	var axes := []
+	for i in rings.size():
+		var ring: Array = rings[i]
+		var c: Vector3 = ring[0]
+		var prev: Vector3 = rings[maxi(i - 1, 0)][0]
+		var next: Vector3 = rings[mini(i + 1, rings.size() - 1)][0]
+		var t := (next - prev).normalized()
+		var u := (Vector3.RIGHT - t * Vector3.RIGHT.dot(t)).normalized()
+		var v := t.cross(u)
+		var ru: float = ring[1]
+		var rv: float = ring[2]
+		var rp := []
+		var rn := []
+		for k in sides:
+			var a := TAU * (k + 0.5) / sides
+			rp.append(c + u * cos(a) * ru + v * sin(a) * rv)
+			rn.append((u * cos(a) / ru + v * sin(a) / rv).normalized())
+		pts.append(rp)
+		nrm.append(rn)
+		axes.append(t)
+	for i in rings.size() - 1:
+		var a0: float = rings[i][3]
+		var a1: float = rings[i + 1][3]
+		var part: float = rings[i + 1][4]
+		for k in sides:
+			var k1 := (k + 1) % sides
+			_quad_n(st, [pts[i][k], pts[i][k1], pts[i + 1][k1], pts[i + 1][k]],
+					[nrm[i][k], nrm[i][k1], nrm[i + 1][k1], nrm[i + 1][k]],
+					[Vector2(part, a0), Vector2(part, a0), Vector2(part, a1), Vector2(part, a1)])
+	if cap > 0.0:
+		var last := rings.size() - 1
+		var t: Vector3 = axes[last]
+		var tip: Vector3 = rings[last][0] + t * cap
+		var uv := Vector2(rings[last][4], 1.0)
+		for k in sides:
+			var k1 := (k + 1) % sides
+			_tri_n(st, [pts[last][k], pts[last][k1], tip], [nrm[last][k], nrm[last][k1], t], uv)
+
+
+## A quad with a normal per corner (winding set from their average, as MeshUtil.quad).
+static func _quad_n(st: SurfaceTool, p: Array, n: Array, uv: Array) -> void:
+	var avg: Vector3 = n[0] + n[1] + n[2] + n[3]
+	var order := [0, 1, 2, 0, 2, 3]
+	if (p[1] - p[0]).cross(p[2] - p[0]).dot(avg) > 0.0:
+		order = [0, 2, 1, 0, 3, 2]
+	for i: int in order:
+		st.set_normal(n[i])
+		st.set_uv(uv[i])
+		st.add_vertex(p[i])
+
+
+static func _tri_n(st: SurfaceTool, p: Array, n: Array, uv: Vector2) -> void:
+	var avg: Vector3 = n[0] + n[1] + n[2]
+	var order := [0, 1, 2]
+	if (p[1] - p[0]).cross(p[2] - p[0]).dot(avg) > 0.0:
+		order = [0, 2, 1]
+	for i: int in order:
+		st.set_normal(n[i])
+		st.set_uv(uv)
+		st.add_vertex(p[i])
+
+
+## Seat colors from the home team; fans' outfits (crowd.gdshader): about a third in the
+## home jersey, more in home-colored tees, hoodies and shirts under dark jackets, a few
+## in the visitors' colors, the rest in everyday clothes. Some wear hats.
 func _recolor() -> void:
 	var home_c := seat_color
 	var colors := {}
@@ -606,6 +730,8 @@ func _recolor() -> void:
 	_seat_mats[0].albedo_color = home_c.darkened(0.3)
 	_seat_mats[1].albedo_color = home_c.darkened(0.5)
 	var away_colors: Dictionary = Teams.team(away_team).colors if away_team >= 0 else {}
+	_crowd_mat.set_shader_parameter("home_logo", _crest(home_team))
+	_crowd_mat.set_shader_parameter("away_logo", _crest(away_team))
 	var pick := RandomNumberGenerator.new()
 	for f in _fans.size():
 		var mm := _fans[f]
@@ -613,12 +739,70 @@ func _recolor() -> void:
 		pick.seed = 99 + f
 		for k in mm.instance_count:
 			var r := kinds[k]
-			var col: Color = CASUAL[pick.randi() % CASUAL.size()]
-			if not colors.is_empty() and r < 0.5:
-				col = colors.jersey if r < 0.4 else colors.trim
-			elif not away_colors.is_empty() and r < 0.6:
-				col = away_colors.jersey
-			mm.set_instance_color(k, col)
+			var casual: Color = CASUAL[pick.randi() % CASUAL.size()]
+			var dark: Color = DARK_WEAR[pick.randi() % DARK_WEAR.size()]
+			var o := _outfit(r, colors, away_colors, casual, dark, pick)
+			var hat := 0
+			var hat_col := 0
+			var h := pick.randf()
+			if h < 0.08:
+				hat = 1                   # beanie
+			elif h < 0.19:
+				hat = 2                   # ball cap
+			if hat > 0:
+				hat_col = pick.randi() % 4      # outfit color, second color, black, white
+			var cd := mm.get_instance_custom_data(k)
+			cd.b = _pack_color(o[1])
+			cd.a = float(o[2] + 4 * hat + 16 * hat_col + 64 * o[3])
+			mm.set_instance_custom_data(k, cd)
+			mm.set_instance_color(k, o[0])
+
+
+## [color A, color B, outfit, crest] for a fan whose team pick is `r` (0..1). Outfits
+## (A / B): 0 tee or long sleeves (A), 1 jersey (body / trim), 2 open jacket (jacket /
+## shirt), 3 hoodie (A). Crest: the logo on a jersey, 1 home, 2 away, 0 none.
+static func _outfit(r: float, home: Dictionary, away: Dictionary, casual: Color, dark: Color,
+		pick: RandomNumberGenerator) -> Array:
+	if not home.is_empty():
+		var jersey: Color = home.jersey
+		var trim: Color = home.trim
+		if r < 0.3:
+			return [jersey, trim, 1, 1]
+		if r < 0.38:
+			return [trim if pick.randf() < 0.4 else jersey, casual, 0 if pick.randf() < 0.6 else 3, 0]
+		if r < 0.46:
+			return [dark, jersey if pick.randf() < 0.7 else trim, 2, 0]
+	if not away.is_empty():
+		if r < 0.52:
+			return [away.jersey, away.trim, 1, 2]
+		if r < 0.55:
+			return [dark, away.jersey, 2, 0]
+	var o := pick.randf()
+	if o < 0.3:
+		return [dark, casual, 2, 0]
+	if o < 0.5:
+		return [casual if pick.randf() < 0.5 else dark, casual, 3, 0]
+	return [casual, dark, 0, 0]
+
+
+## A team's logo with mipmaps, for the fans' jersey crests (null: none).
+static func _crest(team_id: int) -> Texture2D:
+	var logo := MenuStyle.team_logo(team_id) if team_id >= 0 else null
+	if logo == null:
+		return null
+	var img := logo.get_image()
+	if img == null:
+		return null
+	if img.is_compressed():
+		img.decompress()
+	img.resize(128, maxi(1, roundi(128.0 * img.get_height() / img.get_width())), Image.INTERPOLATE_LANCZOS)
+	img.generate_mipmaps()
+	return ImageTexture.create_from_image(img)
+
+
+## A color packed into one exact float (8 bits a channel) for the crowd shader.
+static func _pack_color(c: Color) -> float:
+	return float(clampi(c.r8, 0, 255) + 256 * clampi(c.g8, 0, 255) + 65536 * clampi(c.b8, 0, 255))
 
 
 # --- LED ribbon board -------------------------------------------------------------

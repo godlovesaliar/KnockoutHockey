@@ -13,15 +13,28 @@ extends Node
 ## the one who did more damage wins (close = a draw).
 ##
 ## Moves (full-body clips, fists closed; at contact the punching hand is pulled onto the
-## other's face, or their guard, so blows land):
-##   jab (A)        lead hand, fast, light
-##   haymaker (X)   big right with a visible windup; slip it (stick up/down) or block it
-##   grab (B)       a hand on their jersey: pulls you together, drains their balance,
-##                  your punches hit harder and the uppercut opens up. Held? B breaks free.
-##   uppercut (RT)  only while you hold them; big balance damage
-##   block (hold Y) much less damage, costs stamina
+## other's face / body, or their guard, so blows land). PlayStation buttons:
+##   Cross     jab (lead hand, fast, light)
+##   Square    cross (rear hand, straight)
+##   Triangle  hook (lead hand, big, a visible windup: slip it or block it)
+##   hold L1   the same three to the body (body jab / cross / hook): less damage, more
+##             balance, and they drain the other's stamina
+##   Circle    grab: a hand on their jersey pulls you together, drains their balance and
+##             your punches hit harder. While holding, only the free right hand punches:
+##             Cross = cross, Square = right hook, Triangle = uppercut.
+##             Held? Mash Circle to break free. Holding and they're getting loose? Mash
+##             Circle to hang on. Every press costs stamina, on either side.
+##   hold R1   block high; R1 + L1 blocks low. Blocks only the punches aimed at that level
+##             (much less damage, costs stamina); the wrong guard lets it through.
 ## Stick toward / away from the other steps in / backs off (out of range, punches miss and
 ## stamina comes back faster); up / down slips to the side.
+##
+## Styles (PlayerStats.fighting_style()): each throws its own jab, cross and hook from its
+## own idle; the body versions are the same clips bent over at the waist. The uppercut, the
+## clinch hook, guards and reactions are shared.
+##   BOXER    quick, tight, cheap punches that hit a little lighter
+##   BRAWLER  looping haymakers: slower, heavier, costlier and easier to slip
+##   GRINDER  short and compact: less reach, works the balance and the body
 
 signal finished(winner: Skater, loser: Skater)   ## winner null = draw (loser null too)
 signal declined
@@ -30,40 +43,109 @@ signal knockout(winner: Skater, loser: Skater)   ## the moment one goes down (fo
 enum Stage { PROMPT, SQUARE_UP, FIGHT, OVER }
 
 const PROMPT_TIME := 3.0
-const SQUARE_TIME := 2.5
-const HELMET_AT := [0.4, 0.55]   ## square-up s each fighter starts taking the helmet off (after the stick drops)
+const SQUARE_TIME := 1.6
+const HELMET_AT := [0.3, 0.4]   ## square-up s each fighter starts taking the helmet off (after the stick drops)
 const GEAR_FALL := 0.35          ## s for the stick and gloves to hit the ice
 const TIME_LIMIT := 25.0
 const OVER_TIME := 3.2
-const GAP := 0.95             ## meters between the fighters' centers when squared up
+const GAP := 0.95             ## meters between the fighters' centers at fighting range
+const START_GAP := 1.6        ## ...when they square up: arm's length apart, they step in to engage
 const GAP_MIN := 0.68         ## closest they get (held in a clinch)
 const GAP_MAX := 1.9
 const STEP_SPEED := 1.6       ## m/s stepping in or back
 const LEAN_DIST := 0.26
 const RING_RADIUS := 4.6
-const GRAB_TIME := 3.5
+const GRAB_TIME := 6.0         ## longest a grip lasts (mashing breaks it sooner)
+const MASH_COST := 1.2         ## stamina per Circle press while tied up, either side
+const ESCAPE_PER := 0.085      ## escape progress per press (× strength)
+const HOLD_PER := 0.06         ## escape progress a holder's press takes back (× strength)
 const DRAW_MARGIN := 0.08     ## damage within this share of each other = a draw
 const BUFFER := 0.3           ## a press this long before the fighter is free still fires
 const STANCE_YAW := 0.42      ## rad the body turns to square the bladed clips up to the other
 
 ## clip, start (clip s), contact (clip s), end (clip s), clip speed, hand (0 left / 1 right),
 ## damage, balance damage, stamina cost, lunge (m), range (separation it reaches), stun (s
-## the one hit can't act), aim ("head" / "body" / "chin").
+## the one hit can't act), aim ("head" / "body" / "chin" / "collar"), slip (the other's
+## lean that dodges it; 0 = can't be slipped). Optional: drain (the other's stamina on a
+## clean hit), heavy (hit-stop, shake, rocks a holder loose), bow (rad the thrower bends
+## forward over the clip, so a head clip reads as a body shot).
 const MOVES := {
 	"jab": {"clip": "lead_jab", "from": 0.18, "contact": 0.5, "end": 0.95, "speed": 1.7, "hand": 0,
-		"dmg": 6.5, "bal": 2.5, "cost": 3.0, "lunge": 0.12, "range": 1.25, "stun": 0.22, "aim": "head"},
-	"hay": {"clip": "cross_punch", "from": 0.5, "contact": 1.1, "end": 1.6, "speed": 1.5, "hand": 1,
-		"dmg": 18.0, "bal": 11.0, "cost": 9.0, "lunge": 0.2, "range": 1.15, "stun": 0.45, "aim": "head"},
+		"dmg": 6.5, "bal": 2.5, "cost": 3.0, "lunge": 0.12, "range": 1.25, "stun": 0.22, "aim": "head", "slip": 0.8},
+	"cross": {"clip": "cross_punch", "from": 0.5, "contact": 1.1, "end": 1.6, "speed": 1.8, "hand": 1,
+		"dmg": 11.0, "bal": 6.0, "cost": 5.0, "lunge": 0.16, "range": 1.2, "stun": 0.32, "aim": "head", "slip": 0.7},
+	"hook": {"clip": "hook", "from": 0.15, "contact": 0.48, "end": 0.95, "speed": 1.1, "hand": 0,
+		"dmg": 17.0, "bal": 10.0, "cost": 9.0, "lunge": 0.1, "range": 1.1, "stun": 0.45, "aim": "head", "slip": 0.55, "heavy": true},
+	"body_jab": {"clip": "lead_jab", "from": 0.18, "contact": 0.5, "end": 0.95, "speed": 1.6, "hand": 0,
+		"dmg": 4.0, "bal": 4.0, "drain": 5.0, "cost": 3.0, "lunge": 0.12, "range": 1.2, "stun": 0.2, "aim": "body", "slip": 0.8, "bow": 0.5},
+	"body_cross": {"clip": "boxing_1", "from": 0.25, "contact": 0.72, "end": 1.15, "speed": 1.4, "hand": 1,
+		"dmg": 7.0, "bal": 7.0, "drain": 8.0, "cost": 5.0, "lunge": 0.14, "range": 1.15, "stun": 0.3, "aim": "body", "slip": 0.7, "bow": 0.15},
+	"body_hook": {"clip": "boxing", "from": 0.12, "contact": 0.48, "end": 1.0, "speed": 1.15, "hand": 0,
+		"dmg": 10.0, "bal": 12.0, "drain": 12.0, "cost": 8.0, "lunge": 0.08, "range": 1.05, "stun": 0.45, "aim": "body", "slip": 0.55, "bow": 0.12, "heavy": true},
+	"g_hook": {"clip": "punching", "from": 0.12, "contact": 0.45, "end": 0.78, "speed": 1.5, "hand": 1,
+		"dmg": 13.0, "bal": 8.0, "cost": 6.0, "lunge": 0.04, "range": 1.0, "stun": 0.4, "aim": "head", "slip": 0.0, "heavy": true},
 	"upper": {"clip": "uppercut", "from": 0.22, "contact": 0.5, "end": 0.85, "speed": 1.3, "hand": 1,
-		"dmg": 19.0, "bal": 17.0, "cost": 8.0, "lunge": 0.06, "range": 1.0, "stun": 0.5, "aim": "chin"},
-	"short": {"clip": "punching", "from": 0.12, "contact": 0.4, "end": 0.75, "speed": 1.5, "hand": 1,
-		"dmg": 8.0, "bal": 4.0, "cost": 3.0, "lunge": 0.04, "range": 1.0, "stun": 0.22, "aim": "body"},
+		"dmg": 19.0, "bal": 17.0, "cost": 8.0, "lunge": 0.06, "range": 1.0, "stun": 0.5, "aim": "chin", "slip": 0.0, "heavy": true},
 	"grab": {"clip": "", "from": 0.0, "contact": 0.2, "end": 0.34, "speed": 1.0, "hand": 0,
-		"dmg": 0.0, "bal": 4.0, "cost": 4.0, "lunge": 0.15, "range": 1.3, "stun": 0.0, "aim": "collar"},
+		"dmg": 0.0, "bal": 4.0, "cost": 4.0, "lunge": 0.15, "range": 1.3, "stun": 0.0, "aim": "collar", "slip": 0.0},
 }
-const HIT_CLIPS := {"jab": "light_hit_to_head", "hay": "head_hit", "upper": "receive_uppercut_to_the_face", "short": "stomach_hit"}
-const IDLE_CLIP := "bouncing_fight_idle"
-const KO_FROM := 0.9   ## knocked_out clip s where the body starts to turn and drop
+## Only while holding the jersey (the free right hand).
+const GRAB_MOVES := ["g_hook", "upper"]
+const HIT_CLIPS := {"jab": "light_hit_to_head", "cross": "head_hit", "hook": "big_side_hit", "g_hook": "big_side_hit",
+	"upper": "receive_uppercut_to_the_face", "body_jab": "stomach_hit", "body_cross": "stomach_hit", "body_hook": "big_stomach_hit"}
+enum Style { BOXER, BRAWLER, GRINDER }
+const STYLE_NAMES := ["BOXER", "BRAWLER", "GRINDER"]
+## Per style: the idle loop and its speed, and whether it is a still stance (breathing laid
+## over it, like the guards).
+const STYLE_IDLE := [["idle1", 1.0, false], ["idle2", 1.0, false], ["idle3", 1.0, true]]
+## Per style, the clip behind each punch (and its body version): clip, from, contact, end
+## (clip s), speed, hand, bow for the body version (rad; head-height clips bend more), and
+## optionally blend (s into the clip; big windups start mid-swing). Speeds keep contact near
+## the base timings so the styles differ by feel, not by a whole beat.
+const STYLE_CLIPS := [
+	{   # BOXER
+		"jab": {"clip": "jab1", "from": 0.3, "contact": 0.56, "end": 0.9, "speed": 1.55, "hand": 0, "bow": 0.5},
+		"cross": {"clip": "cross1", "from": 0.12, "contact": 0.4, "end": 0.85, "speed": 1.0, "hand": 1, "bow": 0.3},
+		"hook": {"clip": "hook1", "from": 0.2, "contact": 0.64, "end": 1.25, "speed": 1.55, "hand": 0, "bow": 0.45},
+	},
+	{   # BRAWLER
+		"jab": {"clip": "jab2", "from": 0.05, "contact": 0.4, "end": 0.8, "speed": 1.6, "hand": 0, "bow": 0.55},
+		"cross": {"clip": "cross2", "from": 0.5, "contact": 1.1, "end": 1.6, "speed": 1.6, "hand": 1, "bow": 0.4},
+		"hook": {"clip": "hook2", "from": 0.45, "contact": 1.08, "end": 1.6, "speed": 1.4, "hand": 1, "bow": 0.3, "blend": 0.15},
+	},
+	{   # GRINDER
+		"jab": {"clip": "jab3", "from": 0.3, "contact": 0.57, "end": 1.0, "speed": 1.5, "hand": 0, "bow": 0.25},
+		"cross": {"clip": "cross3", "from": 0.1, "contact": 0.37, "end": 0.75, "speed": 1.0, "hand": 1, "bow": 0.25},
+		"hook": {"clip": "hook3", "from": 0.15, "contact": 0.32, "end": 0.75, "speed": 0.85, "hand": 1, "bow": 0.5, "blend": 0.1},
+	},
+]
+## Per style, on the punches it has its own clips for: MOVES numbers multiplied ("range" is
+## added). slip < 1 means less lean dodges it.
+const STYLE_MODS := [
+	{"dmg": 0.92, "cost": 0.8, "stun": 0.9},
+	{"dmg": 1.15, "bal": 1.15, "cost": 1.15, "slip": 0.85},
+	{"dmg": 0.97, "bal": 1.2, "drain": 1.3, "range": -0.05},
+]
+## Guards: one frame of each clip held (clip s), breathing over it.
+const GUARD_POSES := {"block_high": ["center_block", 0.8], "block_low": ["body_block", 1.9]}
+## Knockout finishes: clip -> where to start it (clip s: where the body starts to go, so
+## the fall follows the blow), its speed, and the clip s it lands on the ice.
+##   knocked_out  twists and drops sideways        dying   staggers forward, then pitches over
+##   dying2       a quick forward collapse         stunned straight back, at once
+const FINISHES := {
+	"knocked_out": {"from": 0.9, "speed": 1.1, "down": 3.0},
+	"dying": {"from": 0.6, "speed": 1.15, "down": 4.3},
+	"dying2": {"from": 1.1, "speed": 1.0, "down": 2.1},
+	"stunned": {"from": 0.0, "speed": 1.0, "down": 1.4},
+}
+## Which finishes a blow can end in, weighted: big shots to the head snap them back or
+## spin them down, body shots fold them up, a grip that drained their balance drags them.
+const FINISH_BY := {
+	"head_big": [["stunned", 0.35], ["knocked_out", 0.35], ["dying2", 0.3]],
+	"head": [["knocked_out", 0.4], ["dying2", 0.4], ["stunned", 0.2]],
+	"body": [["dying", 0.6], ["dying2", 0.4]],
+	"": [["dying", 0.5], ["knocked_out", 0.5]],
+}
 const FULL := Vector3.ONE
 
 
@@ -71,6 +153,8 @@ class Fighter:
 	var s: Skater
 	var other: Fighter
 	var human: HumanBrain
+	var style := Style.BOXER
+	var moves := MOVES         ## MOVES with this fighter's style applied (moves_for)
 	var intent := SkaterIntent.new()
 	var max_health := 100.0
 	var health := 100.0
@@ -85,7 +169,12 @@ class Fighter:
 	var connects := ""        ## at contact: "hit" / "block" / "miss" (decided at contact)
 	var rate := 1.0           ## act speed (tired fighters are slower)
 	var blocking := false
+	var block_low := false    ## the guard is down at the body (L1 with R1)
 	var grabbing := 0.0       ## seconds left holding the other's jersey
+	var escape := 0.0         ## held: 0..1 progress breaking the other's grip (mashing)
+	var mash_t := 0.0         ## AI: seconds to its next press
+	var jolt := 0.0           ## 0..1 a struggle press just jerked the body (decays)
+	var bow := 0.0            ## current forward bend (MOVES bow)
 	var lean := 0.0
 	var lean_target := 0.0
 	var lean_hold := 0.0
@@ -96,13 +185,11 @@ class Fighter:
 	var damage_dealt := 0.0
 	var ai_next := 0.6
 	var ai_range := GAP
-	var prev_turbo := false
 	var buffered := ""
 	var buffer_t := 0.0
-	var pose := ""            ## the looping clip playing ("idle" / "block")
+	var pose := ""            ## the looping clip playing ("idle" / "block_high" / "block_low")
 	var flash_t := 0.0        ## HUD: seconds the bars flash after a hit
 	var reach := [0.0, 0.0]   ## per hand, the IK weight this tick
-	var guard := 0.0          ## 0..1 fists up in front of the face (blocking)
 
 	func toward() -> float:   ## +1 if the other is along +axis
 		return -side
@@ -129,7 +216,12 @@ var _props: Array[Node3D] = []
 var _hud: FightHud
 var _ring: Array[Skater] = []
 var _exhausted := 0.0
+var _over_time := OVER_TIME   ## the knockout's fall can hold the finish longer
+## After a knockout: seconds from the blow until the loser is down on the ice (the replay
+## runs that long past it).
+var ko_fall := 0.0
 var _axis_base := 0.0
+var _log := {}   ## KH_FIGHT_LOG: "<move> <hit|block|miss>" / "escape" -> count
 
 
 ## `prompt` = the human brain that gets "drop the gloves?" (null: the fight is on).
@@ -168,7 +260,36 @@ func _fighter(s: Skater) -> Fighter:
 	f.max_stamina = PlayerStats.lerp_stat(s.stats.endurance, 60.0, 110.0)
 	f.stamina = f.max_stamina
 	f.human = _human_for(s)
+	f.style = s.stats.fighting_style()
+	# `-- fightstyle=<a>[,<b>]` forces the styles (0 boxer, 1 brawler, 2 grinder) for testing.
+	for arg in OS.get_cmdline_user_args():
+		if arg.begins_with("fightstyle="):
+			var st := arg.substr(11).split(",")
+			f.style = clampi(int(st[0 if a == null or st.size() < 2 else 1]), 0, 2)
+	f.moves = moves_for(f.style)
 	return f
+
+
+## MOVES as `style` throws them: its own clips for the jab / cross / hook and their body
+## versions (STYLE_CLIPS), with its numbers (STYLE_MODS). The rest are shared.
+static func moves_for(style: int) -> Dictionary:
+	var out := {}
+	for k: String in MOVES:
+		var m: Dictionary = MOVES[k].duplicate()
+		var c: Dictionary = STYLE_CLIPS[style].get(k.trim_prefix("body_"), {})
+		if not c.is_empty():
+			for key in ["clip", "from", "contact", "end", "speed", "hand"]:
+				m[key] = c[key]
+			m.blend = c.get("blend", 0.07)
+			if k.begins_with("body_"):
+				m.bow = c.bow
+			for key: String in STYLE_MODS[style]:
+				if key == "range":
+					m.range += STYLE_MODS[style].range
+				elif m.has(key):
+					m[key] *= STYLE_MODS[style][key]
+		out[k] = m
+	return out
 
 
 func _human_for(s: Skater) -> HumanBrain:
@@ -228,7 +349,7 @@ func _physics_process(delta: float) -> void:
 			for f: Fighter in [a, b]:
 				f.reach = [0.0, 0.0]
 			_move(delta)
-			if _t > OVER_TIME:
+			if _t > _over_time:
 				_cleanup()
 				finished.emit(winner, loser)
 				queue_free()
@@ -257,8 +378,8 @@ func _begin_square_up() -> void:
 	_cam_side = Vector3.FORWARD if center.z > 0.0 else Vector3.BACK
 	_axis_base = 0.0
 	axis = Vector3.RIGHT
-	a.x = -GAP * 0.5
-	b.x = GAP * 0.5
+	a.x = -START_GAP * 0.5
+	b.x = START_GAP * 0.5
 	for f: Fighter in [a, b]:
 		var s: Skater = f.s
 		if s.has_puck():
@@ -344,8 +465,6 @@ func _read_input(f: Fighter, delta: float) -> void:
 		f.intent.clear()
 		f.human.update(f.s, f.intent, delta)
 		var i := f.intent
-		var turbo_down := i.turbo and not f.prev_turbo
-		f.prev_turbo = i.turbo
 		# The stick in screen terms: left / right steps toward or away from the other,
 		# up / down slips to the side.
 		var cam_right := _cam.global_basis.x if _cam else Vector3.RIGHT
@@ -353,16 +472,24 @@ func _read_input(f: Fighter, delta: float) -> void:
 		var stick := InputRouter.to_screen(i.move)   # undo the play camera's turn
 		f.step = clampf(stick.x * toward_screen, -1.0, 1.0) if absf(stick.x) > 0.25 else 0.0
 		f.lean_target = clampf(stick.z * 1.5, -1.0, 1.0) if absf(stick.z) > 0.3 else 0.0
-		f.blocking = i.deke_held and (f.act == "" or (f.act in MOVES and f.landed))
+		f.blocking = i.block_held and (f.act == "" or (f.act in MOVES and f.landed))
+		f.block_low = i.protect
+		var holding := f.grabbing > 0.0
 		var want := ""
+		if i.check_down:
+			# Tied up, Circle is the struggle (never buffered: every press counts now).
+			if f.other.grabbing > 0.0:
+				_mash(f, true)
+			elif holding:
+				_mash(f, false)
+			else:
+				want = "grab"
 		if i.pass_down:
-			want = "short" if f.grabbing > 0.0 or f.other.grabbing > 0.0 else "jab"
+			want = "cross" if holding else ("body_jab" if i.protect else "jab")
 		elif i.shoot_down:
-			want = "hay"
-		elif i.check_down:
-			want = "break" if f.other.grabbing > 0.0 else "grab"
-		elif turbo_down:
-			want = "upper"
+			want = "g_hook" if holding else ("body_cross" if i.protect else "cross")
+		elif i.deke_down:
+			want = "upper" if holding else ("body_hook" if i.protect else "hook")
 		if want != "":
 			f.buffered = want
 			f.buffer_t = BUFFER
@@ -374,39 +501,43 @@ func _read_input(f: Fighter, delta: float) -> void:
 		_ai(f, delta)
 
 
-## Starts `want` if allowed now (the uppercut needs a grip; "break" shakes a grip off).
+## Starts `want` if it still fits (the grip may have gone while it was buffered).
 func _try(f: Fighter, want: String) -> void:
-	match want:
-		"upper":
-			if f.grabbing > 0.0:
-				_start(f, "upper")
-			else:
-				_hud.flash_for(f, "UPPERCUT: GRAB FIRST (B)")
-		"break":
-			_break_free(f)
-		_:
-			_start(f, want)
-
-
-func _break_free(f: Fighter) -> void:
-	var o := f.other
-	if o.grabbing <= 0.0:
+	if want in GRAB_MOVES and f.grabbing <= 0.0:
 		return
-	f.stamina = maxf(0.0, f.stamina - 4.0)
-	var mine := PlayerStats.lerp_stat(f.s.stats.strength, 0.3, 0.75) * (0.6 if f.stamina < 10.0 else 1.0)
-	if _rng.randf() < mine:
-		o.grabbing = 0.0
-		o.balance -= 4.0
-		o.vx -= o.toward() * 0.9
-		f.vx -= f.toward() * 0.5
-		_hud.flash("%s BREAKS FREE" % _name(f.s))
-		Sfx.play("pad", _mid() + Vector3.UP * 1.3, -8.0, 0.8)
-	else:
-		_hud.flash_for(f, "STILL HELD — KEEP TRYING (B)")
+	if want == "grab" and (f.grabbing > 0.0 or f.other.grabbing > 0.0):
+		return
+	_start(f, want)
 
 
-## Computer fighter: keeps its range, reacts to visible haymakers, works the grab, mixes
-## punches, backs off to get its wind back.
+## One Circle press while tied up. `escaping`: f is held and pulls toward breaking free;
+## otherwise f holds and takes some of the other's progress back. Costs stamina either way.
+func _mash(f: Fighter, escaping: bool) -> void:
+	var o := f.other
+	f.stamina = maxf(0.0, f.stamina - MASH_COST)
+	var power := PlayerStats.lerp_stat(f.s.stats.strength, 0.7, 1.3) * (0.5 if f.stamina < 10.0 else 1.0)
+	f.jolt = 1.0
+	o.jolt = maxf(o.jolt, 0.5)
+	if not escaping:
+		o.escape = maxf(0.0, o.escape - HOLD_PER * power)
+		return
+	f.escape += ESCAPE_PER * power
+	f.vx -= f.toward() * 0.25
+	if f.escape < 1.0:
+		return
+	f.escape = 0.0
+	_log["escape"] = int(_log.get("escape", 0)) + 1
+	o.grabbing = 0.0
+	o.balance -= 4.0
+	o.vx -= o.toward() * 0.9
+	f.vx -= f.toward() * 0.5
+	_hud.flash("%s BREAKS FREE" % _name(f.s))
+	Sfx.play("pad", _mid() + Vector3.UP * 1.3, -8.0, 0.8)
+
+
+## Computer fighter: keeps its range, reads visible punches (slips the big ones, guards the
+## right level by skill), mashes when tied up, mixes head and body, backs off to get its
+## wind back.
 func _ai(f: Fighter, delta: float) -> void:
 	var skill := PlayerStats.lerp_stat(f.s.stats.fighting, 0.25, 0.85)
 	var aggr := PlayerStats.lerp_stat(f.s.stats.aggression, 0.0, 1.0)
@@ -419,15 +550,28 @@ func _ai(f: Fighter, delta: float) -> void:
 	f.ai_range = 1.55 if tired and o.grabbing <= 0.0 and f.grabbing <= 0.0 else lerpf(1.0, 0.86, aggr)
 	var sep := separation()
 	f.step = clampf((sep - f.ai_range) * 3.0, -1.0, 1.0) if absf(sep - f.ai_range) > 0.06 else 0.0
-	# A haymaker coming: slip it or get the guard up, if quick enough to read it.
-	if o.act == "hay" and not o.landed and f.act == "" and f.lean_target == 0.0 and not f.blocking:
-		if _rng.randf() < skill * delta * 7.0:
-			if _rng.randf() < 0.55:
-				f.lean_target = 1.0 if _rng.randf() < 0.5 else -1.0
-				f.lean_hold = 0.55
-			else:
-				f.blocking = true
-				f.ai_next = 0.45
+	# Tied up: mash Circle, faster with skill (the holder only once they're getting loose).
+	f.mash_t -= delta
+	if f.mash_t <= 0.0 and f.act != "down":   # like a human, presses even while reeling
+		var rate := lerpf(3.5, 7.5, skill) * (0.6 if tired else 1.0)
+		if o.grabbing > 0.0:
+			_mash(f, true)
+			f.mash_t = _rng.randf_range(0.8, 1.2) / rate
+		elif f.grabbing > 0.0 and o.escape > 0.3:
+			_mash(f, false)
+			f.mash_t = _rng.randf_range(0.8, 1.2) / rate
+	# A punch coming: slip the hooks or get the right guard up, if quick enough to read it.
+	var incoming := o.act in MOVES and o.act != "grab" and not o.landed
+	if incoming and f.act == "" and f.lean_target == 0.0 and not f.blocking and _rng.randf() < skill * delta * 7.0:
+		var m: Dictionary = o.moves[o.act]
+		if o.act in ["hook", "body_hook"] and o.grabbing <= 0.0 and _rng.randf() < 0.45:
+			f.lean_target = 1.0 if _rng.randf() < 0.5 else -1.0
+			f.lean_hold = 0.55
+		else:
+			var low: bool = m.aim == "body"
+			f.blocking = true
+			f.block_low = low if _rng.randf() < lerpf(0.55, 0.95, skill) else not low
+			f.ai_next = 0.45
 	f.ai_next -= delta
 	if f.ai_next > 0.0 or f.act != "":
 		return
@@ -436,30 +580,33 @@ func _ai(f: Fighter, delta: float) -> void:
 	if tired:
 		if _rng.randf() < 0.5:
 			f.blocking = true
+			f.block_low = _rng.randf() < 0.35
 			f.ai_next = 0.6
 		return
 	if o.grabbing > 0.0:
-		_try(f, "break" if _rng.randf() < 0.45 else "short")
+		_try(f, "body_jab" if _rng.randf() < 0.5 else "jab")
 		return
 	if f.grabbing > 0.0:
-		_try(f, "upper" if _rng.randf() < 0.4 else "short")
+		var g := _rng.randf()
+		_try(f, "upper" if g < 0.35 else ("g_hook" if g < 0.65 else "cross"))
 		return
 	if sep > 1.3:
 		return   # still closing in
 	var r := _rng.randf()
-	if r < 0.4:
-		_start(f, "jab")
-	elif r < 0.6 + aggr * 0.12:
-		_start(f, "hay")
-	elif r < 0.85:
-		_start(f, "grab")
-	else:
-		f.blocking = true
-		f.ai_next = 0.5
+	var picks := [["jab", 0.26], ["cross", 0.16], ["hook", 0.1 + aggr * 0.08], ["body_jab", 0.09],
+			["body_cross", 0.08], ["body_hook", 0.06 + aggr * 0.04], ["grab", 0.12]]
+	for pk: Array in picks:
+		r -= pk[1]
+		if r < 0.0:
+			_try(f, pk[0])
+			return
+	f.blocking = true
+	f.block_low = _rng.randf() < 0.4
+	f.ai_next = 0.5
 
 
 func _start(f: Fighter, move: String) -> void:
-	var m: Dictionary = MOVES[move]
+	var m: Dictionary = f.moves[move]
 	f.act = move
 	f.act_t = 0.0
 	f.landed = false
@@ -470,7 +617,7 @@ func _start(f: Fighter, move: String) -> void:
 	f.stamina = maxf(0.0, f.stamina - m.cost)
 	f.vx += f.toward() * m.lunge * 3.0
 	if m.clip != "":
-		f.s.visual.play_clip(m.clip, FULL, _dur(m) / f.rate + 0.25, m.speed * f.rate, 0.07, m.from)
+		f.s.visual.play_clip(m.clip, FULL, _dur(m) / f.rate + 0.25, m.speed * f.rate, m.get("blend", 0.07), m.from)
 		f.pose = ""
 
 
@@ -496,6 +643,12 @@ func _tick_fighter(f: Fighter, delta: float) -> void:
 	f.stamina = clampf(f.stamina + regen * delta, 0.0, f.max_stamina)
 	# Held by the jersey: balance drains (more against a strong grabber).
 	f.grabbing = maxf(0.0, f.grabbing - delta)
+	if o.grabbing <= 0.0:
+		f.escape = 0.0
+	f.jolt = move_toward(f.jolt, 0.0, delta * 5.0)
+	var bow_to: float = f.moves[f.act].get("bow", 0.0) if f.act in MOVES else 0.0
+	f.bow = move_toward(f.bow, bow_to, delta * 3.0)
+	f.s.visual.rig.bow = f.bow
 	if o.grabbing > 0.0:
 		f.balance -= PlayerStats.lerp_stat(o.s.stats.strength, 3.5, 7.0) * delta
 		f.lean_target = 0.0   # can't slip while held
@@ -507,20 +660,17 @@ func _tick_fighter(f: Fighter, delta: float) -> void:
 		_knockdown(o, f)
 		return
 	f.flash_t = maxf(0.0, f.flash_t - delta)
-	f.guard = move_toward(f.guard, 1.0 if f.blocking else 0.0, delta * 12.0)
-	if f.guard > 0.0:
-		f.reach[1] = maxf(f.reach[1], f.guard)
-		if f.grabbing <= 0.0:
-			f.reach[0] = maxf(f.reach[0], f.guard)
+	var still: bool = f.pose in GUARD_POSES or (f.pose == "idle" and STYLE_IDLE[f.style][2])
+	f.s.visual.hold_breath = 1.0 if still else 0.0
 	if f.act == "":
-		_set_pose(f, "idle")
+		_set_pose(f, ("block_low" if f.block_low else "block_high") if f.blocking else "idle")
 		return
 	f.act_t += delta
 	if f.act == "hit":
 		if f.act_t > f.stun:
 			f.act = ""
 		return
-	var m: Dictionary = MOVES[f.act]
+	var m: Dictionary = f.moves[f.act]
 	var contact := _windup(m) / f.rate
 	if not f.landed and f.connects == "" and f.act_t >= contact - 0.1:
 		f.connects = _will_connect(f, f.act)
@@ -545,30 +695,30 @@ func _tick_fighter(f: Fighter, delta: float) -> void:
 ## At contact: does the move land, hit the guard, or miss (out of range, slipped)?
 func _will_connect(f: Fighter, move: String) -> String:
 	var o := f.other
-	var m: Dictionary = MOVES[move]
+	var m: Dictionary = f.moves[move]
 	if separation() > m.range:
 		return "miss"
-	if move == "hay" and absf(o.lean) > 0.55:
+	if m.slip > 0.0 and absf(o.lean) > m.slip:
 		return "miss"
-	if move == "jab" and absf(o.lean) > 0.8:
-		return "miss"
-	if o.blocking and move != "grab":
+	if o.blocking and move != "grab" and o.block_low == (m.aim == "body"):
 		return "block"
 	return "hit"
 
 
 func _land(f: Fighter, move: String) -> void:
 	var o := f.other
-	var m: Dictionary = MOVES[move]
+	var m: Dictionary = f.moves[move]
 	if o.act == "down":
 		return
 	var at := _mid() + Vector3.UP * 1.5
 	var how := f.connects if f.connects != "" else _will_connect(f, move)
+	var key := "%s %s" % [move, how]
+	_log[key] = int(_log.get(key, 0)) + 1
 	if how == "miss":
 		if separation() > m.range:
 			_hud.flash_for(f, "OUT OF RANGE — STEP IN")
 		else:
-			f.balance -= 6.0 if move == "hay" else 2.0
+			f.balance -= 6.0 if m.get("heavy", false) else 2.0
 			_hud.flash("%s SLIPS IT!" % _name(o.s))
 		Sfx.play("swish" if Sfx.has("swish") else "pad", at, -12.0, 1.4)
 		return
@@ -578,6 +728,8 @@ func _land(f: Fighter, move: String) -> void:
 			return
 		f.grabbing = GRAB_TIME
 		o.grabbing = 0.0
+		o.escape = 0.0
+		f.escape = 0.0
 		o.balance -= m.bal
 		_hud.flash("%s GRABS THE JERSEY" % _name(f.s))
 		Sfx.play("pad", at, -6.0, 0.7)
@@ -589,12 +741,14 @@ func _land(f: Fighter, move: String) -> void:
 		power *= 0.7
 	var dmg: float = m.dmg * power
 	var bal: float = m.bal * power
-	if move == "jab" and absf(o.lean) > 0.4:
-		dmg *= 0.5
-	var heavy: bool = move in ["hay", "upper"]
+	if m.slip > 0.0 and absf(o.lean) > m.slip * 0.5:
+		dmg *= 0.5   # leaning away: it only glances
+	var heavy: bool = m.get("heavy", false)
+	var drain: float = m.get("drain", 0.0) * power
 	if how == "block":
 		dmg *= 0.25
 		bal *= 0.35
+		drain *= 0.25
 		o.stamina = maxf(0.0, o.stamina - (7.0 if heavy else 3.0))
 		o.vx -= o.toward() * (0.5 if heavy else 0.2)
 		Sfx.play("pad", at, -5.0, 1.2)
@@ -608,6 +762,8 @@ func _land(f: Fighter, move: String) -> void:
 		_shake = maxf(_shake, 0.09 if heavy else 0.035)
 		if heavy:
 			_hitstop(70)
+		if o.blocking:
+			_hud.flash_for(o, "WRONG GUARD — BLOCK LOW (L1)" if m.aim == "body" else "WRONG GUARD — BLOCK HIGH")
 		# Every clean blow interrupts; the one hit reels for a moment.
 		o.act = "hit"
 		o.act_t = 0.0
@@ -621,27 +777,53 @@ func _land(f: Fighter, move: String) -> void:
 			o.grabbing = 0.0   # rocked: lets go
 	o.health -= dmg
 	o.balance -= bal
+	o.stamina = maxf(0.0, o.stamina - drain)
 	f.damage_dealt += dmg
 	if o.health <= 0.0 or o.balance <= 0.0:
-		_knockdown(f, o)
+		_knockdown(f, o, move)
 
 
-func _knockdown(w: Fighter, l: Fighter) -> void:
+## `move`: the blow that did it ("" = their balance gave out, e.g. drained by a grip).
+func _knockdown(w: Fighter, l: Fighter, move := "") -> void:
 	if stage != Stage.FIGHT:
 		return
 	l.act = "down"
 	l.health = maxf(l.health, 0.0)
 	l.balance = maxf(l.balance, 0.0)
 	l.grabbing = 0.0
-	# The clip stands still for its first ~0.9 s; start at the turn so the fall follows the blow.
-	l.s.visual.play_clip("knocked_out", FULL, OVER_TIME + 1.0, 1.1, 0.05, KO_FROM)
+	var clip := _pick_finish(move)
+	var fin: Dictionary = FINISHES[clip]
+	ko_fall = (fin.down - fin.from) / fin.speed
+	_over_time = maxf(OVER_TIME, ko_fall + 1.3)
+	l.s.visual.play_clip(clip, FULL, _over_time + 1.0, fin.speed, 0.05, fin.from)
 	w.act = "down"   # done throwing
 	w.grabbing = 0.0
-	w.s.visual.play_clip("taunt" if _rng.randf() < 0.5 else "fist_pump", FULL, OVER_TIME, 1.0, 0.2)
+	w.s.visual.play_clip("taunt" if _rng.randf() < 0.5 else "fist_pump", FULL, _over_time, 1.0, 0.2)
 	_hitstop(140)
 	_shake = 0.14
 	_over(w.s, l.s, "%s DROPS %s!" % [_name(w.s), _name(l.s)])
 	knockout.emit(w.s, l.s)
+
+
+## A knockout finish for the blow that ended it (FINISH_BY). `-- kofinish=<clip>` forces one.
+func _pick_finish(move: String) -> String:
+	for arg in OS.get_cmdline_user_args():
+		if arg.begins_with("kofinish=") and FINISHES.has(arg.substr(9)):
+			return arg.substr(9)
+	var kind := ""
+	if move in MOVES:
+		var m: Dictionary = MOVES[move]
+		if m.aim == "body":
+			kind = "body"
+		else:
+			kind = "head_big" if m.get("heavy", false) else "head"
+	var pool: Array = FINISH_BY[kind]
+	var r := _rng.randf()
+	for p: Array in pool:
+		r -= p[1]
+		if r < 0.0:
+			return p[0]
+	return pool.back()[0]
 
 
 func _decision() -> void:
@@ -671,6 +853,9 @@ func _over(w: Skater, l: Skater, text: String) -> void:
 		print("[fight] %.1f s  %s  | a hp %.0f/%.0f bal %.0f st %.0f dealt %.0f | b hp %.0f/%.0f bal %.0f st %.0f dealt %.0f" % [
 			TIME_LIMIT - _time_left, text, a.health, a.max_health, a.balance, a.stamina, a.damage_dealt,
 			b.health, b.max_health, b.balance, b.stamina, b.damage_dealt])
+		var keys := _log.keys()
+		keys.sort()
+		print("[fight] ", ", ".join(keys.map(func(k: String) -> String: return "%s %d" % [k, _log[k]])))
 	stage = Stage.OVER
 	_t = 0.0
 	_hud.banner(text)
@@ -682,12 +867,17 @@ func _over(w: Skater, l: Skater, text: String) -> void:
 		Sfx.crowd_react("big_boo" if Sfx.has("big_boo") else "boo", -3.0, 3)
 
 
-## Loops the idle bounce (the guard goes up on top of it, by reach).
+## The looping pose between moves: the style's idle, or a guard (one frame held, breathing).
 func _set_pose(f: Fighter, pose: String) -> void:
 	if f.pose == pose:
 		return
 	f.pose = pose
-	f.s.visual.play_clip(IDLE_CLIP, FULL, -1.0, 1.15, 0.14)
+	if GUARD_POSES.has(pose):
+		var g: Array = GUARD_POSES[pose]
+		f.s.visual.play_clip(g[0], FULL, -1.0, 0.0, 0.1, g[1])
+	else:
+		var idle: Array = STYLE_IDLE[f.style]
+		f.s.visual.play_clip(idle[0], FULL, -1.0, idle[1], 0.14)
 
 
 func _hitstop(ms: int) -> void:
@@ -751,7 +941,7 @@ func _move(delta: float) -> void:
 		f.s.heading = axis * f.toward()
 		f.s.velocity = Vector3.ZERO
 		# Slipping tilts the whole body.
-		f.s.visual.roll_offset = -f.lean * 0.3
+		f.s.visual.roll_offset = -f.lean * 0.3 + sin(_t * 47.0 + f.side) * 0.07 * f.jolt
 	for f: Fighter in [a, b]:
 		_aim_hands(f)
 
@@ -770,23 +960,19 @@ func _aim_hands(f: Fighter) -> void:
 		var aim := "collar" if (k == 0 and f.grabbing > 0.0) else ""
 		if aim == "" and f.act in MOVES and f.connects in ["hit", "block"]:
 			aim = MOVES[f.act].aim
-		if aim == "" and f.guard > 0.0:
-			aim = "guard"
 		var target: Vector3
 		match aim:
 			"collar":
 				target = o.s.visual.bone_world("Spine2").lerp(o.s.visual.bone_world("Neck"), 0.55) + dir * 0.12
+				# Yanked about while they struggle.
+				target += Vector3(sin(_t * 41.0), cos(_t * 37.0) * 0.6, 0.0) * 0.05 * maxf(f.jolt, o.jolt)
 			"body":
 				target = o.s.visual.bone_world("Spine1") + dir * 0.14
-			"guard":
-				# Fists up in front of their own face, a little apart.
-				var side := dir.cross(Vector3.UP).normalized() * (0.09 if k == 0 else -0.09)
-				target = f.s.visual.bone_world("Head") - dir * 0.24 + side + Vector3.DOWN * 0.06
 			"chin":
 				target = o.s.visual.bone_world("Head") + dir * 0.07 + Vector3.DOWN * 0.08
 			_:
 				target = o.s.visual.bone_world("Head") + dir * 0.1 + Vector3.DOWN * 0.02
-		if f.connects == "block" and not aim in ["collar", "guard"]:
+		if f.connects == "block" and aim != "collar":
 			target += dir * 0.12   # stopped by the forearms
 		rig.reach_world[k] = target
 
@@ -835,6 +1021,8 @@ func _cleanup() -> void:
 			f.s.visual.stop_clip(0.2)
 			f.s.visual.set_fight_mode(false)
 			f.s.visual.roll_offset = 0.0
+			f.s.visual.hold_breath = 0.0
+			f.s.visual.rig.bow = 0.0
 			f.s.frozen = false
 	for s in _ring:
 		if is_instance_valid(s):
