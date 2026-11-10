@@ -17,6 +17,10 @@ var _cam_dir := Vector3.BACK
 
 
 func _ready() -> void:
+	# The menu above is not physics-interpolated; the players skating here (120 Hz physics)
+	# must be, or they step unevenly against the frame rate. The camera, placed every
+	# frame, must not be.
+	physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_ON
 	var arena := MenuArena.build(self, SPOT)
 	if team < 0:
 		var with_logo := MenuArena.teams_with_logos()
@@ -37,6 +41,7 @@ func _ready() -> void:
 
 	cam = Camera3D.new()
 	cam.fov = 38.0
+	cam.physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_OFF
 	cam.attributes = MenuArena.camera_attributes()
 	add_child(cam)
 	_place_camera(true)

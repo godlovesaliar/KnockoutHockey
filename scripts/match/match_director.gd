@@ -125,6 +125,7 @@ func _ready() -> void:
 	else:
 		_rng.randomize()
 	sun.rotation = Vector3(deg_to_rad(-62.0), deg_to_rad(25.0), 0.0)
+	GameSettings.sun_shadow_mode(sun)
 	rules = MatchRules.new(self)
 	rules.offsides = offsides
 	rules.icing = icing
@@ -843,6 +844,7 @@ func _start_intro() -> void:
 	_intro_stage.add_child(vs)
 	var c := Camera3D.new()
 	c.fov = 52.0
+	c.physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_OFF
 	_intro_stage.add_child(c)
 	c.look_at_from_position(Vector3(0, 1.75, 6.4), Vector3(0, 1.55, -0.6))
 	c.make_current()
@@ -902,6 +904,7 @@ func _open_intermission(final: bool) -> void:
 func _debug_look(from: Vector3, at: Vector3) -> void:
 	var c := Camera3D.new()
 	c.fov = 50.0
+	c.physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_OFF
 	add_child(c)
 	c.look_at_from_position(from, at)
 	c.current = true

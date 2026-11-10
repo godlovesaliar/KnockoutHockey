@@ -202,7 +202,7 @@ func react_to_clip(clip: String, seconds: float) -> void:
 
 
 func _process(delta: float) -> void:
-	if not is_visible_in_tree():
+	if not is_visible_in_tree() or _v.bench_frozen:
 		return
 	var cam := get_viewport().get_camera_3d()
 	if cam != null and cam.global_position.distance_squared_to(global_position) > FAR * FAR:

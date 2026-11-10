@@ -136,10 +136,15 @@ func _process(delta: float) -> void:
 
 func _build_stage() -> void:
 	_stage = Node3D.new()
+	# The menu above is not physics-interpolated; the players skating here (120 Hz physics)
+	# must be, or they step unevenly against the frame rate. The camera, placed every
+	# frame, must not be.
+	_stage.physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_ON
 	add_child(_stage)
 	_arena = MenuArena.build(_stage, Vector3.ZERO)
 	var c := Camera3D.new()
 	c.fov = 50.0
+	c.physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_OFF
 	c.attributes = MenuArena.camera_attributes()
 	_stage.add_child(c)
 	c.look_at_from_position(Vector3(0, 1.25, 3.9), Vector3(0, 1.4, -0.6))

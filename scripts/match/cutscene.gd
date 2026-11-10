@@ -27,6 +27,7 @@ var _done := false
 func play() -> void:
 	_cam = Camera3D.new()
 	_cam.fov = 46.0
+	_cam.physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_OFF   # placed every frame
 	add_child(_cam)
 	_prev = get_viewport().get_camera_3d()
 	_cam.current = true

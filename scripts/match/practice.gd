@@ -57,6 +57,7 @@ func human_team() -> int:
 
 func _ready() -> void:
 	sun.rotation = Vector3(deg_to_rad(-62.0), deg_to_rad(25.0), 0.0)
+	GameSettings.sun_shadow_mode(sun)
 	_build_hud()
 	apply_camera(str(GameSettings.config.get("camera", "broadcast")), false)
 

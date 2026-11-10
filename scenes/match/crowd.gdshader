@@ -23,15 +23,17 @@ const vec3 HAIR[6] = vec3[6](vec3(0.04, 0.03, 0.025), vec3(0.12, 0.07, 0.04), ve
 		vec3(0.68, 0.54, 0.3), vec3(0.55, 0.53, 0.5), vec3(0.45, 0.17, 0.07));
 
 varying vec3 rest;        // the vertex before animation (model space)
-varying vec3 col_a;
-varying vec3 col_b;
-varying vec3 skin;
-varying vec3 pants;
-varying vec3 hair;
-varying vec3 hat_col;
-varying vec4 look;        // outfit, hat, cheer (mouth open), seed
-varying vec4 traits;      // hair style, beard, glasses, short sleeves / print (0..1 each)
-varying float crest;      // jersey logo: 0 none, 1 home, 2 away
+// The rest are the same on every vertex of a fan: `flat` skips interpolating them per
+// pixel (same result, less work for the GPU).
+varying flat vec3 col_a;
+varying flat vec3 col_b;
+varying flat vec3 skin;
+varying flat vec3 pants;
+varying flat vec3 hair;
+varying flat vec3 hat_col;
+varying flat vec4 look;   // outfit, hat, cheer (mouth open), seed
+varying flat vec4 traits; // hair style, beard, glasses, short sleeves / print (0..1 each)
+varying flat float crest; // jersey logo: 0 none, 1 home, 2 away
 
 vec3 lin(vec3 c) {
 	return pow(max(c, vec3(0.0)), vec3(2.2));

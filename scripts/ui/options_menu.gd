@@ -31,6 +31,8 @@ const AUDIO := [
 ]
 
 const VIDEO := [
+	{"key": "graphics", "label": "GRAPHICS", "values": ["quality", "performance"], "names": ["Quality", "Performance"],
+		"hint": "Performance: lower 3D resolution (upscaled), no anti-aliasing, simpler crowd, shadows and haze. For slower PCs."},
 	{"key": "window", "label": "DISPLAY", "values": ["windowed", "borderless", "fullscreen"],
 		"names": ["Window", "Borderless", "Fullscreen"],
 		"hint": "Borderless fills the screen as a window (quick to alt-tab); Fullscreen takes over the display."},
@@ -162,7 +164,7 @@ func _show_tab(k: int, quiet := false) -> void:
 			_target = GameSettings.options
 		"video":
 			_rows = VIDEO.duplicate()
-			_rows.append({"key": "", "label": "RESET VIDEO", "hint": "Back to a window with VSync and 2x anti-aliasing."})
+			_rows.append({"key": "", "label": "RESET VIDEO", "hint": "Back to Quality graphics in a window with VSync and 2x anti-aliasing."})
 			_target = GameSettings.options
 		_:
 			_rows = []
@@ -211,6 +213,8 @@ func _refresh() -> void:
 					or (st.key == "shootout_rounds" and ot in ["off", "sudden_death"])
 		elif st.key == "max_fps":
 			dim = bool(_target.get("vsync", true))
+		elif st.key == "msaa":
+			dim = str(_target.get("graphics", "quality")) == "performance"   # performance turns it off
 		_items[i].modulate.a = 0.45 if dim else 1.0
 
 

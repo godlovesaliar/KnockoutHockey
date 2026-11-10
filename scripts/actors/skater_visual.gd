@@ -13,6 +13,7 @@ const SKIN_SHADER := preload("res://scenes/actors/skin.gdshader")
 const GLOVE_SHADER := preload("res://scenes/actors/glove.gdshader")
 const RING_SHADER := preload("res://scenes/actors/player_ring.gdshader")
 const STICK_SHADER := preload("res://scenes/actors/stick.gdshader")
+const MeshLod := preload("res://scripts/core/mesh_lod.gd")
 ## Stick finishes (Skater.stick_style): "X on Y" is X graphics on a Y stick; home / away
 ## are the club's home and road jersey colors (Skater.club_colors).
 const STICK_STYLES := ["wood", "black", "black_white", "white_black", "home_away", "away_home"]
@@ -163,6 +164,10 @@ var _fists: Array[Node3D] = []    ## bare fist meshes (shown in a fight)
 var display_pose := ""
 var bench_loop := ""        ## parked on the bench / in the box: the idle clip looping ("" = playing)
 var bench_seated := false
+## On the bench or in the box and off screen: the idle loop, the rig and the face hold
+## still (nobody can see them) so the skeleton isn't re-posed and re-skinned every frame.
+var bench_frozen := false
+var _onscreen: VisibleOnScreenNotifier3D
 var display_lift := 0.0   ## menus: m the player stands above the ice
 const DISPLAY_POSES := ["side", "middle", "rest", "lean", "across", "shoulders"]
 const FEMALE_POSES := ["hips", "hips_b"]
@@ -210,6 +215,11 @@ func build(sk: Skater) -> void:
 	_build_gear()
 	_build_stick()
 	_build_markers()
+	# Simpler copies of every piece for when the player is small on screen (MeshLod).
+	MeshLod.apply(self)
+	_onscreen = VisibleOnScreenNotifier3D.new()
+	_onscreen.aabb = AABB(Vector3(-0.9, -0.2, -0.9), Vector3(1.8, 2.6, 1.8))
+	add_child(_onscreen)
 	snap()
 
 
@@ -1225,6 +1235,7 @@ func bench_pose(seated: bool) -> void:
 	_play_bench_loop()
 	shaft.visible = false
 	blade.visible = false
+	_cast_shadows(false)
 
 
 func _play_bench_loop() -> void:
@@ -1232,15 +1243,41 @@ func _play_bench_loop() -> void:
 	play_clip(bench_loop, Vector3.ONE, -1.0, randf_range(0.85, 1.1), 0.35, randf() * len)
 
 
+func _set_bench_frozen(on: bool) -> void:
+	if on == bench_frozen:
+		return
+	bench_frozen = on
+	if anim:
+		anim.active = not on
+	if rig:
+		rig.active = not on
+
+
+## Off the ice, players cast no sun shadow: it falls on the bench and box floors where
+## it barely shows, and drawing 15-odd players into every shadow map cost more than the
+## players in the game. Each piece's own setting comes back with `on`.
+func _cast_shadows(on: bool) -> void:
+	for g: GeometryInstance3D in find_children("*", "GeometryInstance3D", true, false):
+		if on:
+			if g.has_meta("bench_shadow"):
+				g.cast_shadow = g.get_meta("bench_shadow")
+				g.remove_meta("bench_shadow")
+		elif g.cast_shadow != GeometryInstance3D.SHADOW_CASTING_SETTING_OFF:
+			g.set_meta("bench_shadow", g.cast_shadow)
+			g.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+
+
 ## Back to playing (walking out through a door, or onto the ice).
 func bench_off() -> void:
 	if bench_loop == "":
 		return
 	bench_loop = ""
+	_set_bench_frozen(false)
 	rig.clip_only = false
 	stop_clip(0.25)
 	shaft.visible = true
 	blade.visible = true
+	_cast_shadows(true)
 
 
 ## A reaction from the bench or box: "cheer", "groan", "sulk" (just sent to the box) or
@@ -1348,6 +1385,9 @@ func _process(delta: float) -> void:
 	if skater == null:
 		return
 	global_position = skater.get_global_transform_interpolated().origin + Vector3.UP * display_lift
+	_set_bench_frozen(bench_loop != "" and _onscreen != null and not _onscreen.is_on_screen())
+	if bench_frozen:
+		return
 	if bench_loop != "" and _clip_left <= 0.0:
 		_play_bench_loop()   # a reaction finished: back to the idle
 	_state_clips()

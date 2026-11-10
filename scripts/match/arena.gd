@@ -48,7 +48,20 @@ const RAFTERS_LAYER := 1 << 10
 
 const SEAT_W := 0.52        ## meters per seat along a row
 const AISLE_W := 1.1
-const SECTORS := 8
+const SECTORS := 8          ## groups the crowd's random looks are dealt in (keep: changing it reshuffles the crowd)
+## The seats and fans are drawn in chunks: CHUNK_SECTORS around the bowl by bands of
+## CHUNK_ROWS rows, so off-screen chunks are culled and far ones switch to simpler fans.
+const CHUNK_SECTORS := 16
+const CHUNK_ROWS := 6
+## Lower-bowl and suite fans whose chunk is further than this from the camera use the
+## 6-sided fan (as the upper bowl always does): a fan there is only ~20 px across at 1080p.
+const FAN_LOD_DIST := 30.0
+const FAN_LOD_MARGIN := 2.0 ## hysteresis, so a chunk on the line doesn't flicker
+
+## Set while building an arena for the menus (MenuArena): everything there is far off,
+## blurred and hazy, so every fan uses the simplest mesh. Performance graphics
+## (GameSettings.performance) does the same everywhere.
+static var low_detail := false
 const RIBBON_PX := 96       ## ribbon atlas height in pixels
 const RIBBON_SPEED := 1.6   ## m/s
 
@@ -78,8 +91,14 @@ var flash_until := 0.0
 
 var _crowd_mat: ShaderMaterial
 var _seat_mats: Array[StandardMaterial3D] = []    ## lower bowl, upper bowl
-var _fans: Array[MultiMesh] = []
-var _fan_kind: Array[PackedFloat32Array] = []     ## per fan multimesh: a random 0..1 per fan (which team they back)
+var _fans: Array[MultiMesh] = []                  ## per chunk (the detailed or only mesh)
+var _fan_twins: Array = []                        ## per chunk: its far-LOD MultiMesh, or null
+## Per look group (sector and bowl, see _build_seating): a random 0..1 per fan (which team
+## they back), and where its fans start in _fan_slot.
+var _fan_kind: Array[PackedFloat32Array] = []
+var _fan_start := PackedInt32Array()
+## Where each fan is drawn, in look-group order: pairs of (chunk index, instance index).
+var _fan_slot := PackedInt32Array()
 var _ribbons := []                  ## [material, band height in meters]: everything showing the ribbon art
 var _ribbon_px := Vector2i(1, 1)    ## the ribbon atlas's size
 var _excite := CALM
@@ -93,13 +112,19 @@ func _ready() -> void:
 	_crowd_mat = ShaderMaterial.new()
 	_crowd_mat.shader = CROWD_SHADER
 	for c in 2:
+		# Plain albedo, no per-seat instance colors: a standard material reading instance
+		# colors on a mesh without vertex colors rendered the seats full of holes on some
+		# GPUs (seen on AMD integrated graphics).
 		var m := StandardMaterial3D.new()
-		m.vertex_color_use_as_albedo = true
-		m.vertex_color_is_srgb = true
 		m.roughness = 0.6
 		_seat_mats.append(m)
 	_build_bowl()
+	var gs := get_node_or_null("/root/GameSettings")
+	var was := low_detail
+	if gs and gs.has_method("performance") and gs.performance():
+		low_detail = true
 	_build_seating()
+	low_detail = was
 	_build_ribbon()
 	_build_roof()
 	_build_lights()
@@ -473,83 +498,156 @@ static func _sector(p: Vector2) -> int:
 	return int(fposmod(a, TAU) / TAU * SECTORS) % SECTORS
 
 
-## Every seat: [bowl (0 lower, 1 upper, 2 suites), transform, sector]; then built into
-## per-sector MultiMeshes of seats and of the fans sitting in most of them.
+## Every seat: [bowl (0 lower, 1 upper, 2 suites), transform, look group, chunk]; then
+## built into per-chunk MultiMeshes of seats and of the fans sitting in most of them.
+## Each fan's looks are dealt per look group (SECTORS around the bowl, by bowl) in a fixed
+## order, so how the crowd is chunked for drawing never changes who sits where or what
+## they wear.
 func _build_seating() -> void:
 	var seats := []
 	var low_aisles := _aisles(6)
 	var up_aisles := _aisles(3)
 	for i in LOW_ROWS:
 		for s in _row_spots(low_o(i) + LOW_DEPTH - 0.44, SEAT_W, low_aisles):
-			seats.append([0, _seat_xf(s, low_y(i)), _sector(s[0])])
+			seats.append([0, _seat_xf(s, low_y(i)), _sector(s[0]), _chunk(0, s[0], i / CHUNK_ROWS)])
 	for i in UP_ROWS:
+		# The front row is its own band: nothing in front hides its shins.
+		var band := 0 if i == 0 else 1 + (i - 1) / CHUNK_ROWS
 		for s in _row_spots(up_o(i) + UP_DEPTH - 0.44, SEAT_W, up_aisles):
-			seats.append([1, _seat_xf(s, up_y(i)), _sector(s[0])])
+			seats.append([1, _seat_xf(s, up_y(i)), _sector(s[0]), _chunk(1, s[0], band)])
 	for r in 2:
 		for s in _row_spots(balcony_o() + 0.95 + r * 1.0, 0.75, low_aisles):
-			seats.append([2, _seat_xf(s, suite_y() + r * 0.25), _sector(s[0])])
+			seats.append([2, _seat_xf(s, suite_y() + r * 0.25), _sector(s[0]), _chunk(2, s[0], 0)])
 
-	var seat_mesh := _seat_mesh()
-	var fan_meshes := [_fan_mesh(8), _fan_mesh(6), _fan_mesh(8)]   # the upper bowl is far off
 	var occupancy := [0.9, 0.82, 0.55]
-	var buckets := {}
+	var groups := {}
 	for s: Array in seats:
 		var key: int = s[2] * 3 + s[0]
-		if not buckets.has(key):
-			buckets[key] = []
-		buckets[key].append(s)
+		if not groups.has(key):
+			groups[key] = []
+		groups[key].append(s)
+	# Deal the looks: per group, first who's in their seat (and their size), then each
+	# fan's seed, keenness and team. Same draws in the same order as ever.
+	var chunks := {}     # chunk -> {bowl, seats: [xf], fans: [[xf, custom data, group, k]]}
 	for sector in SECTORS:
 		for bowl in 3:
-			var xfs: Array[Transform3D] = []
-			var fan_xfs: Array[Transform3D] = []
-			for s: Array in buckets.get(sector * 3 + bowl, []):
-				xfs.append(s[1])
+			var group: Array = groups.get(sector * 3 + bowl, [])
+			var in_seat := []
+			for s: Array in group:
+				var c: int = s[3]
+				if not chunks.has(c):
+					chunks[c] = {"bowl": bowl, "seats": [], "fans": []}
+				chunks[c].seats.append(s[1])
 				if _rng.randf() < occupancy[bowl]:
 					var sc := _rng.randf_range(0.92, 1.08)
 					var xf: Transform3D = s[1]
-					fan_xfs.append(Transform3D(xf.basis.scaled_local(Vector3(sc, sc, sc)), xf.origin))
-			if xfs.is_empty():
+					in_seat.append([Transform3D(xf.basis.scaled_local(Vector3(sc, sc, sc)), xf.origin), c])
+			if in_seat.is_empty():
 				continue
-			var mm := MultiMesh.new()
-			mm.transform_format = MultiMesh.TRANSFORM_3D
-			mm.use_colors = true
-			mm.mesh = seat_mesh
-			mm.instance_count = xfs.size()
-			for k in xfs.size():
-				mm.set_instance_transform(k, xfs[k])
-				mm.set_instance_color(k, Color.WHITE)
-			var mmi := MultiMeshInstance3D.new()
-			mmi.name = "Seats_%d_%d" % [bowl, sector]
-			mmi.multimesh = mm
-			mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-			mmi.material_override = _seat_mats[mini(bowl, 1)] if bowl < 2 else MeshUtil.material(Color(0.12, 0.1, 0.09), 0.4)
-			mmi.set_meta("bowl", bowl)
-			add_child(mmi)
-			if fan_xfs.is_empty():
-				continue
-			var fm := MultiMesh.new()
-			fm.transform_format = MultiMesh.TRANSFORM_3D
-			fm.use_colors = true
-			fm.use_custom_data = true
-			fm.mesh = fan_meshes[bowl]
-			fm.instance_count = fan_xfs.size()
+			var g := _fan_kind.size()
 			var kinds := PackedFloat32Array()
-			for k in fan_xfs.size():
-				fm.set_instance_transform(k, fan_xfs[k])
+			for k in in_seat.size():
 				# seed (phase, looks), stand threshold (suites are hard to get up); the
 				# outfit goes in z and w when the teams are known (_recolor).
 				var keen := _rng.randf() * (0.9 if bowl < 2 else 1.6) + 0.05
-				fm.set_instance_custom_data(k, Color(_rng.randf(), keen, 0.0, 0.0))
+				var cd := Color(_rng.randf(), keen, 0.0, 0.0)
 				kinds.append(_rng.randf())
-			var fmi := MultiMeshInstance3D.new()
-			fmi.name = "Fans_%d_%d" % [bowl, sector]
-			fmi.multimesh = fm
-			fmi.material_override = _crowd_mat
-			fmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-			fmi.extra_cull_margin = 1.0
-			add_child(fmi)
-			_fans.append(fm)
+				chunks[in_seat[k][1]].fans.append([in_seat[k][0], cd, g, k])
 			_fan_kind.append(kinds)
+			_fan_start.append(_fan_slot.size() / 2)
+			_fan_slot.resize(_fan_slot.size() + in_seat.size() * 2)
+
+	var seat_mesh := _seat_mesh()
+	var suite_mat := MeshUtil.material(Color(0.12, 0.1, 0.09), 0.4)
+	# Fan meshes: the full one up close, the 6-sided one far off. Upper-bowl fans behind
+	# the front row leave out their shins and shoes (behind the seat back in front).
+	var full := _fan_mesh(8)
+	var far := _fan_mesh(6)
+	var far_no_shins := _fan_mesh(6, false)
+	var keys := chunks.keys()
+	keys.sort()
+	for c: int in keys:
+		var ch: Dictionary = chunks[c]
+		var bowl: int = ch.bowl
+		var tag := "%d_%d" % [bowl, c]
+		var mm := MultiMesh.new()
+		mm.transform_format = MultiMesh.TRANSFORM_3D
+		mm.mesh = seat_mesh
+		mm.instance_count = ch.seats.size()
+		for k in ch.seats.size():
+			mm.set_instance_transform(k, ch.seats[k])
+		var mmi := MultiMeshInstance3D.new()
+		mmi.name = "Seats_" + tag
+		mmi.multimesh = mm
+		mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		mmi.material_override = _seat_mats[bowl] if bowl < 2 else suite_mat
+		mmi.set_meta("bowl", bowl)
+		add_child(mmi)
+		var fans: Array = ch.fans
+		if fans.is_empty():
+			continue
+		var near: Mesh = far
+		var twin: Mesh = null
+		if bowl == 1:
+			near = far if _chunk_band(c) == 0 else far_no_shins
+		elif not low_detail:
+			near = full
+			twin = far
+		var idx := _fans.size()
+		var fm := _fan_multimesh(near, fans)
+		for k in fans.size():
+			var f: Array = fans[k]
+			var at: int = (_fan_start[f[2]] + f[3]) * 2
+			_fan_slot[at] = idx
+			_fan_slot[at + 1] = k
+		var fmi := _fan_instance(fm, "Fans_" + tag)
+		_fans.append(fm)
+		_fan_twins.append(null)
+		if twin:
+			# Swap to the simpler fan once the chunk is far off (_recolor dresses the
+			# twin's fans the same).
+			fmi.visibility_range_end = FAN_LOD_DIST
+			fmi.visibility_range_end_margin = FAN_LOD_MARGIN
+			var tm := _fan_multimesh(twin, fans)
+			var tmi := _fan_instance(tm, "FansFar_" + tag)
+			tmi.visibility_range_begin = FAN_LOD_DIST
+			tmi.visibility_range_begin_margin = FAN_LOD_MARGIN
+			_fan_twins[idx] = tm
+
+
+func _fan_multimesh(mesh: Mesh, fans: Array) -> MultiMesh:
+	var fm := MultiMesh.new()
+	fm.transform_format = MultiMesh.TRANSFORM_3D
+	fm.use_colors = true
+	fm.use_custom_data = true
+	fm.mesh = mesh
+	fm.instance_count = fans.size()
+	for k in fans.size():
+		fm.set_instance_transform(k, fans[k][0])
+		fm.set_instance_custom_data(k, fans[k][1])
+	return fm
+
+
+func _fan_instance(fm: MultiMesh, node_name: String) -> MultiMeshInstance3D:
+	var fmi := MultiMeshInstance3D.new()
+	fmi.name = node_name
+	fmi.multimesh = fm
+	fmi.material_override = _crowd_mat
+	fmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	fmi.extra_cull_margin = 1.0
+	add_child(fmi)
+	return fmi
+
+
+## The drawing chunk of a seat at `p` in `bowl`, `band` rows back.
+static func _chunk(bowl: int, p: Vector2, band: int) -> int:
+	var a := atan2(p.y / RinkSpec.HALF_L, p.x / RinkSpec.HALF_W)
+	var sector := int(fposmod(a, TAU) / TAU * CHUNK_SECTORS) % CHUNK_SECTORS
+	return (bowl * 8 + band) * CHUNK_SECTORS + sector
+
+
+static func _chunk_band(c: int) -> int:
+	return (c / CHUNK_SECTORS) % 8
 
 
 static func _seat_xf(spot: Array, y: float) -> Transform3D:
@@ -572,8 +670,9 @@ static func _seat_mesh() -> ArrayMesh:
 
 ## A seated fan in the seat's frame (facing +Z): rounded tubes with smooth normals, the
 ## body part in UV.x and the position along it in UV.y (see crowd.gdshader). `sides` is
-## the torso and head detail (limbs get two fewer).
-static func _fan_mesh(sides: int) -> ArrayMesh:
+## the torso and head detail (limbs get two fewer). Without `shins` the legs stop at the
+## knee (capped) and there are no shoes: for rows where the seat back in front hides them.
+static func _fan_mesh(sides: int, shins := true) -> ArrayMesh:
 	var st := _st()
 	var limb := maxi(sides - 2, 4)
 	# Torso up into the neck. Ring: [center, half width, half depth, along, part of the band below].
@@ -586,11 +685,14 @@ static func _fan_mesh(sides: int) -> ArrayMesh:
 		[Vector3(0.0, 1.14, -0.19), 0.048, 0.045, 1.0, 0.8]], sides)
 	for sx: float in [-1.0, 1.0]:
 		# Thigh, bent knee, shin, and a shoe.
-		_tube(st, [
-			[Vector3(sx * 0.088, 0.5, -0.26), 0.085, 0.08, 0.0, 0.0],
-			[Vector3(sx * 0.095, 0.5, 0.17), 0.07, 0.07, 0.5, 0.1],
-			[Vector3(sx * 0.1, 0.07, 0.21), 0.052, 0.052, 1.0, 0.1]], 4)   # mostly hidden by the row in front
-		if sides >= 8:
+		var hip := [Vector3(sx * 0.088, 0.5, -0.26), 0.085, 0.08, 0.0, 0.0]
+		var knee := [Vector3(sx * 0.095, 0.5, 0.17), 0.07, 0.07, 0.5, 0.1]
+		if not shins:
+			_tube(st, [hip, knee], 4, 0.05)
+		else:
+			_tube(st, [hip, knee,
+				[Vector3(sx * 0.1, 0.07, 0.21), 0.052, 0.052, 1.0, 0.1]], 4)   # mostly hidden by the row in front
+		if sides >= 8 and shins:
 			_box(st, Vector3(sx * 0.1 - 0.05, 0.0, 0.13), Vector3(sx * 0.1 + 0.05, 0.085, 0.31), 0.12, true)
 		# Arm: shoulder, elbow, wrist, then the hand (capped) resting on the knee.
 		_tube(st, [
@@ -733,11 +835,14 @@ func _recolor() -> void:
 	_crowd_mat.set_shader_parameter("home_logo", _crest(home_team))
 	_crowd_mat.set_shader_parameter("away_logo", _crest(away_team))
 	var pick := RandomNumberGenerator.new()
-	for f in _fans.size():
-		var mm := _fans[f]
+	for f in _fan_kind.size():
 		var kinds := _fan_kind[f]
 		pick.seed = 99 + f
-		for k in mm.instance_count:
+		for k in kinds.size():
+			var at := (_fan_start[f] + k) * 2
+			var mm := _fans[_fan_slot[at]]
+			var twin: MultiMesh = _fan_twins[_fan_slot[at]]   # the same fan, far off
+			var i := _fan_slot[at + 1]
 			var r := kinds[k]
 			var casual: Color = CASUAL[pick.randi() % CASUAL.size()]
 			var dark: Color = DARK_WEAR[pick.randi() % DARK_WEAR.size()]
@@ -751,11 +856,14 @@ func _recolor() -> void:
 				hat = 2                   # ball cap
 			if hat > 0:
 				hat_col = pick.randi() % 4      # outfit color, second color, black, white
-			var cd := mm.get_instance_custom_data(k)
+			var cd := mm.get_instance_custom_data(i)
 			cd.b = _pack_color(o[1])
 			cd.a = float(o[2] + 4 * hat + 16 * hat_col + 64 * o[3])
-			mm.set_instance_custom_data(k, cd)
-			mm.set_instance_color(k, o[0])
+			mm.set_instance_custom_data(i, cd)
+			mm.set_instance_color(i, o[0])
+			if twin:
+				twin.set_instance_custom_data(i, cd)
+				twin.set_instance_color(i, o[0])
 
 
 ## [color A, color B, outfit, crest] for a fan whose team pick is `r` (0..1). Outfits

@@ -64,6 +64,7 @@ func setup(d: MatchDirector) -> void:
 	_cam = Camera3D.new()
 	_cam.fov = 48.0
 	_cam.process_mode = Node.PROCESS_MODE_ALWAYS
+	_cam.physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_OFF   # placed every frame
 	add_child(_cam)
 	_layer = CanvasLayer.new()
 	_layer.layer = 15

@@ -58,6 +58,7 @@ static func default_options() -> Dictionary:
 		"vsync": true,
 		"msaa": 2,               ## 0, 2, 4 or 8 samples
 		"max_fps": 0,            ## 0 = no cap
+		"graphics": "quality",   ## "quality" or "performance" (see performance())
 	}
 
 
@@ -128,5 +129,28 @@ func apply_video() -> void:
 			win.borderless = false
 	DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_ENABLED if options.vsync else DisplayServer.VSYNC_DISABLED)
 	var msaa := {0: Viewport.MSAA_DISABLED, 2: Viewport.MSAA_2X, 4: Viewport.MSAA_4X, 8: Viewport.MSAA_8X}
-	get_viewport().msaa_3d = msaa.get(int(options.msaa), Viewport.MSAA_2X)
+	var vp := get_viewport()
+	var perf := performance()
+	# Performance: the 3D scene at 75% resolution, upscaled with FSR (the menus and HUD
+	# stay full resolution), no anti-aliasing, and smaller, hard-edged sun shadows.
+	vp.msaa_3d = Viewport.MSAA_DISABLED if perf else msaa.get(int(options.msaa), Viewport.MSAA_2X)
+	vp.scaling_3d_mode = Viewport.SCALING_3D_MODE_FSR if perf else Viewport.SCALING_3D_MODE_BILINEAR
+	vp.scaling_3d_scale = 0.75 if perf else 1.0
+	RenderingServer.directional_shadow_atlas_set_size(2048 if perf else 4096, true)
+	RenderingServer.directional_soft_shadow_filter_set_quality(
+			RenderingServer.SHADOW_QUALITY_HARD if perf else RenderingServer.SHADOW_QUALITY_SOFT_LOW)
 	Engine.max_fps = int(options.max_fps)
+
+
+## Performance graphics: cheaper rendering for slower PCs. Besides apply_video, the menus'
+## arena (MenuArena: no volumetric fog or depth of field), the crowd (Arena: the simple
+## fan everywhere) and the sun (sun_shadow_mode) read this when they're built.
+func performance() -> bool:
+	return str(options.get("graphics", "quality")) == "performance"
+
+
+## Sets a scene's sun up for the graphics option: two shadow cascades in Performance
+## (each cascade redraws every shadow caster), the engine's four otherwise.
+func sun_shadow_mode(sun: DirectionalLight3D) -> void:
+	if sun:
+		sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_2_SPLITS if performance() 				else DirectionalLight3D.SHADOW_PARALLEL_4_SPLITS

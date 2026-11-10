@@ -60,6 +60,9 @@ var _rink: Node
 
 
 func _ready() -> void:
+	# Placed every frame from interpolated targets: interpolating the camera too would
+	# draw it a physics tick behind and jerky against the players.
+	physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_OFF
 	if not target_path.is_empty():
 		target = get_node_or_null(target_path)
 	make_current()

@@ -27,7 +27,8 @@ static func build(root: Node3D, focus: Vector3) -> Dictionary:
 	e.fog_light_color = Color(0.72, 0.78, 0.88)
 	e.fog_density = 0.011
 	e.fog_sky_affect = 1.0
-	e.volumetric_fog_enabled = true
+	# Performance graphics: no volumetric haze (the costliest effect here); the plain fog stays.
+	e.volumetric_fog_enabled = not GameSettings.performance()
 	e.volumetric_fog_density = 0.006
 	e.volumetric_fog_albedo = Color(0.9, 0.93, 1.0)
 	e.adjustment_enabled = true
@@ -41,6 +42,7 @@ static func build(root: Node3D, focus: Vector3) -> Dictionary:
 	key.light_energy = 0.9
 	key.light_color = Color(0.95, 0.97, 1.0)
 	key.shadow_enabled = true
+	GameSettings.sun_shadow_mode(key)
 	root.add_child(key)
 	# Rows of arena lights over the ice: bright spots in the haze.
 	for row in 2:
@@ -68,7 +70,10 @@ static func build(root: Node3D, focus: Vector3) -> Dictionary:
 	root.add_child(fill)
 
 	var rink: Rink = (load("res://scenes/match/Rink.tscn") as PackedScene).instantiate()
+	# The stands are far off, hazy and blurred here: the simplest fans look the same.
+	Arena.low_detail = true
 	root.add_child(rink)
+	Arena.low_detail = false
 	var puck: Puck = (load("res://scenes/match/Puck.tscn") as PackedScene).instantiate()
 	root.add_child(puck)
 	puck.visible = false
@@ -76,8 +81,11 @@ static func build(root: Node3D, focus: Vector3) -> Dictionary:
 	return {"rink": rink, "puck": puck}
 
 
-## Camera settings for menu shots: the far arena melts into the haze.
+## Camera settings for menu shots: the far arena melts into the haze (null in Performance
+## graphics: no depth-of-field blur).
 static func camera_attributes() -> CameraAttributesPractical:
+	if GameSettings.performance():
+		return null
 	var attrs := CameraAttributesPractical.new()
 	attrs.dof_blur_far_enabled = true
 	attrs.dof_blur_far_distance = 9.0
