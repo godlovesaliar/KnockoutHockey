@@ -56,7 +56,7 @@ const CHUNK_ROWS := 6
 ## Lower-bowl and suite fans whose chunk is further than this from the camera use the
 ## 6-sided fan (as the upper bowl always does): a fan there is only ~20 px across at 1080p.
 const FAN_LOD_DIST := 30.0
-const FAN_LOD_MARGIN := 2.0 ## hysteresis, so a chunk on the line doesn't flicker
+## (No visibility-range margin: with one, Godot left some chunks drawing neither mesh.)
 
 ## Set while building an arena for the menus (MenuArena): everything there is far off,
 ## blurred and hazy, so every fan uses the simplest mesh. Performance graphics
@@ -607,11 +607,9 @@ func _build_seating() -> void:
 			# Swap to the simpler fan once the chunk is far off (_recolor dresses the
 			# twin's fans the same).
 			fmi.visibility_range_end = FAN_LOD_DIST
-			fmi.visibility_range_end_margin = FAN_LOD_MARGIN
 			var tm := _fan_multimesh(twin, fans)
 			var tmi := _fan_instance(tm, "FansFar_" + tag)
 			tmi.visibility_range_begin = FAN_LOD_DIST
-			tmi.visibility_range_begin_margin = FAN_LOD_MARGIN
 			_fan_twins[idx] = tm
 
 

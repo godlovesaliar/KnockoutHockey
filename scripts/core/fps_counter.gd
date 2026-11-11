@@ -1,6 +1,6 @@
 extends CanvasLayer
 ## A small frame-rate readout at the top center of the screen, over everything (menus,
-## matches, pause). F3 shows or hides it. Every half second it shows the average FPS, the
+## matches, pause). Hidden at start; F3 shows or hides it. Every half second it shows the average FPS, the
 ## average frame time, and the slowest frame in that window (as FPS), so stutters show up
 ## even when the average looks fine. With vsync on, FPS tops out at the display's refresh rate.
 
@@ -15,6 +15,7 @@ var _worst := 0.0
 
 func _ready() -> void:
 	layer = 100
+	visible = false   # hidden until F3
 	process_mode = Node.PROCESS_MODE_ALWAYS   # keeps counting while the game is paused
 	_panel = PanelContainer.new()
 	var box := StyleBoxFlat.new()
