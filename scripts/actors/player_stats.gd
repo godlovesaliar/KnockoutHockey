@@ -40,18 +40,26 @@ static func random_around(rng: RandomNumberGenerator, base := 50, spread := 12) 
 	return s
 
 
-## How this player fights (Fight.Style): 1 brawler if aggression is 85+ (the heavyweights);
-## else 2 grinder if strength beats agility and aggression beats fighting (more muscle and
-## temper than footwork and technique); else 0 boxer. Ratings move together (strength,
-## fighting and aggression all follow PHY in the rosters), so this compares them rather
-## than adding them up. On the rosters: enforcers brawl; grinders and stay-at-home /
-## shutdown D grind; everyone else boxes.
+## How this player fights (Fight.Style: 0 boxer, 1 brawler, 2 grinder). Most hockey
+## fighters are untrained swingers, so the brawler is the common style (about 60% on the
+## rosters); the grinder is for the heavy, slow ones and the boxer, the clean, trained
+## technique, is rare (about 20% each). The ratings tilt the odds and a pick seeded from
+## the ratings settles it, so a player always fights the same way:
+##   boxer    technique (fighting), more so with quick feet (agility over strength)
+##   brawler  temper (aggression)
+##   grinder  strength over agility
+## The sheet's ratings all follow PHY, so a strict rule either made nobody a boxer or made
+## every heavyweight one; odds keep a mix in every kind of player.
 func fighting_style() -> int:
-	if aggression >= 85:
-		return 1
-	if strength > agility and aggression > fighting:
-		return 2
-	return 0
+	var tech := clampf((fighting - 45) / 40.0, 0.0, 1.0)
+	var feet := clampf((agility - strength + 20) / 40.0, 0.0, 1.0)
+	var heavy := clampf((strength - agility) / 25.0, 0.0, 1.0)
+	var temper := clampf((aggression - 40) / 45.0, 0.0, 1.0)
+	var w := [0.45 + 1.2 * tech * feet + 0.6 * tech, 1.1 + 3.0 * temper, 0.3 + 3.0 * heavy]
+	var rng := RandomNumberGenerator.new()
+	rng.seed = hash([speed, acceleration, agility, endurance, shot_power, shot_accuracy, passing,
+			puck_handling, checking, strength, defense, fighting, durability, aggression])
+	return rng.rand_weighted(PackedFloat32Array(w))
 
 
 ## Maps a 1–99 rating linearly onto [lo, hi].

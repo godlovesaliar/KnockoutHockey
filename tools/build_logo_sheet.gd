@@ -4,7 +4,7 @@ extends SceneTree
 ## (Not headless: it renders through a SubViewport.)  -> res://docs/logo_sheet.png
 
 const OUT := "res://docs/logo_sheet.png"
-const COLS := 5
+const COLS := 7
 const CELL := Vector2(320, 360)     ## logo box + name below it
 const LOGO := 280
 const MARGIN := 40
@@ -18,7 +18,10 @@ func _init() -> void:
 	var font := SystemFont.new()   # (PLAYB___.TTF maps letters to pad-button glyphs)
 	font.font_names = PackedStringArray(["Arial", "Segoe UI", "sans-serif"])
 	font.font_weight = 700
-	var rows_per_conf := ceili(10.0 / COLS)
+	var most := 0
+	for conf: String in Teams.CONFERENCES:
+		most = maxi(most, Teams.in_conference(conf).size())
+	var rows_per_conf := ceili(float(most) / COLS)
 	var size := Vector2i(MARGIN * 2 + COLS * int(CELL.x),
 		TITLE + Teams.CONFERENCES.size() * (HEADER + rows_per_conf * int(CELL.y)) + MARGIN)
 
@@ -61,7 +64,7 @@ func _init() -> void:
 			tr.position = cell + Vector2((CELL.x - LOGO) / 2, 18)
 			tr.size = Vector2(LOGO, LOGO)
 			vp.add_child(tr)
-			var name := _label("%s %s" % [t.city, t.name], font, 22, Color.WHITE)
+			var name := _label(("%s %s" % [t.city, t.name]).strip_edges(), font, 22, Color.WHITE)
 			name.position = cell + Vector2(8, 18 + LOGO + 6)
 			name.size = Vector2(CELL.x - 16, 30)
 			vp.add_child(name)

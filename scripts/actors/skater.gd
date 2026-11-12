@@ -118,6 +118,8 @@ var last_name := ""
 var nickname := ""
 var playstyle := ""
 var body_type := "male"           ## body model: "male", "female" or "ybot" (see tools/build_characters.gd)
+var height_m := 0.0               ## the player's height and weight (BodyBuild); 0 = the body type's average
+var weight_kg := 0.0
 var uniform := {}                ## team palette (Teams.LIST colors); empty = derived from team_color
 var crest: Texture2D             ## team logo on the jersey front (null = none)
 var skin_tone := Color(0.91, 0.73, 0.60)   ## sRGB; see SkaterVisual.SKIN_TONES

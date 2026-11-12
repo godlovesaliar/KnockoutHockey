@@ -268,6 +268,10 @@ func _tab_rows(tab: String) -> Array:
 		"look":
 			rows = [
 				{"key": "gender", "label": "GENDER", "kind": "choice", "shot": "body", "hint": "The body model."},
+				{"key": "height_in", "label": "HEIGHT", "kind": "choice", "shot": "body",
+					"hint": "How tall: the whole body scales with it, and so does a fighter's reach."},
+				{"key": "weight_lbs", "label": "WEIGHT", "kind": "choice", "shot": "body",
+					"hint": "Against the height, sets the build: heavier fills out the trunk, arms and legs, lighter slims them."},
 				{"key": "skin", "label": "SKIN TONE", "kind": "choice", "shot": "face", "hint": "Light to dark."},
 				{"key": "eyes", "label": "EYE COLOR", "kind": "choice", "shot": "face", "hint": "Eye color."},
 				{"key": "hair_style", "label": "HAIR STYLE", "kind": "choice", "shot": "face",
@@ -320,6 +324,12 @@ func _choices(key: String) -> Array:
 			return [["points", "free"], ["Realistic with Points", "Free"]]
 		"gender":
 			return [["Male", "Female"], ["Male", "Female"]]
+		"height_in":
+			var hv := range(CustomPlayers.HEIGHTS[0], CustomPlayers.HEIGHTS[1] + 1)
+			return [hv, hv.map(func(x: int) -> String: return CustomPlayers.height_text(x))]
+		"weight_lbs":
+			var wv := range(CustomPlayers.WEIGHTS[0], CustomPlayers.WEIGHTS[1] + 1, 5)
+			return [wv, wv.map(func(x: int) -> String: return "%d lb" % x)]
 		"skin":
 			return [range(CustomPlayers.SKIN_NAMES.size()), CustomPlayers.SKIN_NAMES]
 		"eyes":
@@ -356,6 +366,10 @@ func _value_of(key: String) -> Variant:
 			return _team
 	if key in _p.ratings:
 		return _p.ratings[key]
+	if key == "height_in":
+		return CustomPlayers.height_in(_p)
+	if key == "weight_lbs":
+		return CustomPlayers.weight_lbs(_p)
 	return _p.get(key)
 
 
@@ -500,6 +514,10 @@ func _step(i: int, dir: int) -> void:
 		"skill_mode":
 			CustomPlayers.set_mode(_p, nv)
 		"gender":
+			# Still on the old gender's default size: move to the new one's.
+			if CustomPlayers.height_in(_p) == CustomPlayers.HEIGHT_DEFAULT.get(_p.gender, 0) 					and CustomPlayers.weight_lbs(_p) == CustomPlayers.WEIGHT_DEFAULT.get(_p.gender, 0):
+				_p.height_in = CustomPlayers.HEIGHT_DEFAULT[nv]
+				_p.weight_lbs = CustomPlayers.WEIGHT_DEFAULT[nv]
 			_p.gender = nv
 			if nv == "Female":
 				_p.facial_hair = ""

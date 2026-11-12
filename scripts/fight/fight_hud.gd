@@ -1,168 +1,89 @@
 class_name FightHud
 extends CanvasLayer
-## Fight overlay. Each fighter: name, three labeled bars (HEALTH, BALANCE, STAMINA, with
-## what drains each for the first seconds), a ghost chunk showing the damage just taken,
-## and a status tag (HOLDING / HELD / BLOCKING / WINDED / WOBBLY / ROCKED). Center: the
-## clock and how to win. Bottom: the controls on the human's own device. Also the "drop
-## the gloves?" prompt, banners and short call-outs.
+## Fight overlay, in the front-end menu style (MenuStyle) like the match's TV graphics,
+## drawn on the 1600 x 900 design canvas:
+##   - a slim header across the top: each fighter's dark strip (team-color stripe, crest,
+##     name and style) over one health bar and two hairlines, balance (yellow) and stamina
+##     (blue), mirrored either side of a small steel clock. They drain toward the
+##     outside; what was just lost lingers as a white chunk; the stamina line shows the
+##     tank worn away for the rest of the fight. The panel of the one hit jolts. Under
+##     each: a tab for what the human has to act on (HOLDING / HELD / ROCKED) and, for a
+##     human, short coaching call-outs.
+##   - banners (wipe in across the middle) and flashes (a small tab), like the match's.
+##   - bottom: the controls that matter right now, on the human's own buttons (the clinch
+##     set while holding, the struggle while held).
+##   - red screen edges when the human takes a clean one.
+## Also the "drop the gloves?" prompt. Timing runs on real time, so slow motion and
+## hitstop don't drag the graphics.
 
 const HEALTH := Color(0.92, 0.22, 0.2)
 const BALANCE := Color(0.98, 0.78, 0.2)
 const STAMINA := Color(0.3, 0.68, 1.0)
-const GHOST := Color(1.0, 1.0, 1.0, 0.85)
-const BAR_W := 280.0
-const LABEL_W := 80.0
-const CAPTION_TIME := 9.0     ## seconds the "what drains it" notes stay up
-const BARS := [
-	["health", "HEALTH", HEALTH, 18.0, "punches"],
-	["balance", "BALANCE", BALANCE, 13.0, "big shots, being held"],
-	["stamina", "STAMINA", STAMINA, 10.0, "every swing; back off to refill"],
+const SPENT := Color(0.45, 0.1, 0.12)
+const CLOCK_W := 88.0
+const CLOCK_H := 44.0
+const TOP := 20.0
+const PANEL_W := 380.0
+const PANEL_H := 56.0
+const SKEW := 14.0
+const GAP := 10.0             ## between a panel and the clock
+const BARS := [               ## key, name, color, height, y in the panel
+	["health", "HEALTH", HEALTH, 11.0, 32.0],
+	["balance", "BALANCE", BALANCE, 4.0, 45.0],
+	["stamina", "STAMINA", STAMINA, 4.0, 50.0],
 ]
+const WIPE := 0.22
 
 var fight: Fight
-var _panels: Array[Dictionary] = []   ## per fighter
-var _fight_root: Control
-var _clock: Label
-var _goal: Label
-var _hint: Label
+var _canvas: Control
+var _panels: Array[Dictionary] = []   ## per fighter: bar animation, call-out
 var _prompt: Control
 var _prompt_canvas: Control
 var _prompt_art: Control
 var _prompt_share := 1.0
 var _prompt_at := 0     ## ms when the prompt opened (its pop-in runs on real time)
-var _banner: Label
-var _banner_t := 0.0
-var _flash: Label
-var _flash_t := 0.0
+var _show_fight := false
+var _banner := {}       ## text, start, until (in _now seconds)
+var _flash := {}
+var _now := 0.0         ## real seconds the HUD has run
+var _last_tick := 0.0
 var _fight_t := 0.0
+var _hurt: TextureRect   ## red edges when the human takes a clean one
+var _hurt_t := 0.0
 
 
 func setup(f: Fight) -> void:
 	fight = f
 	layer = 5
-	_fight_root = Control.new()
-	_fight_root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	_fight_root.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_fight_root.visible = false
-	add_child(_fight_root)
+	_hurt = TextureRect.new()
+	var grad := Gradient.new()
+	grad.set_color(0, Color(0.7, 0.0, 0.0, 0.0))
+	grad.set_color(1, Color(0.7, 0.0, 0.0, 0.85))
+	grad.add_point(0.55, Color(0.7, 0.0, 0.0, 0.0))
+	var tex := GradientTexture2D.new()
+	tex.gradient = grad
+	tex.fill = GradientTexture2D.FILL_RADIAL
+	tex.fill_from = Vector2(0.5, 0.5)
+	tex.fill_to = Vector2(1.05, 1.05)
+	_hurt.texture = tex
+	_hurt.stretch_mode = TextureRect.STRETCH_SCALE
+	_hurt.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_hurt.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_hurt.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_hurt.modulate.a = 0.0
+	add_child(_hurt)
+	_canvas = Control.new()
+	_canvas.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(_canvas)
+	MenuStyle.fit(_canvas)
+	get_viewport().size_changed.connect(func() -> void: MenuStyle.fit(_canvas))
+	_canvas.draw.connect(_draw)
 	for k in 2:
-		var fighter: Fight.Fighter = f.a if k == 0 else f.b
-		_panels.append(_panel(fighter, k))
-	_clock = _label("", 40, Color.WHITE)
-	_clock.set_anchors_and_offsets_preset(Control.PRESET_CENTER_TOP)
-	_clock.offset_top = 16
-	_clock.offset_left = -70
-	_clock.offset_right = 70
-	_fight_root.add_child(_clock)
-	_goal = _label("DROP THEM: EMPTY THEIR HEALTH OR BALANCE\nTIME UP: MORE DAMAGE DEALT WINS", 14, Color(1.0, 0.9, 0.6))
-	_goal.set_anchors_and_offsets_preset(Control.PRESET_CENTER_TOP)
-	_goal.offset_top = 64
-	_goal.offset_left = -260
-	_goal.offset_right = 260
-	_fight_root.add_child(_goal)
-	_hint = _label(_controls_text(f.human_brain()), 19, Color(0.88, 0.92, 1.0))
-	_hint.set_anchors_and_offsets_preset(Control.PRESET_CENTER_BOTTOM)
-	_hint.offset_top = -70
-	_hint.offset_bottom = -14
-	_hint.offset_left = -700
-	_hint.offset_right = 700
-	_hint.visible = f.is_human_fight()
-	var hint_bg := ColorRect.new()
-	hint_bg.color = Color(0.02, 0.03, 0.06, 0.6)
-	hint_bg.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_WIDE)
-	hint_bg.offset_top = -78
-	hint_bg.visible = _hint.visible
-	hint_bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_fight_root.add_child(hint_bg)
-	_fight_root.add_child(_hint)
+		var p := {"call": "", "call_until": -1.0}
+		for spec: Array in BARS:
+			p[spec[0]] = {"shown": 1.0, "ghost_v": 1.0, "hold": 0.0}
+		_panels.append(p)
 	_build_prompt()
-	_banner = _label("", 52, Color(1.0, 0.85, 0.2))
-	_banner.set_anchors_and_offsets_preset(Control.PRESET_TOP_WIDE)
-	_banner.offset_top = 150
-	_banner.visible = false
-	add_child(_banner)
-	_flash = _label("", 30, Color.WHITE)
-	_flash.set_anchors_and_offsets_preset(Control.PRESET_TOP_WIDE)
-	_flash.offset_top = 215
-	_flash.visible = false
-	add_child(_flash)
-
-
-func _controls_text(h: HumanBrain) -> String:
-	if h == null:
-		return ""
-	var b := func(n: String) -> String: return "[%s]" % h.button_label(n)
-	var mv: Array = h.move_labels()
-	return ("%s Jab   %s Cross   %s Hook   hold %s: to the body   %s Grab   hold %s Block (+%s low)\n"
-			+ "Holding: %s Cross  %s Hook  %s Uppercut   Tied up: mash %s   %s: step in / back off   %s: slip") % [
-		b.call("pass"), b.call("shoot"), b.call("deke"), b.call("protect"), b.call("check"), b.call("block"), b.call("protect"),
-		b.call("pass"), b.call("shoot"), b.call("deke"), b.call("check"), mv[0], mv[1]]
-
-
-func _panel(fighter: Fight.Fighter, side: int) -> Dictionary:
-	var w := LABEL_W + BAR_W
-	var box := VBoxContainer.new()
-	box.add_theme_constant_override("separation", 5)
-	box.custom_minimum_size = Vector2(w, 0)
-	if side == 0:
-		box.position = Vector2(28, 18)
-	else:
-		box.set_anchors_preset(Control.PRESET_TOP_RIGHT)
-		box.position = Vector2(-w - 28, 18)
-	_fight_root.add_child(box)
-	var info := Teams.team(fight.director.team_ids[fighter.s.team])
-	var who: String = fighter.s.last_name.to_upper() if fighter.s.last_name != "" else str(info.name).to_upper()
-	var head := HBoxContainer.new()
-	head.alignment = BoxContainer.ALIGNMENT_BEGIN if side == 0 else BoxContainer.ALIGNMENT_END
-	head.add_theme_constant_override("separation", 14)
-	box.add_child(head)
-	var name := _label("#%d  %s" % [fighter.s.number, who], 26, (info.colors.jersey as Color).lerp(Color.WHITE, 0.35))
-	var status := _label("", 17, Color(1.0, 0.9, 0.5))
-	if side == 0:
-		head.add_child(name)
-		head.add_child(status)
-	else:
-		head.add_child(status)
-		head.add_child(name)
-	var out := {"status": status, "side": side, "box": box}
-	for spec: Array in BARS:
-		var key: String = spec[0]
-		var row := Control.new()
-		row.custom_minimum_size = Vector2(w, spec[3])
-		box.add_child(row)
-		var lab := _label(spec[1], 13 if key != "health" else 15, (spec[2] as Color).lerp(Color.WHITE, 0.3))
-		lab.size = Vector2(LABEL_W - 8, spec[3])
-		lab.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT if side == 0 else HORIZONTAL_ALIGNMENT_LEFT
-		lab.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-		lab.position = Vector2(0.0 if side == 0 else BAR_W + 8.0, 0.0)
-		row.add_child(lab)
-		var bg := ColorRect.new()
-		bg.color = Color(0, 0, 0, 0.6)
-		bg.size = Vector2(BAR_W, spec[3])
-		bg.position = Vector2(LABEL_W if side == 0 else 0.0, 0.0)
-		row.add_child(bg)
-		var ghost := ColorRect.new()
-		ghost.color = GHOST
-		ghost.size = bg.size
-		bg.add_child(ghost)
-		var bar := ColorRect.new()
-		bar.color = spec[2]
-		bar.size = bg.size
-		bg.add_child(bar)
-		var cap := _label(spec[4], 11, Color(1, 1, 1, 0.9))
-		cap.add_theme_constant_override("outline_size", 5)
-		cap.size = bg.size
-		cap.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-		cap.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT if side == 0 else HORIZONTAL_ALIGNMENT_RIGHT
-		cap.position = Vector2(6.0 if side == 0 else -6.0, 0.0)
-		bg.add_child(cap)
-		out[key] = {"bar": bar, "ghost": ghost, "cap": cap, "shown": 1.0, "ghost_v": 1.0, "hold": 0.0}
-	var call := _label("", 18, Color.WHITE)
-	call.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT if side == 0 else HORIZONTAL_ALIGNMENT_RIGHT
-	box.add_child(call)
-	out["call"] = call
-	out["call_t"] = 0.0
-	return out
 
 
 ## "Drop the gloves?" in the front-end style (MenuStyle): the game dimmed, a navy panel
@@ -226,6 +147,18 @@ func _draw_prompt() -> void:
 		var nm := MenuStyle.player_name(f.s)
 		var fs := 30 if MenuStyle.text_width(nm, 30) < chip_w - 40 else 24
 		MenuStyle.draw_bold(ci, Vector2(cx + 22, y + 39), nm, fs, Color(1, 1, 1, a), 6, Color(MenuStyle.INK, a), 0.2, false)
+		# Their style, on a tag over the chip's top corner, and (for the other one) what that
+		# means: the read you get before you decide.
+		var sname: String = Fight.STYLE_NAMES[f.style]
+		var scol: Color = Fight.STYLE_COLORS[f.style]
+		var sw := MenuStyle.text_width(sname, 16, 0.12) + 26.0
+		var sp := Vector2(cx + chip_w - sw - 4.0, y - 13.0)
+		MenuStyle.draw_slant(ci, Rect2(sp - Vector2(2, 2), Vector2(sw + 4, 26)), Color(MenuStyle.INK, a), 8)
+		MenuStyle.draw_slant(ci, Rect2(sp, Vector2(sw, 22)), Color(scol.darkened(0.25), a), 8)
+		ci.draw_string(MenuStyle.font(0.12), sp + Vector2(13, 17), sname, HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color(1, 1, 1, a))
+		if i == 1:
+			ci.draw_string(MenuStyle.font(0.12), Vector2(cx + chip_w - pw, y + 73), Fight.STYLE_BLURBS[f.style],
+					HORIZONTAL_ALIGNMENT_RIGHT, pw, 17, Color(scol.lightened(0.45), a))
 	MenuStyle.draw_bold(ci, Vector2(r.position.x + 40.0 + chip_w + 26.0 - 150.0 * 34.0 / ph, y + 40), "VS", 32,
 			Color(MenuStyle.RED.lightened(0.2), a), 6, Color(MenuStyle.INK, a), 0.2, false)
 	# Yes / no, on this device's buttons.
@@ -245,18 +178,6 @@ func _draw_prompt() -> void:
 	MenuStyle.draw_slant(ci, Rect2(bar.position, Vector2(bar.size.x * _prompt_share, bar.size.y)), Color(MenuStyle.RED, a), 6)
 
 
-func _label(text: String, size: int, color: Color) -> Label:
-	var l := Label.new()
-	l.text = text
-	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	l.add_theme_font_size_override("font_size", size)
-	l.add_theme_color_override("font_color", color)
-	l.add_theme_color_override("font_outline_color", Color.BLACK)
-	l.add_theme_constant_override("outline_size", 8)
-	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	return l
-
-
 func show_prompt(on: bool) -> void:
 	_prompt.visible = on
 	_prompt_at = Time.get_ticks_msec()
@@ -268,88 +189,298 @@ func prompt_left(share: float) -> void:
 
 
 func show_fight(on: bool) -> void:
-	_fight_root.visible = on
+	_show_fight = on
 	_fight_t = 0.0
 
 
+## A big call across the middle.
 func banner(text: String) -> void:
-	_banner.text = text
-	_banner.visible = true
-	_banner_t = 2.6
+	_banner = {"text": text, "start": _now, "until": _now + 2.6}
+
+
+## The human took a clean one: the screen edges flash red (`strength` 0..1).
+func hurt(strength: float) -> void:
+	_hurt_t = maxf(_hurt_t, clampf(strength, 0.0, 1.0))
 
 
 ## A call-out for both to see (a grab, a slip, a break).
 func flash(text: String) -> void:
-	_flash.text = text
-	_flash.visible = true
-	_flash_t = 1.0
+	_flash = {"text": text, "start": _now, "until": _now + 1.0}
 
 
-## A call-out under one fighter's bars (blocked, out of range, how to do something).
+## A call-out under one fighter's panel (blocked, out of reach, how to do something):
+## coaching, so only for a human.
 func flash_for(f: Fight.Fighter, text: String) -> void:
+	if f.human == null:
+		return
 	var p := _panels[0 if f == fight.a else 1]
-	(p.call as Label).text = text
-	p.call_t = 1.3
+	p.call = text
+	p.call_until = _now + 1.3
 
 
 func refresh() -> void:
-	var delta := get_process_delta_time() / maxf(Engine.time_scale, 0.01)
-	_banner_t -= delta
-	_banner.visible = _banner_t > 0.0
-	_flash_t -= delta
-	_flash.visible = _flash_t > 0.0
-	if not _fight_root.visible:
-		return
-	_fight_t += delta
-	_clock.text = "%d" % ceili(maxf(fight.time_left(), 0.0))
-	_clock.add_theme_color_override("font_color", Color(1.0, 0.4, 0.3) if fight.time_left() < 6.0 else Color.WHITE)
-	var cap_a := clampf((CAPTION_TIME - _fight_t) / 1.5, 0.0, 1.0)
-	for k in 2:
-		var f: Fight.Fighter = fight.a if k == 0 else fight.b
-		var p := _panels[k]
-		_set_bar(p.health, f.health / f.max_health, p.side, delta, f.flash_t)
-		_set_bar(p.balance, f.balance / f.max_balance, p.side, delta, f.flash_t)
-		_set_bar(p.stamina, f.stamina / f.max_stamina, p.side, delta, 0.0)
-		for key in ["health", "balance", "stamina"]:
-			(p[key].cap as Label).modulate.a = cap_a
-		(p.status as Label).text = _status(f)
-		p.call_t -= delta
-		(p.call as Label).visible = p.call_t > 0.0
-
-
-func _status(f: Fight.Fighter) -> String:
-	if f.act == "down":
-		return ""
-	if f.grabbing > 0.0:
-		return ("HOLD ON — MASH! %d%%" % int(f.other.escape * 100.0)) if f.other.escape > 0.3 else "HOLDING"
-	if f.other.grabbing > 0.0:
-		return "HELD — MASH TO BREAK FREE %d%%" % int(f.escape * 100.0)
-	if f.act == "hit":
-		return "ROCKED"
-	if f.balance < f.max_balance * 0.3:
-		return "WOBBLY"
-	if f.stamina < f.max_stamina * 0.15:
-		return "WINDED"
-	if f.blocking:
-		return "BLOCKING LOW" if f.block_low else "BLOCKING HIGH"
-	return ""
+	var t := Time.get_ticks_usec() / 1000000.0
+	var delta := minf(t - _last_tick, 0.1) if _last_tick > 0.0 else 0.0
+	_last_tick = t
+	_now += delta
+	_hurt_t = maxf(0.0, _hurt_t - delta * 2.2)
+	_hurt.modulate.a = _hurt_t if _show_fight else 0.0
+	if _show_fight:
+		_fight_t += delta
+		for k in 2:
+			var f: Fight.Fighter = fight.a if k == 0 else fight.b
+			var p := _panels[k]
+			_ease_bar(p.health, f.health / f.max_health, delta)
+			_ease_bar(p.balance, f.balance / f.max_balance, delta)
+			_ease_bar(p.stamina, f.stamina / f.max_stamina, delta)
+	_canvas.queue_redraw()
 
 
 ## The bar eases to its value; what was lost lingers as a white chunk, then drains.
-func _set_bar(b: Dictionary, share: float, side: int, delta: float, flash: float) -> void:
+func _ease_bar(b: Dictionary, share: float, delta: float) -> void:
 	share = clampf(share, 0.0, 1.0)
 	if share < b.shown - 0.004:
-		b.hold = 0.5   # a fresh loss: the chunk lingers, then drains
+		b.hold = 0.5
 	b.shown = share
 	if share > b.ghost_v:
 		b.ghost_v = share
 	b.hold -= delta
 	if b.hold <= 0.0:
 		b.ghost_v = move_toward(b.ghost_v, share, delta * 0.6)
-	var bar: ColorRect = b.bar
-	var ghost: ColorRect = b.ghost
-	bar.size.x = BAR_W * share
-	bar.position.x = 0.0 if side == 0 else BAR_W - bar.size.x
-	ghost.size.x = BAR_W * b.ghost_v
-	ghost.position.x = 0.0 if side == 0 else BAR_W - ghost.size.x
-	bar.modulate = Color(1.6, 1.6, 1.6) if flash > 0.0 and fmod(flash, 0.12) > 0.06 else Color.WHITE
+
+
+## 0 -> 1 sliding in, 1 holding, 1 -> 0 sliding out.
+func _show(item: Dictionary) -> float:
+	if item.is_empty() or _now > item.until + WIPE:
+		return 0.0
+	var t_in := clampf((_now - item.start) / WIPE, 0.0, 1.0)
+	var t_out := clampf((item.until + WIPE - _now) / WIPE, 0.0, 1.0)
+	return ease(minf(t_in, t_out), -2.0)
+
+
+func _draw() -> void:
+	if fight == null:
+		return
+	if _show_fight:
+		var cw := _canvas.size.x
+		_draw_clock(cw)
+		for k in 2:
+			_draw_panel(k, cw)
+		_draw_controls(cw)
+	_draw_banner()
+	_draw_flash()
+
+
+# --- Header ------------------------------------------------------------------------------
+
+## The clock on brushed steel with a red hairline, like the scorebug's.
+func _draw_clock(cw: float) -> void:
+	var r := Rect2(cw * 0.5 - CLOCK_W * 0.5, TOP, CLOCK_W, CLOCK_H)
+	_canvas.draw_rect(Rect2(r.position + Vector2(4, 5), r.size), Color(0, 0, 0, 0.3))
+	_canvas.draw_polygon(PackedVector2Array([r.position, r.position + Vector2(r.size.x, 0), r.end, r.position + Vector2(0, r.size.y)]),
+			PackedColorArray([Color(0.92, 0.94, 0.97), Color(0.78, 0.81, 0.87), Color(0.6, 0.64, 0.72), Color(0.72, 0.76, 0.83)]))
+	_canvas.draw_rect(Rect2(r.position - Vector2(0, 3), Vector2(r.size.x, 3)), MenuStyle.RED)
+	var left := maxf(fight.time_left(), 0.0)
+	var txt := "%d" % ceili(left)
+	var col := MenuStyle.RED if left < 6.0 else MenuStyle.INK
+	MenuStyle.draw_bold(_canvas, Vector2(r.get_center().x - MenuStyle.text_width(txt, 30) * 0.5, r.position.y + 33), txt, 30,
+			col, 0, MenuStyle.INK, 0.2, false)
+
+
+## A fighter's panel: a slim dark strip with a team-color stripe on top, the crest and
+## name (and style) at the outer end, one health bar and two hairline meters (balance,
+## stamina) under it, all draining toward the outside. Side 0 hugs the clock from the
+## left, side 1 from the right (mirrored).
+func _draw_panel(k: int, cw: float) -> void:
+	var f: Fight.Fighter = fight.a if k == 0 else fight.b
+	var p := _panels[k]
+	var right := k == 1
+	var x0 := cw * 0.5 + CLOCK_W * 0.5 + GAP if right else cw * 0.5 - CLOCK_W * 0.5 - GAP - PANEL_W - SKEW
+	var jolt := f.flash_t / 0.35
+	var o := Vector2(x0, TOP) + Vector2(randf_range(-1.0, 1.0), randf_range(-1.0, 1.0)) * 5.0 * jolt * jolt
+	var id: int = fight.director.team_ids[f.s.team]
+	_slant(Rect2(o + Vector2(4, 5), Vector2(PANEL_W, PANEL_H)), Color(0, 0, 0, 0.3), SKEW, right)
+	_slant(Rect2(o, Vector2(PANEL_W, PANEL_H)), Color(0.03, 0.04, 0.09, 0.9), SKEW, right)
+	# The team's stripe along the top edge.
+	_canvas.draw_rect(Rect2(o + Vector2(SKEW if not right else 0.0, -3), Vector2(PANEL_W, 3)), MenuStyle.team_color(id))
+	# Inside: the content runs between the slanted ends.
+	var in_x := o.x + SKEW + 10.0 if not right else o.x + 10.0
+	var in_w := PANEL_W - 20.0 - SKEW * 0.5
+	# Crest and name at the outer end, the style after the name in its color.
+	var logo := MenuStyle.team_logo(id)
+	var crest := 22.0
+	var row_y := o.y + 5.0
+	var nm := MenuStyle.player_name(f.s)
+	var fs := 19 if MenuStyle.text_width(nm, 19) < in_w - 140.0 else 16
+	var nw := MenuStyle.text_width(nm, fs)
+	var sname: String = Fight.STYLE_NAMES[f.style]
+	var sw := MenuStyle.text_width(sname, 12, 0.12)
+	var scol: Color = (Fight.STYLE_COLORS[f.style] as Color).lerp(Color.WHITE, 0.25)
+	if not right:
+		if logo:
+			_canvas.draw_texture_rect(logo, Rect2(in_x, row_y, crest, crest), false)
+		MenuStyle.draw_bold(_canvas, Vector2(in_x + crest + 8.0, row_y + 18), nm, fs, Color.WHITE, 0, MenuStyle.INK, 0.2, false)
+		_canvas.draw_string(MenuStyle.font(0.12), Vector2(in_x + crest + 8.0 + nw + 12.0, row_y + 17), sname,
+				HORIZONTAL_ALIGNMENT_LEFT, -1, 12, scol)
+	else:
+		var ex := in_x + in_w
+		if logo:
+			_canvas.draw_texture_rect(logo, Rect2(ex - crest, row_y, crest, crest), false)
+		MenuStyle.draw_bold(_canvas, Vector2(ex - crest - 8.0 - nw, row_y + 18), nm, fs, Color.WHITE, 0, MenuStyle.INK, 0.2, false)
+		_canvas.draw_string(MenuStyle.font(0.12), Vector2(ex - crest - 8.0 - nw - 12.0 - sw, row_y + 17), sname,
+				HORIZONTAL_ALIGNMENT_LEFT, -1, 12, scol)
+	# Health, then the balance and stamina hairlines. The bars sit square in the slanted
+	# strip, indented so the slant doesn't cut them.
+	var bx := in_x - SKEW * 0.35 if not right else in_x + SKEW * 0.4
+	var bw := in_w
+	for spec: Array in BARS:
+		var key: String = spec[0]
+		var b: Dictionary = p[key]
+		var bh: float = spec[3]
+		var y: float = o.y + float(spec[4])
+		_canvas.draw_rect(Rect2(bx, y, bw, bh), Color(1, 1, 1, 0.08))
+		_fill(bx, y, bw, bh, b.ghost_v, Color(1, 1, 1, 0.8), right)
+		var fc: Color = spec[2]
+		if key == "health" and f.flash_t > 0.0 and fmod(f.flash_t, 0.12) > 0.06:
+			fc = fc.lerp(Color.WHITE, 0.5)
+		_fill(bx, y, bw, bh, b.shown, fc, right)
+		if key == "stamina":
+			# The tank worn away for the rest of the fight (Fight's ceiling), at the inner end.
+			var spent := clampf(1.0 - f.stamina_cap / f.max_stamina, 0.0, 1.0) * bw
+			_canvas.draw_rect(Rect2(bx + bw - spent if not right else bx, y, spent, bh), SPENT)
+	# Under the panel: what needs the human's attention, then a call-out.
+	var ty := o.y + PANEL_H + 8.0
+	var status := _status(f)
+	if status[0] != "":
+		_tab(status[0], status[1], o.x, ty, right)
+		ty += 30.0
+	var ca := clampf((float(p.call_until) + WIPE - _now) / WIPE, 0.0, 1.0)
+	if p.call != "" and ca > 0.0:
+		_tab(p.call, MenuStyle.NAVY, o.x, ty, right, ca)
+
+
+## A bar's fill, from the outer end toward the inner one.
+func _fill(x: float, y: float, w: float, h: float, share: float, c: Color, right: bool) -> void:
+	var fw := w * clampf(share, 0.0, 1.0)
+	_canvas.draw_rect(Rect2(x + w - fw if right else x, y, fw, h), c)
+
+
+## A small slanted tab under a panel, at its outer end.
+func _tab(text: String, c: Color, px: float, y: float, right: bool, a := 1.0) -> void:
+	var w := MenuStyle.text_width(text, 14, 0.12) + 28.0
+	var x := px + 2.0 if not right else px + PANEL_W - w + 2.0
+	_slant(Rect2(Vector2(x + 3, y + 4), Vector2(w, 24)), Color(0, 0, 0, 0.3 * a), 9.0, right)
+	_slant(Rect2(Vector2(x, y), Vector2(w, 24)), Color(c, 0.94 * a), 9.0, right)
+	MenuStyle.draw_bold(_canvas, Vector2(x + 14, y + 17), text, 14, Color(1, 1, 1, a), 3, Color(MenuStyle.INK, a), 0.12, false)
+
+
+## [text, tab color] for a state the human has to act on (text "" = nothing to show; the
+## rest, winded, wobbly, a guard, shows in the meters and the fighter).
+func _status(f: Fight.Fighter) -> Array:
+	if f.act == "down":
+		return ["", MenuStyle.NAVY]
+	if f.grabbing > 0.0:
+		return [("HOLD ON — MASH  %d%%" % int(f.other.escape * 100.0)) if f.other.escape > 0.3 else "HOLDING", MenuStyle.NAVY]
+	if f.other.grabbing > 0.0:
+		return ["HELD — MASH TO BREAK FREE  %d%%" % int(f.escape * 100.0), MenuStyle.RED_DARK]
+	if f.rocked:
+		return ["ROCKED — COVER UP  %d%%" % int(f.recover * 100.0), MenuStyle.RED]
+	return ["", MenuStyle.NAVY]
+
+
+# --- Controls ----------------------------------------------------------------------------
+
+## The controls that matter now, in one strip at the bottom: the set for the moment
+## (free / holding / held), on the human's own buttons.
+func _draw_controls(cw: float) -> void:
+	var h := fight.human_brain()
+	if h == null:
+		return
+	var me: Fight.Fighter = fight.a if fight.a.human == h else fight.b
+	var pad := h.kind == HumanBrain.Kind.PAD or (h.kind == HumanBrain.Kind.ANY and not Input.get_connected_joypads().is_empty())
+	var items: Array = []   # [button, action]; button "" = words only
+	if me.other.grabbing > 0.0:
+		items = [[h.button_label("check"), "MASH TO BREAK FREE"], [h.button_label("pass"), "JAB"]]
+	elif me.grabbing > 0.0:
+		items = [[h.button_label("pass"), "BODY SHOT"], [h.button_label("shoot"), "HOOK"], [h.button_label("deke"), "UPPERCUT"],
+			[h.button_label("check"), "HANG ON"]]
+	else:
+		items = [[h.button_label("pass"), "JAB"], [h.button_label("shoot"), "CROSS"], [h.button_label("deke"), "HOOK"],
+			[h.button_label("protect"), "+ TO THE BODY"], [h.button_label("check"), "GRAB"], [h.button_label("block"), "BLOCK"]]
+		var mv: Array = h.move_labels()
+		items.append(["", "STICK  STEP · SLIP" if pad else "%s STEP  ·  %s SLIP" % [str(mv[0]).to_upper(), str(mv[1]).to_upper()]])
+	var gh := 28.0
+	var fsz := 16
+	var f := MenuStyle.font(0.12)
+	var total := 0.0
+	for it: Array in items:
+		if it[0] != "":
+			total += MenuStyle.glyph_width(it[0], pad, gh) + 8.0
+		total += f.get_string_size(it[1], HORIZONTAL_ALIGNMENT_LEFT, -1, fsz).x + 26.0
+	var w := total + 30.0
+	var y := 846.0
+	var x := cw * 0.5 - w * 0.5
+	# Full strength for the first seconds and while tied up, softer after.
+	var a := 1.0 if _fight_t < 10.0 or me.grabbing > 0.0 or me.other.grabbing > 0.0 else 0.7
+	MenuStyle.draw_slant(_canvas, Rect2(x + 4, y + 5, w, 38), Color(0, 0, 0, 0.3 * a), 12)
+	MenuStyle.draw_slant(_canvas, Rect2(x, y, w, 38), Color(0.03, 0.04, 0.09, 0.82 * a), 12)
+	MenuStyle.draw_slant(_canvas, Rect2(x + 12, y - 2, w, 2), Color(MenuStyle.RED, a), 0)
+	var cx := x + 24.0
+	for it: Array in items:
+		if it[0] != "":
+			cx += MenuStyle.draw_glyph(_canvas, Vector2(cx, y + 5), it[0], pad, gh) + 8.0
+		_canvas.draw_string(f, Vector2(cx, y + 25), it[1], HORIZONTAL_ALIGNMENT_LEFT, -1, fsz, Color(MenuStyle.ICE, a))
+		cx += f.get_string_size(it[1], HORIZONTAL_ALIGNMENT_LEFT, -1, fsz).x + 26.0
+
+
+# --- Banner and flash ----------------------------------------------------------------------
+
+## The match's banner: a red slanted bar that wipes in across the middle.
+func _draw_banner() -> void:
+	var k := _show(_banner)
+	if k <= 0.0:
+		return
+	var cw := _canvas.size.x
+	var text: String = _banner.text
+	var size := 64 if text.length() <= 14 else (46 if text.length() <= 26 else 34)
+	var w := MenuStyle.text_width(text, size) + 120.0
+	var h := 26.0 + size * 1.15
+	var y := 250.0
+	var x := (cw - w) * 0.5
+	var grow := w * k
+	MenuStyle.draw_slant(_canvas, Rect2(x - 10, y + 2, grow + 36, h + 16), Color(0, 0, 0, 0.35), 26)
+	MenuStyle.draw_slant(_canvas, Rect2(x - 18, y - 8, grow + 36, h + 16), MenuStyle.INK, 26)
+	MenuStyle.draw_slant(_canvas, Rect2(x, y, grow, h), MenuStyle.RED, 22)
+	MenuStyle.draw_slant(_canvas, Rect2(x, y + h * 0.58, grow, h * 0.42), Color(0, 0, 0, 0.16), 9)
+	MenuStyle.draw_slant(_canvas, Rect2(x + 10, y - 4, grow * 0.7, 4), Color(1, 1, 1, 0.75), 2)
+	if k < 0.7:
+		return
+	var ta := clampf((k - 0.7) / 0.25, 0.0, 1.0)
+	MenuStyle.draw_bold(_canvas, Vector2(x + 60.0, y + h * 0.5 + size * 0.36), text, size, Color(1, 1, 1, ta),
+			int(size * 0.18), Color(MenuStyle.INK, ta), 0.2, ta > 0.9)
+
+
+## A quick call in a small navy tab under the banner spot.
+func _draw_flash() -> void:
+	var k := _show(_flash)
+	if k <= 0.0:
+		return
+	var text: String = _flash.text
+	var w := MenuStyle.text_width(text, 26) + 60.0
+	var x := (_canvas.size.x - w) * 0.5
+	var y := 372.0 + (1.0 - k) * 30.0
+	MenuStyle.draw_slant(_canvas, Rect2(x + 5, y + 6, w, 46), Color(0, 0, 0, 0.3 * k), 14)
+	MenuStyle.draw_slant(_canvas, Rect2(x, y, w, 46), Color(MenuStyle.NAVY, 0.94 * k), 14)
+	MenuStyle.draw_slant(_canvas, Rect2(x, y + 43, w, 3), Color(MenuStyle.RED, k), 1)
+	MenuStyle.draw_bold(_canvas, Vector2(x + 32, y + 33), text, 26, Color(1, 1, 1, k), 0, MenuStyle.INK, 0.2, false)
+
+
+## MenuStyle.draw_slant, leaning the other way when `mirror` (the right-hand panel).
+func _slant(r: Rect2, c: Color, skew: float, mirror: bool) -> void:
+	if not mirror:
+		MenuStyle.draw_slant(_canvas, r, c, skew)
+		return
+	if r.size.x < 1.0 or r.size.y < 1.0:
+		return
+	_canvas.draw_colored_polygon(PackedVector2Array([r.position, r.position + Vector2(r.size.x, 0),
+			r.position + Vector2(r.size.x + skew, r.size.y), r.position + Vector2(skew, r.size.y)]), c)

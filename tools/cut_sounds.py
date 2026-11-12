@@ -10,7 +10,8 @@ are made seamless by crossfading their end into their start.
 Game intros (assets/sound/intro/intro_<team>.mp3, each "Tonight: a matchup between the
 <team> and the <team>.") are split at the quietest moment between the two halves into
 intro_home_<team> ("...between the <team>") and intro_away_<team> ("and the <team>."),
-so any home team's opening can lead into any away team's close.
+so any home team's opening can lead into any away team's close. A numbered file
+(intro_<team>2.mp3) is a second take of the same team, played at random with the first.
 
 To retune: listen, change the times here, rerun.
 """
@@ -28,9 +29,17 @@ OUT = os.path.join(SRC, "cut")
 INTRO_DIR = os.path.join(SRC, "intro")
 INTRO_SPLIT_FROM = 1.9     # the split is searched between here...
 INTRO_SPLIT_TO_END = 1.2   # ...and this long before the end (seconds)
-# Intros whose quietest moment isn't the one before "and the" (seconds into the intro):
+# Intros whose quietest moment isn't the one before "and the" (seconds into the intro).
+# The split goes before "and": "...between the <team> / and the <team>." Keyed by the
+# file name without "intro_" (a second take, intro_<team>2, has its own key):
 INTRO_SPLIT_AT = {
     "armadillos": 2.83,   # the search lands between "and" and "the"
+    "jawns": 2.9,         # the search lands after "and the"; 2.81 kept the tail of "Jawns"
+    "deepdish": 2.88,     # the search lands after "and the"
+    "luchadores": 3.2,    # the search lands after "and"
+    "mountaingoats": 2.9,   # (take 1) the search lands after "and"
+    "mountaingoats2": 2.92,  # (take 2, keyed by file name) the same
+    "northdakote": 3.34,  # the search lands inside the away half ("between North Dakote" has no "the")
 }
 
 # name: [(source, start s, length s, peak dB), ...]
@@ -64,9 +73,15 @@ CLIPS = {
 # Recordings of several hits in a row, split automatically into one clip per hit:
 # name: (source, quiet gap that separates hits in s, peak dB)
 SPLITS = {
-    "punch": ("punch", 0.06, -1),
-    "punch_male": ("punch_male", 0.08, -2),
-    "punch_female": ("punch_female", 0.08, -2),
+    # Fights (scripts/fight/fight.gd). These replaced the older punch / punch_male /
+    # punch_female recordings, which are no longer cut.
+    "hit_head": ("punchinghead", 0.06, -1),       # a clean punch to the head
+    "hit_body": ("punchingbody", 0.06, -1),       # ...to the body
+    "hit_block": ("blocked", 0.06, -2),           # a punch landing on the guard
+    "hurt_male": ("malepunched", 0.08, -3),       # the one hit reacting
+    "hurt_female": ("femalepunched", 0.08, -3),
+    "shout_male": ("malepunching", 0.08, -4),     # the thrower's shouts (not every punch)
+    "shout_female": ("femalepunching", 0.08, -4),
 }
 LOOPS = {
     # name: (source, start, length, crossfade, peak dB)
@@ -158,20 +173,23 @@ def cut_intros(ff):
     if not os.path.isdir(INTRO_DIR):
         return
     for f in sorted(os.listdir(INTRO_DIR)):
-        m = re.match(r"intro_(\w+)\.(mp3|wav|ogg)$", f)
+        # intro_<team>.mp3 is take 0; intro_<team>2.mp3 is take 1 (a second pronunciation,
+        # e.g. the Mountain Goats): Sfx picks one take at random each time.
+        m = re.match(r"intro_(\w+?)(\d*)\.(mp3|wav|ogg)$", f)
         if not m:
             continue
         team = m.group(1)
+        take = int(m.group(2)) - 1 if m.group(2) else 0
         path = os.path.join(INTRO_DIR, f)
         split, dur = intro_split(ff, path)
-        split = INTRO_SPLIT_AT.get(team, split)
+        split = INTRO_SPLIT_AT.get(team + m.group(2), split)   # keyed by file name (a take's own split)
         gain = -1 - peak_db(ff, path, 0, dur)
         for part, start, length in (("home", 0.0, split), ("away", split, dur - split)):
-            out = os.path.join(OUT, "intro_%s_%s_0.ogg" % (part, team))
+            out = os.path.join(OUT, "intro_%s_%s_%d.ogg" % (part, team, take))
             af = "afade=t=in:d=0.01,afade=t=out:st=%.3f:d=0.04,volume=%.2fdB" % (max(0.0, length - 0.04), gain)
             subprocess.run([ff, "-v", "error", "-y", "-ss", str(start), "-t", str(length), "-i", path,
                             "-af", af, "-c:a", "libvorbis", "-q:a", "6", out], check=True)
-        print("intro %-14s split at %.2fs of %.2fs" % (team, split, dur))
+        print("intro %-14s take %d split at %.2fs of %.2fs" % (team, take, split, dur))
 
 
 def main():

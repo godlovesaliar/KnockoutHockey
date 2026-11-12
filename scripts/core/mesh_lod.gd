@@ -19,14 +19,21 @@ static func add_lods(mesh: Mesh) -> void:
 	if am == null or _done.has(am.get_instance_id()):
 		return
 	_done[am.get_instance_id()] = true
-	# Blend shapes (the faces) are left alone: the LOD levels wouldn't carry them.
-	if am.get_blend_shape_count() > 0 or am.get_faces().size() / 3 < MIN_TRIS:
+	if am.get_faces().size() / 3 < MIN_TRIS:
 		return
+	# Blend shapes (the face, the body's build) carry over: the levels are only index
+	# lists over the same vertices, which the shapes move.
+	var shapes: Array[StringName] = []
+	for b in am.get_blend_shape_count():
+		shapes.append(am.get_blend_shape_name(b))
 	var keep := Mesh.ARRAY_FLAG_USE_8_BONE_WEIGHTS
 	for sh in [Mesh.ARRAY_FORMAT_CUSTOM0_SHIFT, Mesh.ARRAY_FORMAT_CUSTOM1_SHIFT,
 			Mesh.ARRAY_FORMAT_CUSTOM2_SHIFT, Mesh.ARRAY_FORMAT_CUSTOM3_SHIFT]:
 		keep |= Mesh.ARRAY_FORMAT_CUSTOM_MASK << sh
 	var im := ImporterMesh.new()
+	for nm in shapes:
+		im.add_blend_shape(nm)
+	im.set_blend_shape_mode(am.blend_shape_mode)
 	var flags: Array[int] = []
 	var mats: Array[Material] = []
 	var names: Array[String] = []
@@ -37,7 +44,7 @@ static func add_lods(mesh: Mesh) -> void:
 		flags.append(am.surface_get_format(s) & keep)
 		mats.append(am.surface_get_material(s))
 		names.append(am.surface_get_name(s))
-		im.add_surface(Mesh.PRIMITIVE_TRIANGLES, am.surface_get_arrays(s), [], {}, mats[s], names[s], flags[s])
+		im.add_surface(Mesh.PRIMITIVE_TRIANGLES, am.surface_get_arrays(s), am.surface_get_blend_shape_arrays(s), {}, mats[s], names[s], flags[s])
 	im.generate_lods(25.0, 60.0, [])
 	var aabb := am.custom_aabb
 	am.clear_surfaces()
@@ -45,7 +52,10 @@ static func add_lods(mesh: Mesh) -> void:
 		var lods := {}
 		for l in im.get_surface_lod_count(s):
 			lods[im.get_surface_lod_size(s, l)] = im.get_surface_lod_indices(s, l)
-		am.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, im.get_surface_arrays(s), [], lods, flags[s])
+		var bs := []
+		for b in shapes.size():
+			bs.append(im.get_surface_blend_shape_arrays(s, b))
+		am.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, im.get_surface_arrays(s), bs, lods, flags[s])
 		am.surface_set_material(s, mats[s])
 		am.surface_set_name(s, names[s])
 	am.custom_aabb = aabb

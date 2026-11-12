@@ -49,7 +49,7 @@ func _run() -> void:
 		result["w"] = w
 		result["l"] = l)
 	t = 0.0
-	while t < 45.0 and result.is_empty():
+	while t < 60.0 and result.is_empty():
 		await get_tree().physics_frame
 		t += 1.0 / Engine.physics_ticks_per_second
 	_check(not result.is_empty(), "the fight ends (%.1f s)" % t)

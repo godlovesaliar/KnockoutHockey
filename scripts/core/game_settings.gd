@@ -59,6 +59,7 @@ static func default_options() -> Dictionary:
 		"msaa": 2,               ## 0, 2, 4 or 8 samples
 		"max_fps": 0,            ## 0 = no cap
 		"graphics": "quality",   ## "quality" or "performance" (see performance())
+		"blood": true,           ## fights: blood sprays and drops once a fighter is under half health
 	}
 
 

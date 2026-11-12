@@ -6,7 +6,7 @@ class_name Rosters
 ## generated players near 57, so ratings are shifted to that center. The differences
 ## between players are kept one for one: a 90 skater plays 15 points above the average.
 ##
-## Columns: team, abbr, conference, number, first, last, nickname, gender, age, position (C/LW/RW/D/G),
+## Columns: team, abbr, conference, number, display_name, first, last, nickname, gender, age, position (C/LW/RW/D/G),
 ## hand, height, weight_lbs, playstyle, overall, SKA SHT PAS HND PHY DEF (skaters),
 ## REF POS GLV BLK RBD (goalies).
 
@@ -41,6 +41,13 @@ static var _loaded := false
 static func for_team(abbr: String) -> Array:
 	_load()
 	return _by_abbr.get(abbr, [])
+
+
+## The name to show for a player: the sheet's display_name ("Dag Bakken", or a ring
+## name like "El Muro Azul" with no first / last split), else first + last.
+static func display_name(p: Dictionary) -> String:
+	var d := str(p.get("display_name", "")).strip_edges()
+	return d if d != "" else ("%s %s" % [p.get("first", ""), p.get("last", "")]).strip_edges()
 
 
 static func _load() -> void:
@@ -107,6 +114,24 @@ static func stats(p: Dictionary) -> PlayerStats:
 	for k: String in STYLE.get(p.get("playstyle", ""), {}):
 		s.set(k, clampi(int(s.get(k)) + int(STYLE[p.playstyle][k]), 1, 99))
 	return s
+
+
+## A row's height and weight as [m, kg] (0 where the sheet leaves it out). Height reads
+## 6'1" (feet and inches).
+static func size_of(p: Dictionary) -> Vector2:
+	var h := 0.0
+	var parts := str(p.get("height", "")).replace("\"", "").split("'")
+	if parts.size() == 2 and parts[0].is_valid_int():
+		h = (int(parts[0]) * 12 + int(parts[1])) * 0.0254
+	var lbs := str(p.get("weight_lbs", ""))
+	return Vector2(h, int(lbs) * 0.4536 if lbs.is_valid_int() else 0.0)
+
+
+## Dresses `s` in a row's height and weight.
+static func apply_size(s: Skater, p: Dictionary) -> void:
+	var sz := size_of(p)
+	s.height_m = sz.x
+	s.weight_kg = sz.y
 
 
 static func _by_overall(a: Dictionary, b: Dictionary) -> bool:

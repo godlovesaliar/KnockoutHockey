@@ -66,6 +66,13 @@ const FACIAL_HAIR_NAMES := ["None", "Beard", "Chinstrap", "Moustache"]
 const HELMET_NAMES := ["Modern", "Classic"]
 const MASK_NAMES := ["Mask 1", "Mask 2"]
 
+## Height (inches) and weight (lb): the creator's range, and the default per gender (about
+## the roster's average). They set the body's size (BodyBuild).
+const HEIGHTS := [60, 84]
+const WEIGHTS := [120, 290]
+const HEIGHT_DEFAULT := {"Male": 74, "Female": 68}
+const WEIGHT_DEFAULT := {"Male": 205, "Female": 160}   ## multiples of 5 (the creator steps by 5)
+
 static var _list: Array = []
 static var _loaded := false
 
@@ -75,7 +82,7 @@ static func blank() -> Dictionary:
 	var p := {
 		"team": FREE_AGENT, "first": "", "last": "", "nickname": "", "number": 19, "position": "C", "hand": "L",
 		"playstyle": "Two-Way", "skill_mode": "points", "ratings": {},
-		"gender": "Male", "skin": 1, "eyes": 1, "hair_style": "messy", "hair_color": 1,
+		"gender": "Male", "height_in": HEIGHT_DEFAULT.Male, "weight_lbs": WEIGHT_DEFAULT.Male, "skin": 1, "eyes": 1, "hair_style": "messy", "hair_color": 1,
 		"facial_hair": "", "helmet": 0, "visor": true, "stick": "black", "tape": "white",
 	}
 	reset_ratings(p)
@@ -191,6 +198,20 @@ static func set_position(p: Dictionary, pos: String) -> void:
 		p.playstyle = STYLES[group(p)][0]
 
 
+## The player's height in inches and weight in lb (older saves: the gender's default).
+static func height_in(p: Dictionary) -> int:
+	return int(p.get("height_in", HEIGHT_DEFAULT.get(p.get("gender", "Male"), 74)))
+
+
+static func weight_lbs(p: Dictionary) -> int:
+	return int(p.get("weight_lbs", WEIGHT_DEFAULT.get(p.get("gender", "Male"), 205)))
+
+
+## 74 -> 6'2" (the roster sheet's way).
+static func height_text(inches: int) -> String:
+	return "%d'%d\"" % [inches / 12, inches % 12]
+
+
 ## A roster-sheet row for the player (what Rosters.stats() and the lineup code read).
 static func as_row(p: Dictionary) -> Dictionary:
 	var row := {
@@ -198,6 +219,7 @@ static func as_row(p: Dictionary) -> Dictionary:
 		"nickname": p.get("nickname", ""), "gender": p.get("gender", "Male"),
 		"position": p.get("position", "C"), "hand": p.get("hand", "L"),
 		"playstyle": p.get("playstyle", ""), "overall": str(overall(p)),
+		"height": height_text(height_in(p)), "weight_lbs": str(weight_lbs(p)),
 	}
 	for k: String in rating_keys(p):
 		row[k] = str(p.ratings.get(k, POINTS_START))
@@ -217,6 +239,8 @@ static func apply(s: Skater, p: Dictionary) -> void:
 	s.is_defense = s.position_name == "D"
 	s.stats = Rosters.stats(as_row(p))
 	s.body_type = "female" if p.get("gender", "Male") == "Female" else "male"
+	s.height_m = height_in(p) * 0.0254
+	s.weight_kg = weight_lbs(p) * 0.4536
 	s.skin_tone = SkaterVisual.SKIN_TONES[clampi(int(p.get("skin", 1)), 0, SkaterVisual.SKIN_TONES.size() - 1)]
 	s.eye_color = SkaterVisual.EYE_COLORS[clampi(int(p.get("eyes", 1)), 0, SkaterVisual.EYE_COLORS.size() - 1)]
 	s.hair_color = SkaterVisual.HAIR_COLORS[clampi(int(p.get("hair_color", 1)), 0, SkaterVisual.HAIR_COLORS.size() - 1)]

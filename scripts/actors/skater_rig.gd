@@ -92,6 +92,9 @@ var hide_fingers := false
 ## else (a punch landing on a face, a hand gripping a jersey), keeping the clip's twist.
 var reach_w: Array[float] = [0.0, 0.0]
 var reach_world: Array[Vector3] = [Vector3.ZERO, Vector3.ZERO]
+## Per arm, the hand where the clip put it this frame, before the reach pulled it (world;
+## only kept up while reach_w > 0).
+var raw_hand_world: Array[Vector3] = [Vector3.ZERO, Vector3.ZERO]
 ## Full-body clips that step (the jab lunges almost a meter): keep the pelvis over the
 ## feet's spot, only the clip's height and rotation.
 var lock_root := false
@@ -425,6 +428,8 @@ func _process_modification_with_delta(_delta: float) -> void:
 
 	for k in 2:
 		if reach_w[k] > 0.001:
+			# Where the clip alone put the hand (Fight's `fightdebug` measures the IK's fix-up).
+			raw_hand_world[k] = sk.global_transform * _gpose(sk, _b[("Left" if k == 0 else "Right") + "Hand"], {}).origin
 			hand_out[k] = _reach(sk, gl, k, to_skel * reach_world[k], clampf(reach_w[k], 0.0, 1.0))
 	if hide_fingers:
 		for f: Array in _fingers:

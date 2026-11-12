@@ -7,7 +7,7 @@ extends SceneTree
 ## spaces them, tints face and outline per team and projects the name onto the jersey.
 ##   -> res://assets/characters/letters.png
 
-const CHARS := "ABCDEFGHIJKLMNOPQRSTUVWXYZÉÑÔÚÛ0123456789-'.!"
+const CHARS := "ABCDEFGHIJKLMNOPQRSTUVWXYZÉÑÔÚÛÁÍÓÜ0123456789-'.!"
 const CELL := Vector2i(120, 150)
 const FONT_SIZE := 120
 const OUTLINE := 18

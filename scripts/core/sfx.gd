@@ -326,7 +326,11 @@ func _on_voice_finished() -> void:
 	if not _voice_queue.is_empty():
 		_voice.stream = _voice_queue.pop_front()
 		_voice.play()
+		if log_events:
+			print("[audio] %.1f announcer chain: next part (%.2fs)" % [Time.get_ticks_msec() / 1000.0, _voice.stream.get_length()])
 		return
+	if log_events:
+		print("[audio] %.1f announcer done" % (Time.get_ticks_msec() / 1000.0))
 	_voice_end = Time.get_ticks_msec() / 1000.0
 
 
@@ -335,8 +339,12 @@ func announcer_quiet_for() -> float:
 	return 0.0 if _voice.playing else Time.get_ticks_msec() / 1000.0 - _voice_end
 
 
+## True while a line or chain is playing, including the instant between a chain's parts
+## (the player has stopped but `finished` hasn't queued the next part yet). Without
+## that, a long first part (an intro's home half over INTRO_MIN) let the matchup screen
+## close between the halves and the welcome cut the away half.
 func announcing() -> bool:
-	return _voice.playing
+	return _voice.playing or not _voice_queue.is_empty()
 
 
 ## The booth's recordings (AnnouncerLines.VOICES: announcer/pbp/, announcer/color/,

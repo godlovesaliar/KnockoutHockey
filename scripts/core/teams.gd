@@ -1,6 +1,7 @@
 class_name Teams
-## The league's 30 teams in three conferences of ten (East, Central, West): the four launch
-## teams, then the rest in the order their logos came in. Each team's colors dress its
+## The league's 39 teams in three conferences of thirteen (East, Central, West): the four
+## launch teams, then the rest in the order their logos came in, then the nine expansion
+## teams. New teams go on the end: saved settings and created players keep team indices. Each team's colors dress its
 ## players: jersey and its stripes (trim), pants, gloves, helmet, skates, and the back
 ## number's face and outline. `chant` names the crowd's chant clip (Sfx); `logo` is
 ## the crest (cut from the logo sheets by tools/build_logos.gd); `call` names the team's
@@ -83,8 +84,9 @@ const LIST := [
 	{
 		"city": "Cape Cod", "name": "Cranberries", "abbr": "CCC", "conference": "East", "call": "cranberries", "logo": "res://assets/characters/logo_cranberries.png",
 		"colors": {
-			"jersey": Color(0.62, 0.07, 0.14), "trim": Color(0.95, 0.9, 0.78),
-			"pants": Color(0.12, 0.35, 0.2), "gloves": Color(0.62, 0.07, 0.14),
+			# A dark berry red, off the Whalers' red.
+			"jersey": Color(0.5, 0.04, 0.19), "trim": Color(0.95, 0.9, 0.78),
+			"pants": Color(0.12, 0.35, 0.2), "gloves": Color(0.5, 0.04, 0.19),
 			"helmet": Color(0.12, 0.35, 0.2), "skates": Color(0.05, 0.05, 0.06),
 			"number": Color(0.95, 0.9, 0.78), "number_outline": Color(0.12, 0.35, 0.2),
 		},
@@ -128,10 +130,11 @@ const LIST := [
 	{
 		"city": "Roswell", "name": "Grays", "abbr": "ROS", "conference": "West", "call": "grays", "logo": "res://assets/characters/logo_grays.png",
 		"colors": {
-			"jersey": Color(0.33, 0.17, 0.48), "trim": Color(0.55, 0.85, 0.2),
-			"pants": Color(0.18, 0.18, 0.2), "gloves": Color(0.33, 0.17, 0.48),
+			# Lime jersey, purple trim: purple jerseys made them a twin of the Spuds.
+			"jersey": Color(0.55, 0.85, 0.2), "trim": Color(0.33, 0.17, 0.48),
+			"pants": Color(0.18, 0.18, 0.2), "gloves": Color(0.55, 0.85, 0.2),
 			"helmet": Color(0.18, 0.18, 0.2), "skates": Color(0.05, 0.05, 0.06),
-			"number": Color(0.55, 0.85, 0.2), "number_outline": Color(0.18, 0.18, 0.2),
+			"number": Color(0.33, 0.17, 0.48), "number_outline": Color(0.18, 0.18, 0.2),
 		},
 	},
 	{
@@ -278,11 +281,98 @@ const LIST := [
 			"number": Color(0.95, 0.95, 0.93), "number_outline": Color(0.15, 0.7, 0.85),
 		},
 	},
+	# Expansion teams (2026-11-11). North Dakote is one name with no city.
+	{
+		"city": "Baja", "name": "Chupacabras", "abbr": "BAJ", "conference": "West", "call": "chupacabras", "logo": "res://assets/characters/logo_chupacabras.png",
+		"colors": {
+			"jersey": Color(0.62, 0.06, 0.1), "trim": Color(0.9, 0.85, 0.72),
+			"pants": Color(0.07, 0.07, 0.08), "gloves": Color(0.62, 0.06, 0.1),
+			"helmet": Color(0.07, 0.07, 0.08), "skates": Color(0.05, 0.05, 0.06),
+			"number": Color(0.9, 0.85, 0.72), "number_outline": Color(0.07, 0.07, 0.08),
+		},
+	},
+	{
+		"city": "Carolina", "name": "Sweet Tea", "abbr": "CST", "conference": "East", "call": "sweettea", "logo": "res://assets/characters/logo_sweettea.png",
+		"colors": {
+			"jersey": Color(0.42, 0.67, 0.87), "trim": Color(0.72, 0.45, 0.12),
+			"pants": Color(0.07, 0.14, 0.29), "gloves": Color(0.42, 0.67, 0.87),
+			"helmet": Color(0.07, 0.14, 0.29), "skates": Color(0.05, 0.05, 0.06),
+			"number": Color(0.07, 0.14, 0.29), "number_outline": Color(0.72, 0.45, 0.12),
+		},
+	},
+	{
+		"city": "Chicago", "name": "Deep Dish", "abbr": "CHI", "conference": "Central", "call": "deepdish", "logo": "res://assets/characters/logo_deepdish.png",
+		"colors": {
+			"jersey": Color(0.11, 0.11, 0.12), "trim": Color(0.78, 0.16, 0.12),
+			"pants": Color(0.07, 0.07, 0.08), "gloves": Color(0.11, 0.11, 0.12),
+			"helmet": Color(0.07, 0.07, 0.08), "skates": Color(0.05, 0.05, 0.06),
+			"number": Color(0.95, 0.9, 0.77), "number_outline": Color(0.78, 0.16, 0.12),
+		},
+	},
+	{
+		"city": "Mexico City", "name": "Luchadores", "abbr": "LUC", "conference": "Central", "call": "luchadores", "logo": "res://assets/characters/logo_luchadores.png",
+		"colors": {
+			"jersey": Color(0.86, 0.05, 0.48), "trim": Color(0.91, 0.71, 0.13),
+			"pants": Color(0.08, 0.08, 0.08), "gloves": Color(0.86, 0.05, 0.48),
+			"helmet": Color(0.08, 0.08, 0.08), "skates": Color(0.05, 0.05, 0.06),
+			"number": Color(0.91, 0.71, 0.13), "number_outline": Color(0.08, 0.08, 0.08),
+		},
+	},
+	{
+		"city": "", "name": "North Dakote", "abbr": "NDK", "conference": "Central", "call": "northdakote", "logo": "res://assets/characters/logo_northdakote.png",
+		"colors": {
+			"jersey": Color(0.95, 0.95, 0.93), "trim": Color(0.12, 0.27, 0.63),
+			"pants": Color(0.12, 0.27, 0.63), "gloves": Color(0.12, 0.27, 0.63),
+			"helmet": Color(0.12, 0.27, 0.63), "skates": Color(0.05, 0.05, 0.06),
+			"number": Color(0.12, 0.27, 0.63), "number_outline": Color(0.83, 0.65, 0.16),
+		},
+	},
+	{
+		"city": "Philadelphia", "name": "Jawns", "abbr": "PHI", "conference": "East", "call": "jawns", "logo": "res://assets/characters/logo_jawns.png",
+		"colors": {
+			"jersey": Color(0.05, 0.55, 0.2), "trim": Color(0.95, 0.55, 0.12),
+			"pants": Color(0.07, 0.07, 0.08), "gloves": Color(0.05, 0.55, 0.2),
+			"helmet": Color(0.07, 0.07, 0.08), "skates": Color(0.05, 0.05, 0.06),
+			"number": Color(0.95, 0.95, 0.93), "number_outline": Color(0.95, 0.55, 0.12),
+		},
+	},
+	{
+		"city": "Pine Barrens", "name": "Campers", "abbr": "PBC", "conference": "East", "call": "campers", "logo": "res://assets/characters/logo_campers.png",
+		"colors": {
+			"jersey": Color(0.74, 0.65, 0.47), "trim": Color(0.12, 0.29, 0.18),
+			"pants": Color(0.12, 0.29, 0.18), "gloves": Color(0.74, 0.65, 0.47),
+			"helmet": Color(0.12, 0.29, 0.18), "skates": Color(0.05, 0.05, 0.06),
+			"number": Color(0.12, 0.29, 0.18), "number_outline": Color(0.7, 0.15, 0.12),
+		},
+	},
+	{
+		"city": "Rocky Mountain", "name": "Goats", "abbr": "RMG", "conference": "West", "call": "mountaingoats", "logo": "res://assets/characters/logo_mountaingoats.png",
+		"colors": {
+			"jersey": Color(0.96, 0.96, 0.94), "trim": Color(0.18, 0.19, 0.21),
+			"pants": Color(0.18, 0.19, 0.21), "gloves": Color(0.18, 0.19, 0.21),
+			"helmet": Color(0.18, 0.19, 0.21), "skates": Color(0.05, 0.05, 0.06),
+			"number": Color(0.18, 0.19, 0.21), "number_outline": Color(0.37, 0.66, 0.83),
+		},
+	},
+	{
+		"city": "Xochimilco", "name": "Axolotls", "abbr": "XOC", "conference": "West", "call": "axolotls", "logo": "res://assets/characters/logo_axolotls.png",
+		"colors": {
+			"jersey": Color(0.96, 0.62, 0.72), "trim": Color(0.07, 0.38, 0.36),
+			"pants": Color(0.07, 0.38, 0.36), "gloves": Color(0.96, 0.62, 0.72),
+			"helmet": Color(0.07, 0.38, 0.36), "skates": Color(0.05, 0.05, 0.06),
+			"number": Color(0.07, 0.38, 0.36), "number_outline": Color(0.95, 0.64, 0.06),
+		},
+	},
 ]
 
-## The league's three conferences, ten teams each (each team's `conference` above;
+## The league's three conferences, thirteen teams each (each team's `conference` above;
 ## the roster sheet's conference column agrees).
 const CONFERENCES := ["East", "Central", "West"]
+
+## Each conference's badge color on menus (team select).
+const CONFERENCE_COLORS := {
+	"East": Color(0.26, 0.52, 0.92), "Central": Color(0.92, 0.66, 0.14), "West": Color(0.86, 0.3, 0.22),
+}
 
 
 const CLASH := 0.3   ## jersey colors closer than this (RGB distance) clash
@@ -322,6 +412,9 @@ const DESIGN_OF := {
 	"twang": "yoke_stripe", "moonshiners": "classic", "swampthings": "bold", "floridaman": "hoops",
 	"armadillos": "yoke", "lumberjacks": "hoops", "otters": "double", "stuntmen": "bold",
 	"gilamonsters": "triple", "spuds": "yoke_stripe", "seagulls": "pinstripe", "geysers": "triple",
+	"chupacabras": "triple", "sweettea": "yoke", "deepdish": "pinstripe", "luchadores": "bold",
+	"northdakote": "triple", "jawns": "double", "campers": "hoops", "mountaingoats": "yoke_stripe",
+	"axolotls": "classic",
 }
 
 
@@ -368,6 +461,16 @@ static func in_conference(conference: String) -> Array[int]:
 	return out
 
 
+## "City Name"; just the name for a team without a city (North Dakote).
 static func full_name(i: int) -> String:
 	var t := team(i)
-	return "%s %s" % [t.city, t.name]
+	return ("%s %s" % [t.city, t.name]).strip_edges()
+
+
+## Every team in menu order: East, then Central, then West, each in list order. Team
+## select steps through this, so a conference's teams come up together.
+static func menu_order() -> Array[int]:
+	var out: Array[int] = []
+	for c: String in CONFERENCES:
+		out.append_array(in_conference(c))
+	return out

@@ -28,7 +28,7 @@ const SHEETS := [
 	{"file": "res://assets/images/lobsters (2).jfif", "teams": ["lobsters"], "lum": 0.8, "sat": 0.12, "light": true},
 	{"file": "res://assets/images/lakemonsters.jfif", "teams": ["lakemonsters"], "lum": 0.8, "sat": 0.12, "light": true},
 	{"file": "res://assets/images/trailblazers.jfif", "teams": ["trailblazers"], "lum": 0.8, "sat": 0.12, "light": true},
-	{"file": "res://assets/images/mariners.jfif", "teams": ["mariners"], "lum": 0.8, "sat": 0.12, "light": true, "holes": true},
+	{"file": "res://assets/images/logo_mariners.jfif", "teams": ["mariners"], "lum": 0.8, "sat": 0.12, "light": true},   # was mariners.jfif (wheel + M), holes: true
 	{"file": "res://assets/images/granite.jfif", "teams": ["granite"], "lum": 0.8, "sat": 0.12, "light": true},
 	{"file": "res://assets/images/cranberries.jfif", "teams": ["cranberries"], "lum": 0.8, "sat": 0.12, "light": true},   # alt: cranberries2.jfif (Cape Cod C)
 	{"file": "res://assets/images/rats.jfif", "teams": ["rats"], "lum": 0.8, "sat": 0.12, "light": true},
@@ -53,6 +53,16 @@ const SHEETS := [
 	{"file": "res://assets/images/stuntmen.jfif", "teams": ["stuntmen"], "lum": 0.8, "sat": 0.12, "light": true},   # alt: stuntmen2.jfif (S)
 	{"file": "res://assets/images/seagulls.jfif", "teams": ["seagulls"], "lum": 0.8, "sat": 0.12, "light": true},
 	{"file": "res://assets/images/geysers.jfif", "teams": ["geysers"], "lum": 0.8, "sat": 0.12, "light": true},
+	# Expansion teams (2026-11-11).
+	{"file": "res://assets/images/logo_chupacabras.jfif", "teams": ["chupacabras"], "lum": 0.8, "sat": 0.12, "light": true},
+	{"file": "res://assets/images/logo_sweettea.jfif", "teams": ["sweettea"], "lum": 0.8, "sat": 0.12, "light": true},
+	{"file": "res://assets/images/logo_deepdish.jfif", "teams": ["deepdish"], "lum": 0.8, "sat": 0.12, "light": true},
+	{"file": "res://assets/images/logo_luchadores.jfif", "teams": ["luchadores"], "lum": 0.8, "sat": 0.12, "light": true},
+	{"file": "res://assets/images/logo_northdakote.jfif", "teams": ["northdakote"], "lum": 0.8, "sat": 0.12, "light": true},
+	{"file": "res://assets/images/logo_jawns.jfif", "teams": ["jawns"], "lum": 0.8, "sat": 0.12, "light": true},
+	{"file": "res://assets/images/logo_campers.jfif", "teams": ["campers"], "lum": 0.8, "sat": 0.12, "light": true},
+	{"file": "res://assets/images/logo_mountaingoats.jfif", "teams": ["mountaingoats"], "lum": 0.8, "sat": 0.12, "light": true},
+	{"file": "res://assets/images/logo_axolotl.jfif", "teams": ["axolotls"], "lum": 0.8, "sat": 0.12, "light": true},
 ]   ## teams: quadrants TL, TR, BL, BR ("" = superseded); a one-team entry is the whole image
 const OUT := "res://assets/characters/logo_%s.png"
 const MAX_SIZE := 768

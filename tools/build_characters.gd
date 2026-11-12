@@ -22,7 +22,10 @@ const ANIM_DIR := "res://assets/animations/"
 const OUT_DIR := "res://assets/characters/"
 const SKIP_ANIMS := ["Y Bot.fbx"]
 const LOOPING := ["idle", "sitting", "clap", "cheering", "rallying", "fight", "carrying"]
-const MIN_MESH_VERTS := 500     ## drop tiny extra meshes (the eyeballs are kept as "Eyes" when the body has an eye texture)
+## Clips that also get a left-right mirrored copy, named "<clip>_mirrored" (e.g. the
+## Mixamo uppercut throws with the left hand; the clinch needs it from the right).
+const MIRRORED := ["uppercut", "hook1"]
+const MIN_MESH_VERTS := 500    ## drop tiny extra meshes (the eyeballs are kept as "Eyes" when the body has an eye texture)
 ## The outfit's CUSTOM0 / CUSTOM1 carry rest position / normal (see _shell).
 const REST_TORSO := 0.6    ## the cloth's rest coordinates are scaled to this hips-to-neck length
 const REST_FORMAT := (Mesh.ARRAY_CUSTOM_RGB_FLOAT << Mesh.ARRAY_FORMAT_CUSTOM0_SHIFT) | (Mesh.ARRAY_CUSTOM_RGB_FLOAT << Mesh.ARRAY_FORMAT_CUSTOM1_SHIFT)
@@ -63,7 +66,8 @@ func _init() -> void:
 		print("  %s done in %.1fs" % [spec.name, (Time.get_ticks_msec() - t0) / 1000.0])
 		skel.free()
 	for c: Dictionary in _clips:
-		(c.root as Node).free()
+		if c.has("root"):
+			(c.root as Node).free()
 	quit()
 
 
@@ -102,8 +106,24 @@ func _load_clips() -> void:
 		var root: Node = (load(path) as PackedScene).instantiate()
 		var ap: AnimationPlayer = root.find_children("*", "AnimationPlayer", true, false)[0]
 		var sk: Skeleton3D = root.find_children("*", "Skeleton3D", true, false)[0]
-		_clips.append({"name": clip_name_for(f), "anim": ap.get_animation(ap.get_animation_list()[0]), "skel": sk, "root": root})
+		var clip := {"name": clip_name_for(f), "anim": ap.get_animation(ap.get_animation_list()[0]), "skel": sk, "root": root}
+		_clips.append(clip)
+		if clip.name in MIRRORED:
+			var m := clip.duplicate()
+			m.name = clip.name + "_mirrored"
+			m.mirror = true
+			m.erase("root")   # freed once, with the original
+			_clips.append(m)
 	print("clips: ", _clips.size())
+
+
+## The bone on the other side of the body (LeftArm <-> RightArm); itself if centered.
+static func mirror_bone(nm: String) -> String:
+	if nm.begins_with("Left"):
+		return "Right" + nm.substr(4)
+	if nm.begins_with("Right"):
+		return "Left" + nm.substr(5)
+	return nm
 
 
 # --- Body ------------------------------------------------------------------------
@@ -273,17 +293,41 @@ func _build_body(spec: Dictionary) -> Skeleton3D:
 				arr[Mesh.ARRAY_TEX_UV] = uv
 			arr[Mesh.ARRAY_TEX_UV2] = uv2
 			var flags: int = mi.mesh.surface_get_format(s) & Mesh.ARRAY_FLAG_USE_8_BONE_WEIGHTS
-			# Under a modelled jersey the top of the chest stays skin: it fills the collar's
-			# opening and V (the jersey stands well off it there, so it can't poke through).
+			# Under a modelled jersey only the skin seen through its openings is drawn: the
+			# top of the chest and the base of the neck stay skin where nothing of the jersey
+			# lies straight out from them (the collar's opening and V). Everywhere else they
+			# are hidden like the rest of the torso, or a rolling shoulder pushes them out
+			# through the tight yoke and back.
 			var body_colors := colors
+			var body_uv2 := uv2
 			if jersey != null:
 				body_colors = colors.duplicate()
+				body_uv2 = uv2.duplicate()
+				var grid := _vertex_grid(jersey.mesh)
+				var collar_grid := _vertex_grid(jersey.mesh, true)
+				var hid := 0
+				var kept := 0
 				for i in verts.size():
-					if colors[i].r > 0.5 and uv2[i].y > JERSEY_SKIN_F:
-						body_colors[i] = Color(0, 0, 0, 0)
+					var band: bool = (colors[i].r > 0.5 and uv2[i].y > JERSEY_SKIN_F) or dom[i].begins_with("Neck")
+					if not band:
+						continue
+					# The front of the opening (the V, under the collar's front) stays skin even
+					# under cloth: the jersey stands well off the chest there, and it's in view.
+					var front: bool = norms.size() == verts.size() and norms[i].z > 0.2 and _near(collar_grid, verts[i], COLLAR_NEAR)
+					if not front and norms.size() == verts.size() and _cloth_outward(grid, verts[i], norms[i]):
+						body_colors[i] = Color(1, 0, 0, 0)   # torso, under the jersey: hidden
+						body_uv2[i] = Vector2(0.0, 0.5)
+						hid += 1
+					else:
+						kept += 1
+						if colors[i].r > 0.5:
+							body_colors[i] = Color(0, 0, 0, 0)   # seen through an opening: skin
+				print("  skin under the collar: %d hidden, %d kept (openings)" % [hid, kept])
 			arr[Mesh.ARRAY_COLOR] = body_colors
+			arr[Mesh.ARRAY_TEX_UV2] = body_uv2
 			mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr, [], {}, flags)
 			arr[Mesh.ARRAY_COLOR] = colors
+			arr[Mesh.ARRAY_TEX_UV2] = uv2
 			var shell := _shell(arr, thick, per, dom, joints, unpose, jersey != null)
 			if not shell.is_empty():
 				outfit.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, shell, [], {}, flags | REST_FORMAT)
@@ -594,6 +638,65 @@ const JERSEY_HEM_F := 0.172
 const JERSEY_KEEP_F := 0.45
 ## Body skin above this torso position stays drawn under a modelled jersey (the collar).
 const JERSEY_SKIN_F := 0.82
+const CLOTH_CELL := 0.02        ## m: grid cell for the jersey's vertices (_vertex_grid)
+const CLOTH_REACH := 0.07       ## m: how far out from the skin the jersey is looked for
+const NECK_STIFF_IN := 0.02     ## m from the collar: cloth fully on the upper chest...
+const NECK_STIFF_OUT := 0.09    ## ...fading back to its own weights by here
+const COLLAR_NEAR := 0.04       ## m: skin facing forward this close to the collar stays (the V)
+const CLOTH_NEAR := 0.012       ## m: a jersey vertex this close to that line covers the skin
+
+
+## The modelled jersey's body cloth (not its collar or laces, UV2.x -1; or with `collar`,
+## only those) hashed into CLOTH_CELL cubes: Vector3i -> PackedVector3Array.
+static func _vertex_grid(m: Mesh, collar := false) -> Dictionary:
+	var grid := {}
+	for s in m.get_surface_count():
+		var arrs := m.surface_get_arrays(s)
+		var vs: PackedVector3Array = arrs[Mesh.ARRAY_VERTEX]
+		var u2: PackedVector2Array = arrs[Mesh.ARRAY_TEX_UV2] if arrs[Mesh.ARRAY_TEX_UV2] != null else PackedVector2Array()
+		for k in vs.size():
+			if u2.size() == vs.size() and (u2[k].x < -0.5) != collar:
+				continue   # cloth or collar / laces, whichever was asked for
+			var v := vs[k]
+			var c := Vector3i((v / CLOTH_CELL).floor())
+			var cell: PackedVector3Array = grid.get(c, PackedVector3Array())
+			cell.append(v)   # packed arrays are values: store it back
+			grid[c] = cell
+	return grid
+
+
+## Is there a vertex in `grid` within `r` of `v`? (r up to CLOTH_CELL * 2)
+static func _near(grid: Dictionary, v: Vector3, r: float) -> bool:
+	var c := Vector3i((v / CLOTH_CELL).floor())
+	for dx in range(-2, 3):
+		for dy in range(-2, 3):
+			for dz in range(-2, 3):
+				var cell: Variant = grid.get(c + Vector3i(dx, dy, dz))
+				if cell == null:
+					continue
+				for q: Vector3 in cell:
+					if q.distance_squared_to(v) < r * r:
+						return true
+	return false
+
+
+## Is there cloth (a vertex in `grid`) straight out from skin point `v` along `n`?
+static func _cloth_outward(grid: Dictionary, v: Vector3, n: Vector3) -> bool:
+	var t := CLOTH_CELL * 0.5
+	while t <= CLOTH_REACH:
+		var p := v + n * t
+		var c := Vector3i((p / CLOTH_CELL).floor())
+		for dx in range(-1, 2):
+			for dy in range(-1, 2):
+				for dz in range(-1, 2):
+					var cell: Variant = grid.get(c + Vector3i(dx, dy, dz))
+					if cell == null:
+						continue
+					for q: Vector3 in cell:
+						if q.distance_squared_to(p) < CLOTH_NEAR * CLOTH_NEAR:
+							return true
+		t += CLOTH_CELL * 0.5
+	return false
 
 
 ## The modelled jersey for this body, as an "Outfit_Jersey" skinned mesh on the new
@@ -655,6 +758,10 @@ func _jersey(spec: Dictionary, names: Array[String], new_g: Array[Transform3D], 
 		for i in verts.size():
 			verts[i] = mesh_xf * verts[i]
 			norms[i] = (mesh_xf.basis * norms[i]).normalized()
+		if not parts.is_empty():
+			var bw := _stiff_neckline(verts, parts, bones, weights, per, bind_names.find("Spine2"))
+			bones = bw[0]
+			weights = bw[1]
 		var colors := PackedColorArray()
 		var uv2 := PackedVector2Array()
 		colors.resize(verts.size())
@@ -732,6 +839,66 @@ func _jersey(spec: Dictionary, names: Array[String], new_g: Array[Transform3D], 
 	o.skin = new_skin
 	print("  jersey: %s (%d binds, joints within %.3f m)" % [path, new_skin.get_bind_count(), worst])
 	return o
+
+
+## The collar and laces (`parts`.r > 0.25) and the cloth round them ride the upper chest
+## (`chest`, the Spine2 bind): fully at the collar, fading back to the jersey's own weights
+## NECK_STIFF_OUT away. Weighted to the shoulders, the neckline spread wide and flat when
+## the fight stance shrugs them up, laying the collar out over the shoulders (the body
+## under the jersey isn't drawn, so the cloth there needn't follow the shoulders).
+## Returns [bones, weights] (packed arrays are values: the caller's copies are untouched).
+static func _stiff_neckline(verts: PackedVector3Array, parts: PackedColorArray, bones: PackedInt32Array, weights: PackedFloat32Array, per: int, chest: int) -> Array:
+	const CELL := 0.03
+	if chest < 0:
+		return [bones, weights]
+	var grid := {}
+	for i in verts.size():
+		if parts[i].r <= 0.25:
+			continue
+		var c := Vector3i((verts[i] / CELL).floor())
+		var cell: PackedInt32Array = grid.get(c, PackedInt32Array())
+		cell.append(i)   # packed arrays are values: store it back
+		grid[c] = cell
+	var reach := ceili(NECK_STIFF_OUT / CELL)
+	for i in verts.size():
+		var d := 0.0
+		if parts[i].r <= 0.25:
+			var c := Vector3i((verts[i] / CELL).floor())
+			var bd := INF
+			for dx in range(-reach, reach + 1):
+				for dy in range(-reach, reach + 1):
+					for dz in range(-reach, reach + 1):
+						var cell: Variant = grid.get(c + Vector3i(dx, dy, dz))
+						if cell == null:
+							continue
+						for j: int in cell:
+							bd = minf(bd, verts[j].distance_squared_to(verts[i]))
+			d = sqrt(bd)
+		var k := 1.0 - smoothstep(NECK_STIFF_IN, NECK_STIFF_OUT, d)
+		if k <= 0.0:
+			continue
+		# Blend toward all-chest: scale the others down, the chest slot up (taking the
+		# weakest slot if the chest isn't among them).
+		var slot := -1
+		var weakest := 0
+		for q in per:
+			if bones[i * per + q] == chest:
+				slot = q
+			if weights[i * per + q] < weights[i * per + weakest]:
+				weakest = q
+		if slot < 0:
+			slot = weakest
+			bones[i * per + slot] = chest
+			weights[i * per + slot] = 0.0
+		var total := 0.0
+		for q in per:
+			weights[i * per + q] *= 1.0 - k
+			if q == slot:
+				weights[i * per + q] += k
+			total += weights[i * per + q]
+		for q in per:
+			weights[i * per + q] /= maxf(total, 1e-5)
+	return [bones, weights]
 
 
 ## Average color of a texture, in linear space (the skin shader divides by it).
@@ -898,6 +1065,15 @@ func _build_library(spec: Dictionary, tgt: Skeleton3D) -> void:
 				var ql: Quaternion = a.rotation_track_interpolate(rot_track[b], time) if rot_track.has(b) else s_rest_l[b]
 				var p := src.get_bone_parent(b)
 				s_g[b] = ql if p < 0 else s_g[p] * ql
+			if c.get("mirror", false):
+				# Each bone takes its opposite's change from rest, reflected across the
+				# body's left-right (X) axis: (x, y, z, w) -> (x, -y, -z, w).
+				var delta: Array[Quaternion] = []
+				for b in scount:
+					delta.append(s_g[b] * s_rest_g[b].inverse())
+				for b in scount:
+					var d: Quaternion = delta[s_index.get(mirror_bone(s_names[b]), b)]
+					s_g[b] = Quaternion(d.x, -d.y, -d.z, d.w) * s_rest_g[b]
 			# Target globals: same world-space change from rest as the source bone.
 			for b in tcount:
 				var p := tgt.get_bone_parent(b)
@@ -915,6 +1091,8 @@ func _build_library(spec: Dictionary, tgt: Skeleton3D) -> void:
 			var hp: Vector3 = a.position_track_interpolate(pos_track, time) if pos_track >= 0 else src.get_bone_rest(s_hips).origin
 			if ti == 0:
 				first = hp
+			if c.get("mirror", false):
+				hp.x = 2.0 * first.x - hp.x
 			out.track_insert_key(hips_tr, time, Vector3(t_hips_rest.x + (hp.x - first.x) * ratio, hp.y * ratio, t_hips_rest.z + (hp.z - first.z) * ratio))
 		for l in LOOPING:
 			if (c.name as String).contains(l):

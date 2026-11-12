@@ -6,6 +6,7 @@ extends Node3D
 ##   + a goalie behind them
 ## Looks: `seed=<n>` reshuffles hair; `hair=<style>` / `facial=<beard|moustache|>` force one;
 ## Faces: `expr=` `talk=1` `lookcam=1` `lids=<0..1>` `eyes=<html>` (see FaceRig).
+## Size: `sizes=<in>x<lb>,...` per skater (BodyBuild); `lineup=1 view=lineup` stands all six in a row.
 ## `nohelmet=1` takes helmets off (hair fit checks); `helmetoff=<s>` plays skater 4 taking it off; `pose=<id>` menu display poses; `gripdbg=1` draws the stick grip axes.
 
 const SKATER_SCENE := preload("res://scenes/actors/Skater.tscn")
@@ -64,6 +65,11 @@ func _ready() -> void:
 		s.rink = rink
 		s.fatigue_enabled = false
 		s.body_type = _arg("body", ["male", "female"][k % 2])
+		# `sizes=<in>x<lb>,...`: each skater's height (inches) and weight (BodyBuild).
+		var sizes := _arg("sizes", "").split(",", false)
+		if k < sizes.size() and "x" in sizes[k]:
+			s.height_m = int(sizes[k].get_slice("x", 0)) * 0.0254
+			s.weight_kg = int(sizes[k].get_slice("x", 1)) * 0.4536
 		s.skin_tone = SkaterVisual.SKIN_TONES[k % SkaterVisual.SKIN_TONES.size()]
 		s.gear_style = int(_arg("style", str(k / 2)))
 		s.visor = _arg("visor", str(k % 2 if k < 4 else 1)) != "0"   # `visor=0|1`; default: a mix
@@ -75,8 +81,10 @@ func _ready() -> void:
 		s.hair_color = look.hair_color
 		s.eye_color = Color.html(_arg("eyes", look.eye_color.to_html()))
 		add_child(s)
-		s.brain = ScriptBrain.new(plans[k])
-		s.place(Vector3(-5.0 + k * 2.0, 0, 2.0), Vector3.BACK)
+		# `lineup=1`: all six standing side by side, doing nothing (size comparisons).
+		var lineup := _arg("lineup", "") != ""
+		s.brain = ScriptBrain.new(plans[0] if lineup else plans[k])
+		s.place(Vector3(-2.75 + k * 1.1, 0, 2.0) if lineup else Vector3(-5.0 + k * 2.0, 0, 2.0), Vector3.BACK)
 		skaters.append(s)
 	for s in skaters:
 		s.teammates = skaters
@@ -127,6 +135,8 @@ func _set_view(v: String) -> void:
 			cam.look_at_from_position(Vector3(0, 1.8, -7.5), Vector3(0, 0.9, 2.0))
 		"goalie":
 			cam.look_at_from_position(Vector3(0, 1.4, 22.0), Vector3(0, 0.7, net_z()))
+		"lineup":
+			cam.look_at_from_position(Vector3(0, 1.25, 8.2), Vector3(0, 1.0, 2.0))
 		"top":
 			cam.look_at_from_position(Vector3(0, 18, 12), Vector3(0, 0, 2.0))
 		_:
@@ -331,7 +341,8 @@ func _run() -> void:
 		goalie.place(path[0], Vector3.RIGHT)
 		goalie.walk(path + path + path, 5.0, Vector3.BACK)
 	await get_tree().create_timer(0.3).timeout
-	skaters[3].visual.play_clip("knocked_down", Vector3.ONE, -1.0, 1.7, 0.08)
+	if _arg("lineup", "") == "":
+		skaters[3].visual.play_clip("knocked_down", Vector3.ONE, -1.0, 1.7, 0.08)
 	# `rig.<property>=<number>` / `vis.<property>=<number>` tune every skater's rig or
 	# visual (stance experiments).
 	for a in OS.get_cmdline_user_args():
@@ -371,7 +382,7 @@ func _run() -> void:
 		skaters[4].visual.play_clip(_arg("clip", ""), Vector3(float(_arg("legs", "0")), 1, 1), -1.0,
 				0.0 if held else 1.0, 0.12, float(_arg("at", "0")))
 		skaters[4].visual.rig.bow = float(_arg("bow", "0"))
-	else:
+	elif _arg("lineup", "") == "":
 		skaters[4].visual.celebrate()
 	var shot := _arg("shot", "")
 	if shot != "":

@@ -387,11 +387,14 @@ func _setup_player(s: Skater, t: int, number: int, left: bool, p := {}) -> void:
 	else:
 		s.stats = Rosters.stats(p)
 		s.body_type = "female" if p.gender == "Female" else "male"
-		s.first_name = p.first
-		s.last_name = p.last
+		# Ring names (Luchadores) have no last name: the whole display name goes where a
+		# last name would (jersey back, name tags, fight cards).
+		s.first_name = p.first if str(p.last) != "" else ""
+		s.last_name = p.last if str(p.last) != "" else Rosters.display_name(p)
 		s.nickname = p.nickname
 		s.playstyle = p.playstyle
 		s.position_name = p.position
+		Rosters.apply_size(s, p)
 		# Looks the sheet doesn't give: the same every game for the same player.
 		var look := RandomNumberGenerator.new()
 		look.seed = hash("%s %s %s" % [p.abbr, p.first, p.last])

@@ -338,7 +338,15 @@ static func _body_data(kind: String, body_root: Node, body_mesh: Mesh, eye_mesh:
 	d.mouth = MOUTH[kind][0]
 	d.mouth_w = MOUTH[kind][1]
 	d.scale = ((d.mid as Vector3).y - (d.mouth as Vector3).y) / MALE_EYE_TO_MOUTH
+	# The body's build (BodyBuild) rides along as a third shape.
+	var sk := body_root.get_node("Skeleton3D") as Skeleton3D
+	var skin: Skin = null
+	for mi: MeshInstance3D in sk.find_children("*", "MeshInstance3D", false, false):
+		if mi.mesh == body_mesh:
+			skin = mi.skin
+	d.build = BodyBuild.offsets(body_mesh.surface_get_arrays(0), sk, skin)
 	d.mesh = _face_mesh(body_mesh, d)
+	d.erase("build")
 	d.brows = _brow_mesh(body_mesh, d, kind)
 
 	var em := ShaderMaterial.new()
@@ -456,8 +464,8 @@ static func _jaw_pivot(d: Dictionary) -> Vector3:
 	return Vector3(m.x, m.y + 0.015 * s, m.z - 0.085 * s)
 
 
-## The body mesh with two blend shapes: 0 "jaw" (open), 1 "smile" (corners up and out;
-## negative frowns).
+## The body mesh with three blend shapes: 0 "jaw" (open), 1 "smile" (corners up and out;
+## negative frowns), 2 BodyBuild's "build".
 static func _face_mesh(mesh: Mesh, d: Dictionary) -> ArrayMesh:
 	var arr := mesh.surface_get_arrays(0)
 	var v: PackedVector3Array = arr[Mesh.ARRAY_VERTEX]
@@ -523,7 +531,8 @@ static func _face_mesh(mesh: Mesh, d: Dictionary) -> ArrayMesh:
 	var out := ArrayMesh.new()
 	out.add_blend_shape("jaw")
 	out.add_blend_shape("smile")
-	out.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr, [jaw, smile], {}, _keep_flags(mesh.surface_get_format(0)))
+	out.add_blend_shape(BodyBuild.SHAPE)
+	out.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr, [jaw, smile, BodyBuild.shape_arrays(arr, d.build)], {}, _keep_flags(mesh.surface_get_format(0)))
 	# (No custom_aabb: a fixed one overrides the skinned mesh's pose-following bounds, and
 	# a skater down on the ice had the skin culled out from under the eyes and hair.)
 	return out

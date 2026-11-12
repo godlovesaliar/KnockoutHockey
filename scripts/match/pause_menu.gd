@@ -30,7 +30,7 @@ const CONTROLS := [
 ]
 const TIPS := [
 	"One-timer: hold shoot while a pass is on its way.   Goalie with the puck: Cross pass out, Square clear, Triangle cover.",
-	"Fights: Cross jab · Square cross · Triangle hook · hold L1 for body shots · Circle grab (holding: Cross cross, Square hook, Triangle uppercut) · mash Circle to break free or hang on · hold R1 block (+L1 low) · stick up / down slips.",
+	"Fights: Cross jab · Square cross · Triangle hook · hold L1 for body shots · Circle grab (holding: Cross body shot, Square hook, Triangle uppercut) · mash Circle to break free or hang on · hold R1 block (+L1 low) · stick up / down slips · rocked? cover up (R1), back off or tie up until it passes.",
 ]
 
 const ITEM_POS := Vector2(118, 250)

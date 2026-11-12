@@ -167,6 +167,7 @@ static func make_skater(root: Node3D, arena: Dictionary, team: int, opponent: in
 	s.rink = arena.rink
 	s.fatigue_enabled = false
 	s.body_type = "female" if who.get("gender", "") == "Female" else "male"
+	Rosters.apply_size(s, who)
 	# Same looks as in a game for roster players (see MatchDirector).
 	var look := RandomNumberGenerator.new()
 	look.seed = hash("%s %s %s" % [Teams.team(team).abbr, who.get("first", ""), who.get("last", "")])

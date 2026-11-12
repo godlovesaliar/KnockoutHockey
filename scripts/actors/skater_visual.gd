@@ -134,7 +134,7 @@ const SKATE_LEN := 0.3         ## skate length for a 1.8 m body
 const DIGITS := preload("res://assets/characters/digits.png")   ## tools/build_digits.gd
 const DIGIT_FILL := 0.84        ## share of a digit-sheet cell's height the digit fills
 const LETTERS := preload("res://assets/characters/letters.png")   ## tools/build_letters.gd
-const LETTER_CHARS := "ABCDEFGHIJKLMNOPQRSTUVWXYZÉÑÔÚÛ0123456789-'.!"   ## the sheet's cells, in order
+const LETTER_CHARS := "ABCDEFGHIJKLMNOPQRSTUVWXYZÉÑÔÚÛÁÍÓÜ0123456789-'.!"   ## the sheet's cells, in order
 const NUMBER_LOWER := 0.15       ## m the back number sits below where it used to (room for the name)
 const NAME_HEIGHT := 0.056       ## nameplate cap height for a 1.8 m body
 const NAME_GAP := 0.012          ## m between the nameplate and the top of the number
@@ -203,6 +203,7 @@ static var _letter_sheet: Image
 static var _letter_spans := {}    ## char -> [x0 in the sheet, width]
 static var _cap_rows := Vector2i.ZERO   ## the sheet rows a capital letter fills (top, bottom)
 var hs := 1.0                     ## body height / 1.8 m, scales gear offsets
+var body_size := Vector2(1.0, 0.0)   ## BodyBuild.size_for: [height scale, build]
 
 
 # --- Build -----------------------------------------------------------------------
@@ -229,8 +230,12 @@ func _build_body() -> void:
 	var assets := body_assets(skater.body_type)
 	body = (assets[0] as PackedScene).instantiate()
 	hs = float(body.get_meta("height", 1.8)) / 1.8
+	# Height scales the whole body evenly (skates included, so the lift goes with it);
+	# weight sets the build (BodyBuild).
+	body_size = BodyBuild.size_for(skater.body_type, skater.height_m, skater.weight_kg)
 	body.rotation.y = PI
-	body.position.y = SKATE_LIFT
+	body.scale = Vector3.ONE * body_size.x
+	body.position.y = SKATE_LIFT * body_size.x
 	model.add_child(body)
 	skel = body.get_node("Skeleton3D")
 	var c := team_colors()
@@ -238,10 +243,12 @@ func _build_body() -> void:
 		if mi.name == "Eyes":
 			mi.material_override = eye_material(body)
 		elif mi.name.begins_with("Outfit_"):
+			mi.mesh = BodyBuild.with_build(mi.mesh, skel, mi.skin)
 			mi.material_override = uniform_material(c, 0.8 if mi.name.ends_with("Alpha_Joints") else 1.0)
 		else:
 			mi.material_override = skin_material(body, skater.skin_tone)
 	face = FaceRig.create(self)
+	BodyBuild.apply(skel, body_size.y)
 	anim = AnimationPlayer.new()
 	body.add_child(anim)
 	anim.add_animation_library("", assets[1])
@@ -434,13 +441,17 @@ func _build_gear() -> void:
 	# skater bent forward).
 	var hips := anchor_box("hips", "Hips", Vector3(0.34, 0.2, 0.24) * hs)
 	var hips_at := hips.get_center() + Vector3(0, -0.035 * hs, 0.0)
-	var hips_b := Basis.from_scale(Vector3(maxf(hips.size.x * 0.53, 0.17 * hs), 0.1 * hs, maxf(hips.size.z * 0.46, 0.115 * hs)))
+	# The pants pads fill out with the build like the body under them (BodyBuild.GIRTH).
+	var bh := 1.0 + float(BodyBuild.GIRTH.Hips) * body_size.y
+	var bt := 1.0 + float(BodyBuild.GIRTH.LeftUpLeg) * body_size.y
+	var hips_b := Basis.from_scale(Vector3(maxf(hips.size.x * 0.53, 0.17 * hs) * bh, 0.1 * hs, maxf(hips.size.z * 0.46, 0.115 * hs) * bh))
 	attach("Hips", _cloth_mesh(_sphere(), hips_at, hips_b), cloth, hips_at, hips_b)
 	for side in ["Left", "Right"]:
 		var hip := bone_pos(side + "UpLeg")
 		var thigh := bone_pos(side + "Leg") - hip
 		var at := hip + thigh * 0.3 + Vector3(0, 0, 0.005 * hs)
-		var tb := limb_frame(side + "UpLeg", side + "Leg", Vector3(0.1 * hs, thigh.length() * 0.36, 0.108 * hs))
+		at = BodyBuild.point(skel, side + "UpLeg", at, body_size.y)
+		var tb := limb_frame(side + "UpLeg", side + "Leg", Vector3(0.1 * hs * bt, thigh.length() * 0.36, 0.108 * hs * bt))
 		attach(side + "UpLeg", _cloth_mesh(_sphere(), at, tb), cloth, at, tb)
 	for side in ["Left", "Right"]:
 		# Glove model: fingers along the hand, palm down in the T-pose, thumb forward. The

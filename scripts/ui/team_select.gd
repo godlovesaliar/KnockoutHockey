@@ -282,10 +282,13 @@ func _change_for(dev: String, dir: int, other: bool) -> void:
 
 
 func _change_team(t: int, dir: int) -> void:
-	var n := Teams.count()
-	var next: int = wrapi(teams[t] + dir, 0, n)
+	# Step in menu order (East, Central, West), so a conference's teams come up together.
+	var order := Teams.menu_order()
+	var n := order.size()
+	var at := maxi(order.find(teams[t]), 0)
+	var next: int = order[wrapi(at + dir, 0, n)]
 	if next == teams[1 - t]:
-		next = wrapi(next + dir, 0, n)
+		next = order[wrapi(at + dir * 2, 0, n)]
 	teams[t] = next
 	_pop[t] = 1.0
 	Sfx.play("click", Vector3.INF, -8.0, 1.5)
@@ -379,6 +382,7 @@ func _draw_plates() -> void:
 		_plates.draw_string(small, Vector2(x0 + 70, y + 32), city, HORIZONTAL_ALIGNMENT_LEFT, PLATE_W - 140, 22, Color(ink, 0.85))
 		var fs := 46 if f.get_string_size(name, HORIZONTAL_ALIGNMENT_LEFT, -1, 46).x < PLATE_W - 150 else 36
 		_plates.draw_string(f, Vector2(x0 + 66, y + 78), name, HORIZONTAL_ALIGNMENT_LEFT, PLATE_W - 140, fs, ink)
+		_draw_conference(info, x0 + PLATE_W - 52, y + 13, small)
 		# Up / down arrows stacked at the plate's right end, as the controls change teams
 		# (click them too). Up is the previous team.
 		for dir in [-1, 1]:
@@ -391,7 +395,8 @@ func _draw_plates() -> void:
 			_plates.draw_colored_polygon(tri, Color(ink, 0.9))
 		# Star player and line ratings under the plate.
 		var star := MenuArena.star(team)
-		var line := "#%s  %s %s" % [star.number, str(star.first).to_upper(), str(star.last).to_upper()] if str(star.last) != "" else ""
+		var star_name := Rosters.display_name(star).to_upper()
+		var line := "#%s  %s" % [star.number, star_name] if star_name != "" else ""
 		var rat := MenuArena.ratings(team)
 		if line != "":
 			_plates.draw_string(small, Vector2(x0 + 20, y + h + 34), "STAR  " + line, HORIZONTAL_ALIGNMENT_LEFT, -1, 20, Color(1, 1, 1, 0.9))
@@ -406,6 +411,24 @@ func _draw_plates() -> void:
 				rx -= kw + 6
 				_plates.draw_string(small, Vector2(rx, y - 12), k, HORIZONTAL_ALIGNMENT_LEFT, -1, 16, MenuStyle.DIM)
 				rx -= 22
+
+
+## The team's conference as a slanted badge in the conference's color, its right end at
+## `right`, top at `top`.
+func _draw_conference(info: Dictionary, right: float, top: float, font: Font) -> void:
+	var conf := str(info.get("conference", ""))
+	if conf == "":
+		return
+	var label := conf.to_upper() + " CONFERENCE"
+	var w := font.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, 16).x + 30.0
+	var h := 26.0
+	var sk := h * 0.3
+	var x := right - w
+	var col: Color = Teams.CONFERENCE_COLORS.get(conf, MenuStyle.DIM)
+	var pts := PackedVector2Array([Vector2(x + sk, top), Vector2(right + sk, top), Vector2(right, top + h), Vector2(x, top + h)])
+	_plates.draw_colored_polygon(pts, Color(0.02, 0.03, 0.07, 0.8))
+	_plates.draw_colored_polygon(PackedVector2Array([pts[0], pts[0] + Vector2(7, 0), pts[3] + Vector2(7, 0), pts[3]]), col)
+	_plates.draw_string(font, Vector2(x + 16, top + 19), label, HORIZONTAL_ALIGNMENT_LEFT, -1, 16, col.lightened(0.25))
 
 
 ## "P1  P2" for the controllers on a side ("" if none).

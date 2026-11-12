@@ -42,6 +42,8 @@ const VIDEO := [
 		"hint": "Smooths jagged edges. Higher costs frame rate."},
 	{"key": "max_fps", "label": "FRAME CAP", "values": [0, 60, 120, 144, 240], "names": ["None", "60", "120", "144", "240"],
 		"hint": "Caps the frame rate (with VSync off) to keep the PC cooler and quieter."},
+	{"key": "blood", "label": "BLOOD", "values": [true, false], "names": ["On", "Off"],
+		"hint": "Fights: a hurt fighter bleeds on the big shots. Off: spit only."},
 ]
 
 const ROW_POS := Vector2(80, 178)
