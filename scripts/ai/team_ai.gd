@@ -14,6 +14,7 @@ var opp_goalie: Goalie
 var puck: Puck
 var rink: Rink
 var difficulty := 0.5     ## 0 = rookie .. 1 = legend
+var catch_up := 0.0       ## 0..1: catch-up AI (two or more goals down): thinks a little quicker
 var offsides := true      ## stay onside: supporters wait outside the zone until the puck is in
 var shootout := false
 var bench_gate := Vector3.ZERO
@@ -30,6 +31,20 @@ func _init(p_team: int, p_skaters: Array[Skater], p_opponents: Array[Skater], p_
 	goalie = p_goalie
 	puck = p_puck
 	rink = p_rink
+
+
+## How sharp the brains play: the difficulty, nudged up a little by catch-up.
+func sharpness() -> float:
+	return minf(1.0, difficulty + 0.1 * catch_up)
+
+
+## The other team's net is empty (its goalie pulled, or on the way to or from the bench).
+func net_empty() -> bool:
+	if opp_goalie == null:
+		return false
+	if opp_goalie.benched or opp_goalie.walking() or opp_goalie.net == null:
+		return true
+	return opp_goalie.global_position.distance_to(opp_goalie.net.global_position) > 3.5
 
 
 func role_of(s: Skater) -> Role:

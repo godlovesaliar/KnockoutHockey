@@ -1,6 +1,8 @@
 # Knockout Hockey — Design Document
 
-*Living document. Version 0.1 — 2026-11-05.*
+*Living document. Version 0.2 — written 2026-11-05, checked against the build 2026-11-12.*
+
+Sections 1–9 describe the game as designed. Anything in them that isn't in the build yet is marked *(not built yet)*; §13 has the milestone status and §14 the open work. Section 10 is how it's built.
 
 ---
 
@@ -10,7 +12,7 @@
 
 - **Platform:** PC (Windows), keyboard and controller. Personal project; no plans for consoles or a commercial release.
 - **Players:** 1–4 local, co-op and versus.
-- **First mode:** Exhibition. Season, playoffs and management come later.
+- **Modes:** Exhibition, Knockout Mode (a card of fights, §10.5 M3) and Practice. Shootout mode, Season, playoffs and management come later (they're "coming soon" on the menus).
 
 ### 1.1 Design pillars
 
@@ -26,38 +28,43 @@
 
 ### 2.1 Match settings (all configurable before a match)
 
+Set on the rules screen before an exhibition (`RulesSelect.RULES`); the saved defaults are under RULES AND OPTIONS > RULES.
+
 | Setting | Options | Default |
 |---|---|---|
 | Format | 5v5 + G, 3v3 + G | 5v5 |
-| Period length | 1–20 min (game clock) | 3 min |
+| Period length | 1, 2, 3, 5, 7, 10, 20 min (game clock) | 3 min |
 | Periods | 3 (fixed for now) | 3 |
 | Overtime | Off / Sudden death / Shootout / Sudden death → Shootout | SD → Shootout |
-| OT length | 1–10 min | 3 min |
+| OT length | 1, 3, 5 min | 3 min |
 | Shootout rounds | 3 / 5, then sudden death | 3 |
 | Offsides | On / Off | On |
 | Icing | On / Off | On |
 | Penalties | On / Off | On |
 | Fighting | On / Off | On |
-| Injuries | On / Off | On |
 | Line changes | Auto / Off (fatigue disabled) | Auto |
 | CPU difficulty | Rookie / Pro / All-Star / Legend | Pro |
+| Camera | Broadcast / Close / Side / High (§7.1) | Broadcast |
+| Camera turns | Never / With my team | Never |
+| Injuries | On / Off | On |
 | Catch-up AI | On / Off | Off *(to be tested, see §12)* |
 
 ### 2.2 Rules (when enabled)
 
-- **Offsides:** standard rule with delayed offside (the play continues until the attacking team touches the puck in the zone).
-- **Icing:** hybrid icing (the whistle blows once the defender wins the race to the faceoff dot line). No icing while shorthanded.
-- **Penalties:** called automatically from contact events.
-  - *Minor (2:00):* tripping (poke check that hits the skater, not the puck), hooking, high-sticking, holding, charging (a check started with too much distance), boarding (a hit from behind near the boards), interference (hitting a player without the puck after a grace period).
-  - *Major (5:00):* fighting (both players).
-  - Delayed penalty: the referee's arm goes up, the offended team can pull its goalie, and the whistle blows when the penalized team touches the puck.
-  - Penalty severity depends on the referee's "strictness" (a hidden variable, scaled by difficulty).
+- **Offsides:** delayed offside: the linesman's arm goes up and play goes on until the puck leaves the zone or every attacker tags up; an attacker touching the puck in the zone first blows it dead.
+- **Icing:** no-touch icing (any touch cancels it). No icing while shorthanded. *(Hybrid icing, a race to the faceoff dot line, was the original plan.)*
+- **Penalties:** called automatically from contact events; the referee rolls whether each foul is called (`MatchDirector.FOUL_CHANCE`).
+  - *Minor (2:00), built:* tripping (a poke check that hits the skater, not the puck), boarding (a hit from behind near the boards), interference (hitting a player without the puck after a grace period).
+  - *Minor, not built yet:* hooking, high-sticking, holding, charging (a check started with too much distance). The announcer CSV already has hooking, slashing, roughing and high-sticking calls waiting for them.
+  - *Major (5:00):* fighting (both players, offsetting, so no power play).
+  - Delayed penalty: the referee's arm goes up and the whistle blows when the penalized team touches the puck. The team with the puck can pull its goalie for an extra attacker meanwhile (§4.7); the computer does once it has the puck out of its own zone.
+  - How often fouls get called depends on the referee's **strictness**, a hidden variable rolled each game: about 0.85 (Rookie) to 1.1 (Legend) plus a random spread, clamped to 0.65–1.35. It scales each foul's call chance (`MatchDirector.ref_strictness`; `-- ref=<x>` sets it, `-- reflog` prints it).
 - **No ejections.** This is a deliberate design choice.
 - In **3v3**, penalties produce 4v3 power plays (capped at 5v3 for 5v5).
 
 ### 2.3 Flow of play
 
-Opening faceoff, then open play until the whistle (goal, offside, icing, frozen puck, penalty, puck out of play, or the period ending), then a faceoff at the matching dot. There's a short intermission between periods with a Zamboni scene (skippable). Three stars are shown after the match.
+Matchup intro, period-opener walkout, opening faceoff, then open play until the whistle (goal, offside, icing, frozen puck, penalty, puck out of play, or the period ending), then a faceoff at the matching dot. Between periods there's the intermission stats screen with hot and cold players, and the organ; a Zamboni scene is planned (skippable) *(not built yet: waiting on a Zamboni model)*. Three stars are shown after the match.
 
 ---
 
@@ -85,23 +92,25 @@ The whole game is playable with a controller, including typing names (the on-scr
 
 - **One-timer:** press or hold shoot while a pass is on its way to you, and you shoot the moment it arrives.
 - **Pass targeting:** a pass goes to the teammate closest to the direction of the left stick (65° cone; the angle weighs much more than distance). The stick direction is remembered for `Skater.AIM_MEMORY` (0.35 s), because players usually let the stick go a moment before the pass button. A pass leads a moving receiver by at most `PASS_LEAD_MAX` (3 m), bends gently onto the receiver's stick over the last few meters (`Puck.PASS_HOMING`), and the intended receiver catches it within `INTENDED_REACH` (1.5 m). With the stick in neutral, it goes the way the skater faces.
-- **Keyboard:** Q (keyboard 1) / Num6 or M (keyboard 2) skate backwards.
 - **Goalie control:** when your goalie has puck control (covered or holding it), the human takes control of the goalie: Cross = pass out, Square = clear the puck (shoot it up ice), Triangle = cover it for a faceoff. After that, the goalie goes back to AI.
 
 ### 3.2 Keyboard
 
-| Action | Key |
-|---|---|
-| Move | WASD |
-| Pass / Switch | J |
-| Shoot / Hook | K |
-| Check | L |
-| Deke / Poke | I |
-| Turbo | Left Shift |
-| Protect / Block | Space |
-| Pause | Esc |
+| Action | Keyboard 1 | Keyboard 2 |
+|---|---|---|
+| Move | WASD | Arrow keys |
+| Pass / Switch | J | Num1 or , |
+| Shoot / Hook | K | Num2 or . |
+| Check | L | Num3 or / |
+| Deke / Poke | I | Num5 or ; |
+| Turbo | Shift | Num0 or Ctrl |
+| Protect / Block shot | Space | NumEnter or ' |
+| Skate backwards | Q | Num6 or M |
+| Fight block (R1) | U | Num4 or N |
+| Pause | Esc | Esc |
+| Camera angle | C | C |
 
-All bindings can be remapped. Keyboard player 2 uses the arrow keys and numpad (stretch goal).
+F3 shows or hides the FPS counter. The bindings live in code (`HumanBrain.KB1` / `KB2` / `PAD`, `InputRouter`); there's no remapping screen yet *(not built yet)*.
 
 ### 3.3 Fight controls (mini-game, §5)
 
@@ -110,7 +119,7 @@ All bindings can be remapped. Keyboard player 2 uses the arrow keys and numpad (
 | Left stick | Toward / away from the other fighter (on screen): step in / back off. Up / down: slip a punch |
 | Cross (A) | Jab (lead hand, fast, light) |
 | Square (X) | Cross (rear hand, straight) |
-| Triangle (Y) | Hook (lead hand, big, visible windup) |
+| Triangle (Y) | Hook (dominant hand, like the cross; big, visible windup) |
 | L1 (hold) | Modifier: the three punches go to the body (less damage, more balance, drain stamina); with R1, block low |
 | R1 (hold) | Block high (head shots); with L1, block low (body shots). Much less damage, costs stamina; the wrong guard lets the punch through |
 | Circle (B) | Grab the jersey. While holding, the free right hand punches: Cross = right to the body, Square = right hook, Triangle = uppercut (the same for every style; no jab). Held: mash Circle to break free. Holding while they're getting loose: mash Circle to hang on. Every press costs stamina on either side |
@@ -160,7 +169,8 @@ Presses during a punch or a stagger are buffered (0.3 s), so mashing a combo wor
 
 - **Hit power** = relative velocity × checking stat × windup bonus, compared against the victim's balance (durability/strength).
 - Outcomes by power: **bump** (the victim stumbles and may lose the puck), **check** (knocked down, recovery in about 1 s), **big hit** (ragdoll-style fall, slow-mo, crowd roar, camera shake).
-- **Hits into the boards** add a multiplier. At a very high power, a **glass break** happens: the panel shatters, there's a stoppage, and a short cutscene of the repair crew (it can only happen once or twice per game).
+- **Hits into the boards** add a multiplier (×1.4). At a very high power, a **glass break** happens: the panel shatters, there's a stoppage, and a short cutscene of the repair crew (it can only happen once or twice per game). As built: a big hit into the boards with power 19+ (after balance and the boards) breaks the pane behind the victim 60% of the time, a second one 25%, never more than two a game, and never where there's no glass (the open bench fronts, the box doors). The pane goes, jagged teeth stay in the frame, 150 shards fly (most into the seats, some onto the ice, where they lie until the repair), "GLASS SHATTERED!", a big crowd roar, longer slow motion and shake, and the whistle a second later. The stoppage plays its cutscene (after the penalty call, if there is one): the hole up close, then wider as the new pane is lowered in. *(No repair crew yet: the pane comes down on its own.)* `-- glasstest` breaks one a moment into play.
+- As built, a big hit is a knockdown clip (not a ragdoll), 0.45 s of slow motion, camera shake, a "BIG HIT!" / "CRUSHED INTO THE BOARDS!" banner, the hitter's bench cheering and a saved replay.
 - Hits always risk penalties (§2.2) and can trigger injuries (§4.8) and fights (§5).
 
 ### 4.6 Defense
@@ -173,13 +183,13 @@ Presses during a punch or a stagger are buffered (0.3 s), so mashing a combo wor
 
 - Fully AI by default, with positioning driven by stats (angle, depth), save animations chosen from the shot vector (butterfly, glove, blocker, pad kick, stack), and rebound control.
 - Goalie control goes to the human only once the goalie has the puck (§3.1).
-- **Pull the goalie** (stretch goal for exhibition): delayed penalty or late game, from the pause menu or a hotkey.
+- **Pull the goalie:** delayed penalty or late game, from the pause menu (GOALIE) or Select / G in play. The goalie skates to the bench door nearer their net (7.5 m/s) and, once off, the freshest forward comes on through the other door. Putting them back: the skater nearest the bench heads off while the goalie skates back to the crease. A goalie pulled for a delayed penalty comes back at the whistle; otherwise they stay off for a faceoff outside their own zone. The computer pulls when the other team has a delayed penalty, or when it's down one or two in the last period of regulation with 12% of the period left (20 s at least, 2 min at most; 1.6x that down two), once it has the puck out of its own zone, and puts the goalie back when it's no longer behind. The HUD hints at it when it makes sense, the tab under the clock says EMPTY NET, the other team's AI shoots at an empty net from anywhere with a lane, and a goal into it is an EMPTY-NET GOAL (no goal against for the goalie). `-- pulltest` (the away team pulls a few seconds in) and `-- pulltest=late` (the away team is down one with 25 s left).
 
 ### 4.8 Stamina, line changes, injuries
 
 - Each skater has stamina; fatigue reduces speed, shot power and checking.
 - **Auto line changes** on the fly when the active line's average stamina drops below a threshold and the puck is out of the defensive zone, or at stoppages. Forward lines F1–F4 and D-pairs D1–D3 in 5v5; 3v3 rotates groups of three.
-- **Injuries:** a small chance after big hits or fights, scaled by durability. The injured player leaves for the rest of the game and lines are rebuilt automatically. Injuries carry over in season modes (later).
+- **Injuries:** a small chance after big hits or fights, scaled by durability. The injured player leaves for the rest of the game and lines are rebuilt automatically. Injuries carry over in season modes (later). As built (with the Injuries setting on): a big hit hurts the player hit 3.5% of the time (×1.6 into the boards), the loser of a fight 12% (×2 if knocked out); durability scales both from 1.7× (frailest) to 0.4× (toughest). At most two a team, and only while the team still has a spare forward and defender. A player hurt in play stays down; the whistle goes when their team touches the puck, or after 4 s. At the stoppage they're helped slowly to the bench and sit there, an INJURY lower third says they're out for the game, and the lines are rebuilt without them. `-- injurytest` hurts a home skater a moment into play.
 
 ---
 
@@ -187,9 +197,9 @@ Presses during a punch or a stagger are buffered (0.3 s), so mashing a combo wor
 
 ### 5.1 How fights start
 
-1. **The prompt:** after a hit above the "fight threshold", or after a scrum around the goalie, the **victim's team gets a prompt** ("Drop the gloves? A / B", about 2 s). If they accept, a fight starts with the hitter (or the nearest enforcer on the opposing team).
-2. **Forced fights:** if the hit is far above the threshold, or the opponent is high in **aggression**, the opponent (CPU or AI-controlled) can **start the fight on their own with no prompt**. The hit victim's team can't refuse.
-3. **Tension meter (hidden):** each team builds tension from repeated big hits, hits on stars and goalie contact. Higher tension lowers the threshold. The meter resets after a fight.
+1. **The prompt:** once the hit team's tension passes the threshold, the **victim's team gets a prompt** ("Drop the gloves? Cross / Circle", 3 s, play stopped). If they accept, their toughest skater on the ice fights the hitter (or the hitter's toughest teammate, if the hitter won't fight). *(A scrum around the goalie as a trigger: not built yet.)*
+2. **Forced fights:** if the hitter is high in **aggression** (70+) and the tension is well past the threshold, they **start the fight on their own with no prompt**. The hit victim's team can't refuse.
+3. **Tension meter (hidden):** each team builds tension from the hits it takes (big hits most, more into the boards); it slowly decays, and fights are at least 200 s of play apart. The meter drops after a fight or a refusal. *(Extra tension for hits on stars and goalie contact: not built yet.)*
 
 AI teams decide whether to accept or start fights based on the player's fighting stat, aggression and the score/situation.
 
@@ -202,36 +212,36 @@ AI teams decide whether to accept or start fights based on the player's fighting
   - **Boxer:** quick, tight punches that are cheap on stamina but hit a little lighter.
   - **Brawler:** wide haymakers that hit harder and drain more balance, cost more stamina and are easier to slip.
   - **Grinder:** short, compact punches that hit balance and stamina harder.
-  - **Reach is the body, not the style.** Whether a punch can land is measured from the punching shoulder to where it lands, in the thrower's own arm lengths (`Fight._need`; the arms scale with height, `BodyBuild`): each move gets a share (`MOVES` reach: jab 1.02, crosses 1.0, hooks 0.95 on a bent arm, grab 1.05), called `STEER` (0.2 s) before contact with slack (`REACH_EARLY`: the punch is still turning the shoulders and lunging in) so the hand can be eased onto the target, and judged again for real at contact, reach, slip and guard alike, so the defender's time to react is unchanged (out of reach then, the arm straightens at the target and stops short). Each style clip has its own body turn while it's thrown (`STYLE_CLIPS` yaw / body_yaw, calibrated with `-- fightdebug fightmove=<move> fightstyle=<n> fightyaw=<rad>`, about 0.67 m sideways per rad): the one stance turn for every clip sent most fists 15–40 cm to the side; calibrated, they arrive within about 10 cm sideways. They still come in at chest height (head shots lift 15–25 cm, eased over `STEER`). A taller fighter lands from further off. The computer keeps its distance hip to hip in its own arm lengths (`AI_REACH`, by aggression, plus `AI_STYLE` reach: the boxer at the end of its punches, the brawler crowding in); not from the shoulder, since in the stance the rear shoulder sits well back until the punch turns the body.
+  - **Reach is the body, not the style.** Whether a punch can land is measured from the punching shoulder to where the knuckles land, in the thrower's own arm lengths (`Fight._need`; the arms scale with height, `BodyBuild`; the arm is measured to the wrist bone, so the knuckles are `FIST`, 9 cm at scale 1, further on, and the reach IK holds the wrist that much short of the target): each move gets a share (`MOVES` reach: jab 1.02, crosses 1.0, hooks 0.95, grab 1.6 to the collar with an open hand). From `STEER` (0.2 s) before contact the punch is called every tick with slack (`REACH_EARLY`: the punch is still turning the shoulders and lunging in), so the glove goes where the call says: a miss can come into reach, and a hit turns into a block (glove onto the forearms) the moment the guard comes up, or back if it drops; once steered it isn't dropped. At contact it's judged for real, reach, slip and guard alike, so the defender's time to react is unchanged; a steered punch gets `REACH_STEERED` (0.05) slack there. Out of reach, the arm straightens and the glove visibly stops short. (It used to be called once, 0.2 s out: some punches wind up faster than that, so the call came on their first frame, before the step and the shoulder turn. In playtests punches visibly landed but didn't count, and in AI sims the early call disagreed with contact on 59 of 125 punches: 24 steered onto the target and then judged out of reach by a few cm or blocked, 29 not steered but counted. Now 6 of 159, all visibly short.) Each style clip has its own body turn while it's thrown (`STYLE_CLIPS` yaw / body_yaw, calibrated with `-- fightdebug fightmove=<move> fightstyle=<n> fightyaw=<rad>`, about 0.67 m sideways per rad): the one stance turn for every clip sent most fists 15–40 cm to the side; calibrated, they arrive within about 10 cm sideways. They still come in at chest height (head shots lift 15–25 cm, eased over `STEER`). A taller fighter lands from further off. The computer keeps its distance hip to hip in its own arm lengths (`AI_REACH`, by aggression, plus `AI_STYLE` reach: the boxer at the end of its punches, the brawler crowding in); not from the shoulder, since in the stance the rear shoulder sits well back until the punch turns the body.
   - The style shows on a colored tag by each fighter's name on the HUD, and on the "drop the gloves?" prompt, with a one-line read on the other fighter's style (`Fight.STYLE_BLURBS`).
   - The computer fights each style its own way (`Fight.AI_STYLE`): the **boxer** stays at the end of the jab, reads and slips more, counters a blocked or slipped punch with a straight right and backs off to breathe early; the **brawler** walks you down, swings big and often, guards and slips less, fights until it's nearly empty and jumps on a hurt fighter; the **grinder** grabs a lot, hangs on harder, digs to the body, and answers a blocked punch by tying you up.
-  - `-- fightstyle=<a>[,<b>]` forces the styles for testing (with `fighteven`, both on the same ratings, to weigh the styles alone); the `KH_FIGHT_LOG` result names both styles and the winner. At equal ratings the boxer still wins most (12–3 over the brawler, 9–5 over the grinder; grinder 9–6 over brawler): to be evened out once reach comes from the body instead of the clip.
+  - `-- fightstyle=<a>[,<b>]` forces the styles for testing (with `fighteven`, both on the same ratings, to weigh the styles alone); the `KH_FIGHT_LOG` result names both styles and the winner. At equal ratings the boxer still wins most (12–3 over the brawler, 9–5 over the grinder; grinder 9–6 over brawler): measured before reach moved to the body; still to be rechecked and evened out (§12).
 - **Grounded rules:** fighters grab jerseys, trade punches, tie up and wrestle. Grabbing pulls the two together, drains the held fighter's balance, makes your punches hit 15% harder (and cost 30% more) and swaps in a one-handed set (cross, right hook, uppercut); the held fighter can't slip and mashes to break free while the holder mashes to hang on (strength-weighted, every press costs stamina). Head and body punches (L1) need the matching high or low block (R1, R1+L1). Slipping (stick up / down) beats hooks if timed right. Range matters: step in to land, back off (out of reach, stamina comes back twice as fast). Backing off is slower than stepping in and only reaches just past a jab (`FIGHT_GAP_MAX`), and hanging back out of range for `STALL_TIME` gets the pair shoved back together by the linesman, so nobody can run out the clock. A clean hit leaves the one hit reeling until just after the thrower recovers (`HIT_EDGE`), so landing first wins the next exchange; only for `CHAIN_EDGE` hits in a row, after which the one taking them recovers first (no stun-locks). A blocked punch holds the blocker in their guard until just before the thrower recovers. Stamina is two layers: wind, refilled up to a ceiling that every punch thrown wears down (misses more, never below 40%), shown as a dark block on the HUD bar; low wind means slower, softer punches and a guard that leaks more. Grabs go past a guard, a punch beats a grab; tie-up presses count strength, balance and wind against the other's; the computer mashes at a human pace and grabs mostly when the other is covering up or it is winded. A winded computer fighter backs off to get its wind back and comes back in at its style's line or near its worn-down ceiling, whichever is lower (waiting for a line above the ceiling, both fighters used to hang back and run out the clock); it fights on if the other is just as gassed, only covers up within the other's reach (a guard costs wind), and the other closes at full speed while it's too far to throw. Wind comes back faster past the other's arm (`AI_REACH[2]` of it). Fights run up to 40 s. **Rocked:** clean damage builds a shock meter (heavy shots and low durability faster; it drains quickly, so it takes a burst); past `ROCK_AT` of full health (easier the more hurt they are), or an uppercut on the chin under half health, the fighter is rocked: the clinch breaks and they're knocked apart, they wobble on the `dizzy_idle` loop, take 30% more, punch 25% softer and slower and pull weaker in a tie-up, and once under 35% health and a second into it a heavy clean shot drops them. Recovery fills slowly standing in, 3.5x covering up, 2x backed off, 2.5x tying them up; clean hits knock it back. The computer covers up high when rocked and goes for the finish when the other is. HUD: a banner and "ROCKED — COVER UP n%". The clinch uppercut is the right-hand uppercut half of `elbow_uppercut_combo` (1.0–1.75 s). Mixamo's `uppercut` is left-handed and, even mirrored (`uppercut_mirrored`, `MIRRORED` in tools/build_characters.gd), spins the hips about 95° (to about 130° off square), which at clinch range turned the thrower side-on with the punch swinging across the body; the clinch hook (`punching`) also plays without the stance turn (`yaw` 0).
 - **Feel (as built):** full-body Mixamo clips (legs and hips move; the pelvis is held over its spot so clips that step don't lunge through the other fighter), fists closed by the rig (`SkaterRig.fist`), and at contact the punching hand is pulled onto the other's face, chin or ribs, or onto their raised guard, by per-arm reach IK (`SkaterRig.reach_w` / `reach_world`); grips put the lead hand on the other's jersey the same way. The pair glides along a slowly circling axis: lunges, knockback on clean shots, the pull of a grip. Heavy shots get a short hitstop and camera shake. Every clean blow staggers the one hit for a moment.
-- **HUD** (`FightHud`, in the menu style like the match's TV graphics, on the 1600 x 900 design canvas): a slim header across the top, each fighter's dark strip mirrored either side of a small steel clock: a team-color stripe, the crest, name and style (in its color), one health bar and two hairlines under it, balance (yellow) and stamina (blue), no labels. They drain toward the outside, with a white chunk for damage just taken and the stamina tank worn away for the rest of the fight shaded in; the strip of the one hit jolts. Under a strip, a tab only for what the human has to act on (HOLDING, HELD — BREAK FREE, ROCKED; winded, wobbly and guards show in the meters and the fighter) and, for a human only, short coaching call-outs. Banners wipe in across the middle ("#2 HAYWOOD GOT ROCKED!") and quick calls show in a navy tab, as in a match. At the bottom, one strip with the controls that matter now on the human's own buttons (the clinch set while holding, the struggle while held), softened after the first seconds. `KH_FIGHT_LOG=1` prints each result. `-- fightdebug` marks every contact (red: where the clip alone put the fist, before the reach IK; green: where the punch lands) and prints a `[reach]` line: the gap, split into along the line (+ past, − short), up and sideways, and the target's distance from the shoulder in arm lengths (over 1: the arm can't get there); `tools/reach_report.py <logs>` sums them up. Measure in a window (headless runs agree, but check). First measurement (302 contacts, 2026-11-11): the IK moved the fist about 30 cm on average and over 15 cm on 82% of clean hits, mostly short, low and off to the side; crosses and hooks were worst (40–50 cm), jabs best (20 cm); 40% of hits landed beyond a fully stretched arm, most of all the boxer's cross and hook from its longer AI range and the shorter (female) bodies. **Hit feedback:** a clean hit flashes a starburst where it lands, jolts the hit fighter's bars, adds a short hitstop (longer on heavies) and, for a human who took it, flashes the screen edges red; head shots spray spit, and under half health blood too (more the more hurt), leaving spots on the ice until the fight ends. Blood is an option (VIDEO > BLOOD, on by default); off leaves the spit.
-- **The fight ends** when: one fighter is **knocked down** (health or balance at 0), both are exhausted, or a time limit is hit (25 s), and the linesmen break it up.
-- **The winner** is whoever knocked the other down, or did more damage if no one did. A draw is possible.
-- Short, readable animations: windups are clearly visible, and nothing sends anyone flying. It ends with a "helmet off, sent to the box" walk-off.
+- **HUD** (`FightHud`, in the menu style like the match's TV graphics, on the 1600 x 900 design canvas): a slim header across the top, each fighter's dark strip mirrored either side of a small steel clock: a team-color stripe, the crest, name and style (in its color), one health bar and two hairlines under it, balance (yellow) and stamina (blue), no labels. They drain toward the outside, with a white chunk for damage just taken and the stamina tank worn away for the rest of the fight shaded in; the strip of the one hit jolts. Under a strip, a tab only for what the human has to act on (HOLDING, HELD — BREAK FREE, ROCKED; winded, wobbly and guards show in the meters and the fighter) and, for a human only, short coaching call-outs. Banners wipe in across the middle ("#2 HAYWOOD GOT ROCKED!") and quick calls show in a navy tab, as in a match. At the bottom, one strip with the controls that matter now on the human's own buttons (the clinch set while holding, the struggle while held), softened after the first seconds. `KH_FIGHT_LOG=1` prints each result. `-- fightdebug` marks every contact (red: where the clip alone put the fist, before the reach IK; green: where the punch lands) and prints a `[reach]` line: the gap, split into along the line (+ past, − short), up and sideways, and the target's distance from the shoulder in arm lengths (over 1: the arm can't get there); `tools/reach_report.py <logs>` sums them up. `-- fightlog` (on with fightdebug too) writes every punch's call to `user://fight_calls.log` and the console: time, YOU / cpu, style, move, how far it had to go against its reach, the call on the way in and at contact, and why it missed (out of reach, slipped) or which guard took it. Measure in a window (headless runs agree, but check). First measurement (302 contacts, 2026-11-11): the IK moved the fist about 30 cm on average and over 15 cm on 82% of clean hits, mostly short, low and off to the side; crosses and hooks were worst (40–50 cm), jabs best (20 cm); 40% of hits landed beyond a fully stretched arm, most of all the boxer's cross and hook from its longer AI range and the shorter (female) bodies. **Hit feedback:** a clean hit flashes a starburst where it lands, jolts the hit fighter's bars, adds a short hitstop (longer on heavies) and, for a human who took it, flashes the screen edges red; head shots spray spit, and under half health blood too (more the more hurt), leaving spots on the ice until the fight ends. Blood is an option (VIDEO > BLOOD, on by default); off leaves the spit.
+- **The fight ends** when: one fighter is **knocked down** (health or balance at 0), both are out of wind for 4 s, or the time limit is hit (40 s), and the linesmen break it up.
+- **The winner** is whoever knocked the other down, or did more damage if no one did (within 8% of each other is a draw).
+- Short, readable animations: windups are clearly visible, and nothing sends anyone flying. Helmets come off as they square up; afterwards both skate to the box (§10.5 M6). A short **winner's skate / taunt** (a few seconds, skippable, winner only) is planned *(not built yet)*.
 
 ### 5.3 Consequences
 
 | Result | Effect |
 |---|---|
-| Both fighters | 5:00 major (if penalties are on). Fatigue applied. |
-| Winner's team | **Momentum boost**: +stats for 60–90 s of game time (speed, checking, shot accuracy), crowd boost if home. |
-| Loser | Small chance of injury (if injuries are on). |
-| Both | Tension meter resets. |
+| Both fighters | Offsetting 5:00 majors (if penalties are on): no power play. |
+| Winner's team | **Momentum** for 75 s of game time: +5% top speed, +10% hit power. The winner's bench cheers; the crowd cheers a home win and boos an away one. *(Shot accuracy in the boost and a lasting crowd boost: not built yet.)* |
+| Loser | Small chance of injury (if injuries are on, §4.8): helped to the bench instead of the box, out for the game. |
+| Both | Tension meter drops. |
 
-No ejections. If penalties are off, fighters sit out a short cooldown on the bench instead.
+No ejections. If penalties are off, fighters sit out 60 s instead. Knockout Mode skips all of this (no box, faceoff or momentum).
 
 ---
 
 ## 6. AI
 
-- **Team AI:** a simple tactical role system. Each skater has a role per situation (forecheck F1/F2/F3, breakout, cycle, power play / penalty kill box, defensive coverage). Each role is a target position + behavior, recalculated a few times a second.
-- **Skater decisions:** utility scoring for pass / shoot / skate / deke / dump in, weighted by stats and personality (aggression, selfishness).
-- **Difficulty** scales reaction time, decision quality, pass/shot accuracy and goalie positioning. It does not boost stats.
-- **Catch-up AI** (rubber-banding): an optional toggle that's off by default. To be tested in playtesting (§12).
+- **Team AI:** a simple tactical role system. As built (`TeamAI.Role`), every tick each AI skater gets a role: with the puck, carrier, receiver, slot support, point support (two) or net-front support; without it, chase a loose puck, pressure the carrier, cover the slot or mark a man; plus heading off for a change. Each role is a target position + behavior. *(Set plays, forecheck F1/F2/F3, breakouts, cycles and power play / penalty kill boxes: not built yet.)*
+- **Skater decisions:** utility scoring for pass / shoot / skate / deke / dump in, weighted by stats and personality (aggression, selfishness). AI skaters steer around the nets (§10.5).
+- **Difficulty** scales how often the AI thinks (reaction time), one-timer and check choices, and the computer's faceoff timing. It does not boost stats. *(Pass/shot accuracy and goalie positioning by difficulty: not built yet; tuning is in §12.)*
+- **Catch-up AI** (rubber-banding): an optional toggle that's off by default. To be tested in playtesting (§12). As built, it's deliberately subtle and helps whichever team is down two or more, human or computer: at three or more down, +3% top speed, 15% tighter and 3% harder shots and AI decisions as if 0.1 more difficulty; down two, 60% of that.
 
 ---
 
@@ -239,19 +249,20 @@ No ejections. If penalties are off, fighters sit out a short cooldown on the ben
 
 ### 7.1 Camera
 
-- **Vertical (end-to-end) broadcast camera**, high angle, follows the puck with a small lead in the direction it's moving and soft bounds at the end boards. The side-on horizontal camera may be added later as an option.
-- Zooms in for faceoffs, fights, goal celebrations and replays.
-- Shake/slow-mo on big hits and glass breaks (short, can be turned off in settings).
+- **Vertical (end-to-end) broadcast camera** by default, high angle, follows the puck with a small lead in the direction it's moving and soft bounds at the end boards. Four play angles in all (Broadcast, Close, Side, High), picked on the rules screen or in the pause menu; Side is the horizontal camera (§10.5 M6).
+- Cuts to its own shots for the matchup intro, period openers, faceoffs, fights, penalty calls, goal celebrations and replays.
+- Shake and slow motion on big hits (short), longer for a glass break. *(A setting to turn them off: not built yet.)*
 
 ### 7.2 Presentation features
 
-- **Announcer text pop-ups:** "BIG HIT!", "GOAL — #19 Name (assists)", "POWER PLAY", "FIGHT!", "GLASS SHATTERED!"
-- **Goal replays:** a ring buffer records about 8 s of transforms and states. After a goal, you get an instant replay with an alternate camera. Skippable.
-- **Three stars** after the match, chosen by goals, assists, saves, hits and fight wins.
-- **Zamboni intermission** between periods (skippable), plus a period stats summary.
-- **Crowd** that reacts to goals, hits, fights and near misses. More crowd energy for the home team.
-- **Arena atmosphere:** a goal horn, goal light, organ stings after stoppages.
-- **Music:** a mix of synth/retro, rock and organ. Rock and synth for the menus, organ and arena music during stoppages.
+- **TV graphics:** banners ("BIG HIT!", "GOAL!", "POWER PLAY", fight results), the scorebug, goal and penalty lower thirds (§10.5 M6). Also "GLASS SHATTERED!", "EMPTY-NET GOAL!", the INJURY lower third and the EMPTY NET tab.
+- **Replays:** a 14 s ring buffer of every player's pose and the puck. Goals and knockouts replay right away; big hits are saved for the next stoppage or the end of the period. Skippable.
+- **Three stars** after the match, chosen by goals, assists, saves, hits and fight wins (`BoxScore.rating`).
+- **Intermission:** a period stats screen with hot and cold players. *(The Zamboni scene: not built yet; waits for a model.)*
+- **Crowd** that reacts to goals, hits, fights and near misses, chants for the home team, and stands and cheers in the stands. More crowd energy for the home team.
+- **Announcers:** two voices, play-by-play and color, with duets and banter (§10.5 M5 Sound; open work in §14).
+- **Arena atmosphere:** a goal horn and organ (an upbeat piece through stoppages, the charge as a home attack builds). *(A goal light: not built yet.)*
+- **Music:** a rock / hip-hop playlist in `assets/sound/music/` plays across the menus (`Sfx.play_music`); the organ and crowd carry the games. *(Synth/retro tracks and arena music during stoppages: not yet.)*
 
 ---
 
@@ -259,13 +270,13 @@ No ejections. If penalties are off, fighters sit out a short cooldown on the ben
 
 ### 8.1 League
 
-- Launch build: **4 teams** (to be described by the designer).
-- Goal: **32 teams** across 4 conferences: **East, West, North, South** (8 teams each, possibly two divisions of 4 each — TBD).
-- Each team: name, city, abbreviation, conference, colors (primary, secondary, accent), home and away jerseys, logo (preset for now), home arena, roster, lines.
+- The **KHL** (Knockout Hockey League): **39 teams** in 3 conferences of 13, **East, Central and West** (`Teams.LIST`, listed in §10.5 M5 Teams). The four launch teams (Whalers, Geese, Quahogs, Lobsters) have the designer's colors and crowd chants; every team has a logo and a roster. *(Divisions: undecided, §12.)*
+- Each team: name, city, abbreviation, conference, colors and full uniform palette, jersey design, home and road uniforms, logo, announcer intro, roster, lines. *(A home arena per team: waits for the arena editor; everyone plays in the same building, dressed in the home team's colors.)*
+- League logos (main, championship belt, monogram) are drawn but not in the game yet *(not built yet)*.
 
 ### 8.2 Roster
 
-- 5v5: 12 forwards + 6 defense + 2 goalies (20 players, with 4 forward lines and 3 D-pairs).
+- Planned 5v5 roster: 12 forwards + 6 defense + 2 goalies (20 players, 4 forward lines and 3 D-pairs). **As built**, each team's roster sheet has 15: 8 forwards (3 C, 3 LW, 2 RW), 5 defense, 2 goalies, split in order into forward lines of 3 and D-pairs (`Lineup.build_groups`), so the third line and third pair come up one short (§10.5 M3 Rosters).
 - 3v3: built from the same roster (groups of 3 skaters).
 - **Teams can be all male, all female or mixed.** **Gender has no effect on stats or gameplay**; only stats drive performance and play style. Body size (height and weight) is set per player and is cosmetic plus a small balance/reach effect consistent for everyone.
 
@@ -305,13 +316,17 @@ No ejections. If penalties are off, fighters sit out a short cooldown on the ben
 
 Archetypes are templates for stat distributions and AI personality, used for generating players and as a label in the editor.
 
-- **Forwards:** Sniper, Playmaker, Power Forward, Enforcer, Grinder, Two-Way
-- **Defense:** Offensive D, Defensive D, Enforcer D
-- **Goalies:** Butterfly, Hybrid, Standup
+As built they're the roster sheet's play styles (`playstyle`; `Rosters.STYLE` nudges the ratings):
+
+- **Forwards:** Sniper, Playmaker, Power Forward, Speedster, Grinder, Two-Way
+- **Defense:** Offensive D, Puck-Moving D, Stay-at-Home D, Shutdown D, Enforcer D
+- **Goalies:** Butterfly, Hybrid, Stand-Up, Scrambler
+
+Separately, every skater has a **fighting style** (boxer, brawler, grinder) picked from their ratings (§5.2).
 
 ### 8.5 Appearance
 
-Body: male/female base, height, build, skin tone, face preset, hair style/color, facial hair. Gear: helmet, visor/cage, stick hand (L/R), stick tape color, jersey number. Name on the back.
+Body: male/female base, height, weight (build), skin tone, eye color, hair style/color, facial hair. Gear: helmet or goalie mask model, visor, stick hand (L/R), stick graphics, blade tape, jersey number. Name (or a short nickname) on the back. Roster players' skin tone and helmet are seeded from their name; created players pick everything (§9.2). *(Face presets: not built yet.)*
 
 **Body size (built, `BodyBuild`, scripts/actors/body_build.gd):** each player's height and weight (the roster sheet's `height` / `weight_lbs`, `Skater.height_m` / `weight_kg`) set their size. Height scales the whole body evenly, skates and gear included, so nobody looks stretched: the roster average for the body type (male 6'2" / 92.9 kg, female 5'8" / 71.6 kg) renders at the model's own size, so the rosters run about ±6%. Weight sets the build: width follows the square root of weight / height against the average, and what the height scale hasn't already covered goes to a "build" blend shape on the skin, jersey and pants (rosters about ±0.15, held to −0.2..+0.35). The shape moves each vertex straight out from the axis of the bone it rides on, by a share per bone (`BodyBuild.GIRTH`: most at the belly and hips, some on the upper arms and thighs, none on the head, hands and feet), so every layer moves by the same rule and the jersey stays over the skin; the pants pads fill out to match (`BodyBuild.point`). Made once per body mesh; the skin's comes with the face's jaw and smile shapes (`FaceRig`), and `MeshLod` keeps blend shapes on its simplified levels. Goalies get it too. Check: `CharacterViewer.tscn -- lineup=1 view=lineup pose=hips sizes=<in>x<lb>,...`.
 
@@ -319,7 +334,7 @@ Body: male/female base, height, build, skin tone, face preset, hair style/color,
 
 ## 9. Editors
 
-### 9.1 Team editor
+### 9.1 Team editor *(not built yet)*
 
 - Team identity: name, city, abbreviation, conference.
 - Colors: primary, secondary, accent, plus helmet, pants and gloves colors.
@@ -328,7 +343,7 @@ Body: male/female base, height, build, skin tone, face preset, hair style/color,
 - Home arena: one of the arenas.
 - Roster: add/edit/remove players, build lines.
 
-Main menu **CUSTOMIZE** opens the editors: Create Player, Create Team, Create Arena, Create Uniform and Edit Roster (only Create Player is built so far).
+Main menu **CUSTOMIZE** opens the editors: Create Player, Create Team, Create Arena, Create Uniform and Edit Roster. Only Create Player is built; the rest show as "coming soon".
 
 ### 9.2 Character (player) editor
 
@@ -338,9 +353,9 @@ Main menu **CUSTOMIZE** opens the editors: Create Player, Create Team, Create Ar
 - **Sticks** (`Skater.stick_style`, `stick.gdshader`): Plain Wood, Plain Black, Black on White, White on Black, Home on Away, Away on Home ("X on Y": X graphics on a Y stick; home / away are the club's home and road jersey colors, `Skater.club_colors`). **Blade tape** (`Skater.stick_tape`): White, Black, Team Color (home jersey) or No Tape, wrapped round the middle of the blade with the heel and toe bare; the knob on the butt end stays taped.
 - **Free Agency:** saved players (`user://custom_players.json`) start as free agents (`team` = `CustomPlayers.FREE_AGENT`). **Edit Roster** (Customize, to come) signs them to teams and moves players between teams.
 
-### 9.3 Arena editor
+### 9.3 Arena editor *(not built yet)*
 
-- Base venue: **Indoor Arena** or **Outdoor Rink** (the smaller rink becomes an outdoor venue: snow, open sky, day/night lighting).
+- Base venue: **Indoor Arena** or **Outdoor Rink** (an outdoor venue: snow, open sky, day/night lighting; not built yet either).
 - Center ice logo (from presets or the home team's logo).
 - Ice paint colors (blue lines, red line, crease, faceoff circles).
 - Seat color(s).
@@ -349,7 +364,7 @@ Main menu **CUSTOMIZE** opens the editors: Create Player, Create Team, Create Ar
 - Music playlist (choose from tracks).
 - The rink is always regulation size for gameplay; arenas only change visuals and audio.
 
-All editor output is saved as user data files (§10.3). The built-in teams and arenas use the same format.
+All editor output is saved as user data files (§10.3). Planned: the built-in teams and arenas move to the same format (today the teams are in code, `Teams.LIST`, and the rosters in the CSV).
 
 ---
 
@@ -357,48 +372,57 @@ All editor output is saved as user data files (§10.3). The built-in teams and a
 
 ### 10.1 Engine and setup
 
-- **Godot 4.7**, GDScript, Forward+ renderer, Jolt physics (only used for ragdolls/debris; skaters and puck use custom movement).
-- Physics tick at **120 Hz** for puck precision, with rendering interpolation.
-- Target: 60+ FPS on the designer's PC.
+- **Godot 4.7.2**, GDScript, Forward+ renderer, Jolt physics as the engine's physics server (skaters and puck use custom movement; nothing uses rigid bodies yet).
+- Physics tick at **120 Hz** for puck precision, with physics interpolation.
+- Target: 60+ FPS on the designer's PC (RTX 2070 Super) on Quality graphics; the Performance option is for laptops and integrated graphics (§10.5 M8).
+- 1600 × 900 design canvas for all 2D (menus and HUDs scale from it).
 
-### 10.2 Project structure
+### 10.2 Project structure (as built)
 
 ```
 res://
-  assets/          models, textures, audio (raw imports)
-  data/            built-in teams, players, arenas, presets (JSON)
-  docs/            this document
+  assets/          models, clips, textures, images (logos, ads), fonts, sound, music
+  data/            knockout_hockey_rosters.csv (every team's roster), hockey_announcer_lines.csv (scripts)
+  docs/            this document, ANNOUNCER_TODO.md (generated), logo prompts, handoff notes
   scenes/
-    match/         Match.tscn, Rink.tscn, Puck.tscn, Net.tscn
-    actors/        Skater.tscn, Goalie.tscn, Referee.tscn
-    ui/            menus, HUD, editors
-    fight/         FightArena.tscn (mini-game)
+    match/         Match.tscn, Rink.tscn, Puck.tscn, Net.tscn, Practice.tscn, crowd/ice shaders
+    actors/        Skater.tscn, Goalie.tscn, skin/uniform/face/stick shaders
+    ui/            MainMenu, TeamSelect, RulesSelect, Options, CreatePlayer, Credits
+    tests/         self-tests, the soak, character/arena viewers
   scripts/
-    core/          autoloads: GameSettings, Database, InputRouter, AudioDirector
-    match/         MatchDirector, Rules, Clock, Penalties, Faceoff, Replay
-    actors/        SkaterController, GoalieController, state machines
-    ai/            TeamAI, roles, decision scoring
-    fight/         FightController, FighterState
-    editors/       TeamEditor, PlayerEditor, ArenaEditor
+    core/          autoloads (InputRouter, GameSettings, Sfx, FpsCounter); Teams, Rosters,
+                   CustomPlayers, AnnouncerLines, RinkSpec, MeshLod, MeshUtil
+    match/         MatchDirector, MatchRules, Lineup, TeamControl, KnockoutMode, Practice,
+                   Rink, Arena, Puck, Net, BroadcastCamera, Replay, Cutscene, MatchHud,
+                   Intermission, BoxScore, MatchAudio, PauseMenu
+    actors/        Skater, Goalie, Referee, PlayerStats, BodyBuild, SkaterRig, *Visual, FaceRig;
+                   brains/ (Human, Script, Celebrate, HoldSpot, Ref)
+    ai/            TeamAI, AIBrain
+    fight/         Fight, FightHud
+    ui/            menus, MenuStyle, MenuInput, PadKeyboard
+    editors/       (empty: the team and arena editors go here)
+  tools/           build steps (characters, gear, logos, digits, letters, title, ads), checks
+                   (announcer, roster), sound cutting (cut_sounds.py), blender/ model scripts
 user://
-  teams/ players/ arenas/   editor output
-  settings.json
+  settings.cfg            rules and options
+  custom_players.json     created players
+  fight_calls.log         `-- fightlog` output
 ```
 
 ### 10.3 Data
 
-- JSON files with a `schema_version` field, loaded into typed GDScript classes by the `Database` autoload. Built-in content lives in `res://data/`; user content in `user://`, and user content overrides built-in content with the same ID.
-- Players are referenced by ID from rosters, so a player is defined once.
+- **As built:** the teams are a table in code (`Teams.LIST`); every roster is a row in `data/knockout_hockey_rosters.csv` (read by `Rosters`); created players are JSON in `user://custom_players.json` (`CustomPlayers`); settings are a ConfigFile in `user://settings.cfg`.
+- **Planned:** JSON files with a `schema_version` field for teams, players and arenas, built-in content in `res://data/` and user content in `user://` overriding built-in content with the same ID; players referenced by ID from rosters, so a player is defined once. This comes with the team editor (M7).
 - Seasons and management will add data files (schedule, standings, contracts) without changing the existing ones.
 
 ### 10.4 Key architecture
 
-- **MatchDirector:** owns the match state machine (Pregame → Faceoff → Live → Stoppage → Intermission → Overtime/Shootout → Postgame), clock, score and rule events.
-- **Rules:** listens to puck and contact events and raises offside, icing and penalty calls depending on toggles.
-- **Skater:** `CharacterBody3D` with a state machine (Skating, Shooting, Passing, Checking, Stumble, Down, Fighting, Bench). Inputs come from a `Brain`, either `HumanBrain` (device input) or `AIBrain`. Swapping the brain is how switching and human goalie control work.
-- **Contact events:** a central bus (`hit`, `poke`, `trip`, `shot`, `save`, `goal`, `fight_start`...) feeds rules, presentation, audio, stats and the tension meter.
-- **Replay:** every actor and the puck write transforms and animation states to a ring buffer every tick.
-- **Fights:** a separate scene/state on the same ice; the main match is paused, the two fighters move to a fight controller, and the outcome is passed back to MatchDirector.
+- **MatchDirector:** owns the match phase (`Phase`: INTRO → PREGAME → FACEOFF → LIVE → STOPPAGE → PERIOD_END → SHOOTOUT → FINAL, plus FIGHT), the clock, score, lineups, tension and momentum, and hands Knockout Mode to `KnockoutMode`.
+- **MatchRules:** offside, icing and delayed-penalty logic, depending on the toggles; the director turns skater fouls into calls.
+- **Skater:** `CharacterBody3D`. Inputs come from a `Brain` (`HumanBrain` for a device, `AIBrain`, or scripted brains for cutscenes, celebrations and the referee). Swapping the brain is how switching and human goalie control work.
+- **Events:** signals on the skaters (`pass_released`, `shot_released`, `hit_landed`, `poke_succeeded`, fouls) and the director (`goal`, `whistle_blown`, `penalty_called`, `faceoff_won`, `phase_changed`...) feed the rules, HUD, audio (`MatchAudio`), box score and tension meter.
+- **Replay:** a `ReplayTap` at the end of every skeleton records its finished pose about 30 times a second into a 14 s ring; `Replay` records the puck.
+- **Fights:** `Fight` runs on the same ice while the director sits in `Phase.FIGHT`; the outcome goes back to the director (box, momentum, faceoff), or to `KnockoutMode`.
 
 ### 10.5 Conventions (as of M0)
 
@@ -416,11 +440,11 @@ user://
   - Hit power is closing speed × checking + a lunge bonus, divided by the victim's strength. The bands are bump (< 6), knockdown (< 12.5) and BIG HIT, and hits into the boards count ×1.4.
   - Team AI hands each AI skater a role every tick. With the puck: carrier, slot support, point support. Without it: pressure, cover the slot, mark a man, or chase a loose puck. The human-controlled skater is left out of the role assignment.
   - Faceoffs are a timing press (A or X) on the drop. Pressing early makes your press count as late.
-  - More tests: `M2SelfTest.tscn` (goalie, checks, pokes) and `MatchSoak.tscn` (full AI-vs-AI games, `-- games=3 period=45`).
+  - More tests: `M2SelfTest.tscn` (goalie, checks, pokes) `MatchSoak.tscn` (full AI-vs-AI games, `-- games=3 period=45`) and `RulesExtrasCheck.tscn` (pulling the goalie by hand and the computer's late pull, injuries, glass breaks, catch-up AI, referee strictness).
 - **M3 additions:**
   - **Entry point:** the main scene is now `scenes/ui/MainMenu.tscn`; an exhibition goes through `TeamSelect.tscn` then `RulesSelect.tscn`, which write `GameSettings.config` / `GameSettings.humans`, which `MatchDirector` reads (tests set `use_game_settings = false`).
   - **Knockout Mode** (Game Modes): `GameSettings.mode = "knockout"`; TeamSelect goes straight to the match (no rules screen) and `MatchDirector` hands over to `KnockoutMode` (scripts/match/knockout_mode.gd) instead of starting a game. Five random skaters per team are drawn and paired off; each pair fights at center ice in the normal `Fight`, ringed by the other eight (the rest sit on the benches). Per bout: KO 3 points, win on points 2, draw 1 each. Best total after five wins; level means sudden-death bouts between random roster players until one is won. No penalties, faceoffs or momentum. `-- knockout` starts it from the match scene; `scenes/tests/KnockoutSelfTest.tscn` runs a full computer-vs-computer card.
-  - **Rosters:** teams in the roster sheet (`data/knockout_hockey_rosters.csv`, the first 12 teams) dress their real players, 8 F + 5 D + 2 G, through `scripts/core/rosters.gd` (`Rosters`): forwards in lines best-first, each line a C/LW/RW where possible; defense in pairs best-first; the higher-rated goalie starts. Ratings map SKA → speed/acceleration/agility, (SKA+PHY)/2 → endurance, SHT → shot power/accuracy, PAS → passing, HND → puck handling, PHY → checking/strength/durability, DEF → defense, goalie REF/POS/GLV/BLK/RBD one for one (pads = (REF+POS)/2); fighting and aggression come from PHY plus play style (Enforcer D highest, then Grinder and Power Forward). Play styles add small nudges (`Rosters.STYLE`). The sheet's ratings center around 75 (goalies 83), so they're shifted to center on 57, the generated players' level, keeping the gaps between players one for one. Name, number, gender (body), hand, position and play style come from the sheet; skin tone and helmet are seeded from the player's name, so they're the same every game. The CSV is imported with the `keep` importer (not as a translation). `tools/roster_check.gd` prints how the game reads each roster. Teams without rows get generated players: 12 F + 6 D + 2 G. The `Lineup` class owns the forward/defense groups, `on_ice` (shared by reference with the AI and the skaters' teammate lists, so it's only changed in place), the bench and the penalty box. Benched skaters are hidden, with processing and physics off.
+  - **Rosters:** teams in the roster sheet (`data/knockout_hockey_rosters.csv`, all 39 teams) dress their real players, 8 F + 5 D + 2 G, through `scripts/core/rosters.gd` (`Rosters`): forwards in lines best-first, each line a C/LW/RW where possible; defense in pairs best-first; the higher-rated goalie starts. Ratings map SKA → speed/acceleration/agility, (SKA+PHY)/2 → endurance, SHT → shot power/accuracy, PAS → passing, HND → puck handling, PHY → checking/strength/durability, DEF → defense, goalie REF/POS/GLV/BLK/RBD one for one (pads = (REF+POS)/2); fighting and aggression come from PHY plus play style (Enforcer D highest, then Grinder and Power Forward). Play styles add small nudges (`Rosters.STYLE`). The sheet's ratings center around 75 (goalies 83), so they're shifted to center on 57, the generated players' level, keeping the gaps between players one for one. Name, number, gender (body), hand, position and play style come from the sheet; skin tone and helmet are seeded from the player's name, so they're the same every game. The CSV is imported with the `keep` importer (not as a translation). `tools/roster_check.gd` prints how the game reads each roster. Teams without rows get generated players: 12 F + 6 D + 2 G. The `Lineup` class owns the forward/defense groups, `on_ice` (shared by reference with the AI and the skaters' teammate lists, so it's only changed in place), the bench and the penalty box. Benched skaters are hidden, with processing and physics off.
   - **Energy (shift fatigue):** drains at roughly 1/48 per second on the ice and recovers on the bench. Below 1, it scales speed, acceleration and shot power down to 0.82×.
   - **Line changes:** tired groups change at faceoffs, or on the fly via the bench gate on the −X boards when the puck isn't in that team's defensive zone.
   - **Rules (`MatchRules`):** delayed offside (cleared when the puck leaves the zone or everyone tags up), no-touch icing (canceled by any touch, and a shorthanded team can't ice it), and delayed penalties (the whistle goes when the offending team touches the puck).
@@ -434,12 +458,12 @@ user://
   - **Pause menu:** Esc / Start opens `PauseMenu` (the game tree pauses): Resume, Controls (every action for pad and both keyboards), Restart game, Quit to menu; B / Esc / Start backs out. Not over the matchup intro or a stats screen, where those buttons continue. `-- pausemenu` (or `pausemenu=controls`) opens it at once for layout checks.
   - **Matchup intro:** games with the HUD on open on the matchup screen (`Phase.INTRO`): a camera at center ice, each team's logo on a board (Sprite3D) with one of its players standing in front of it in uniform (home on the left), "VS" between, the HUD hidden, everyone else out of sight. It lasts as long as the announcer's intro (at least `INTRO_MIN`, at most `INTRO_MAX`); Enter / A skips it. Then the broadcast camera takes over for the opening faceoff. `-- nointro` skips it; the soak (no HUD) never shows it.
   - **Intermission:** at the end of each period (after the horn and banner) `Intermission` shows both teams in their colors, the score, goals by period, shots on goal, saves, hits, big hits, faceoffs won, penalties and power-play goals; the next period starts when someone presses Enter / Space or A / Start (presses in the first second are ignored). The same screen follows the final horn and returns to the setup menu. AI-only games continue by themselves. The organ plays through the break. `-- statscreen` (or `statscreen=final`) opens it at once for layout checks.
-  - **Teams:** `scripts/core/teams.gd` (`Teams.LIST`) holds the league's 39 teams in three conferences of thirteen (`Teams.CONFERENCES`; each team's `conference`, `Teams.in_conference()`). The four launch teams come first: New Bedford Whalers (red, white, black), Minnesota Geese (green, gold, black), Rhode Island Quahogs (blue, grey, yellow) and Maine Lobsters (white, maroon, green); the rest have palettes taken from their logos and no chants yet. East: Whalers, Quahogs, Lobsters, Burlington Lake Monsters, Adirondack Trailblazers, Mystic Mariners, New Hampshire Granite, Cape Cod Cranberries, New York Rats, Quebec Poutine. Central: Geese, Michigan Mitts, Wisconsin Curds, Lake Superior Gales, Manitoba Moose Jaws, Nashville Twang, Kentucky Moonshiners, Okefenokee Swamp Things, Florida Man, Texas Armadillos. West: Tacoma Geoducks, Roswell Grays, Anchorage Sourdoughs, Portland Lumberjacks, Monterey Otters, Hollywood Stuntmen, Mojave Gila Monsters, Boise Spuds, Seattle Seagulls, Yellowstone Geysers. Expansion teams (added 2026-11-11, at the end of the list so saved team indices hold): East: Carolina Sweet Tea, Philadelphia Jawns, Pine Barrens Campers; Central: Chicago Deep Dish, Mexico City Luchadores, North Dakote (one name, no city); West: Baja Chupacabras, Rocky Mountain Goats, Xochimilco Axolotls. The roster sheet's `display_name` is the name shown (`Rosters.display_name`); the Luchadores have ring names with no last name, so the whole ring name goes where the last name would. Team select steps through teams by conference (`Teams.menu_order`) and shows each team's conference as a colored badge on its name plate (`Teams.CONFERENCE_COLORS`). Every team has a 15-player roster in `data/knockout_hockey_rosters.csv` (its `conference` column agrees with the table; `tools/roster_check.gd` flags any mismatch). Abbreviations match the roster sheet. When the two jerseys are too alike (`Teams.CLASH`), the away team wears road whites with its main color as trim (`Teams.uniform_vs`). Each has a full uniform palette (jersey, trim, pants, gloves, helmet, skates, number face and outline) and its crowd chant. The setup screen picks home and away (`home_team` / `away_team` in `GameSettings`; `-- home=<i> away=<i>` on the command line); the HUD shows team names; the home crowd chants for its own team. Logos: `tools/build_logos.gd` cuts the crests out of the logo sheets in `assets/images/` (`teamlogos.jfif`, `logos2.webp`, `logos3.webp`, `logos4.png`, `logos5.jfif`, `logos6.jfif`, `logos7.jfif`, `logos8.jfif`; one logo per quadrant on a dark background (`logos7` is light: its pale background is the one filled), with per-sheet and per-logo background cutoffs for the sheets with ghost logos behind them: the background is flood-filled from each quadrant's edge, stopped by each logo's solid outer border; stray specks are dropped; soft one-pixel edge) into `assets/characters/logo_<team>.png`. Each player wears the team crest on the jersey front as a `Decal` projected onto the chest (like the back number), and the home team's logo is painted into the ice at center (`Rink.set_center_logo`, 6.4 m wide, over the red line and under the blue circle). The team editor (M7) will replace the table.
-  - **Skin and uniforms:** each vertex gets its body part (torso, arm, leg, hand, foot; the head and neck are bare skin) from its dominant bone, plus its position along that part (torso by height from the hips joint to the neck, limbs from shoulder/hip to wrist/ankle). `scenes/actors/uniform_regions.gdshaderinc` turns those into pants, jersey, socks, gloves and skates per pixel, with the stripes (`hem_band`, `sleeve_band`, `cuff_start`, `sock_band`) as clean anti-aliased bands. Stripe positions are shader uniforms, so a team's design can change them. The uniform is its own skinned layer (`Outfit_*` meshes): every covered triangle is copied, welded across UV seams, smoothed (`CLOTH_SMOOTH_PASSES`) so it drapes instead of showing muscles, and pushed out along the new normals by `cloth_thickness()` (bulkier over pads). It shares the body's bones, so it deforms with every clip. `scenes/actors/uniform.gdshader` colors it per team via `SkaterVisual.uniform_colors()`. Fabric detail is procedural, pinned to the cloth by each outfit vertex's rest-pose position and normal (baked into `CUSTOM0` / `CUSTOM1` by the build step, with the arms swung out to a T-pose by the skin weights, the origin at the base of the neck and the torso scaled to 0.6 m, so A-pose and T-pose bodies get the same pattern sizes and yoke). The chest, belly and hip bulk spheres wear the same uniform material with matching coordinates (`SkaterVisual._cloth_mesh`), so stripes and the yoke carry across them: jersey knit dimples, coarser mesh panels down the sides and under the sleeves, drape folds (rings around the sleeves, long folds down the body) and sewn seams at every stripe edge, cuff and shoulder; quilted, slightly glossy nylon breezers; vertical sock ribbing (around the leg by the rest normal's heading); leather grain on the hands. Height detail becomes per-pixel normals (screen-space bump, no tangents needed), and fine patterns fade with distance (`keep()`) so they don't shimmer. `detail` = 0 gives the old flat look. Each team has a jersey design (`Teams.DESIGN_OF` → `Teams.DESIGNS`): classic, double, triple, yoke, yoke_stripe, bold, pinstripe or hoops. A design sets how many stripes the hem, sleeve and sock bands split into, their positions, whether every other stripe uses the accent color (the team's number outline), and a shoulder yoke in the trim color (`yoke_r`: one smooth shape around the base of the neck, measured on the front/back silhouette so it's continuous across body, sleeves and the chest pad; everything above the neck line is yoke). Yoke designs carry the back number a little lower (`SkaterVisual.number_drop`). Road uniforms keep the home design. Stripe positions on the cloth layer are measured again on the smoothed cloth (smoothing slides vertices along the limbs), so stripe and yoke edges stay straight instead of stepping from one ring of triangles to the next; shoulder-bone vertices are measured along the upper arm. The skin textures come from the glTF versions of the bodies, whose texture coordinates are upside down relative to the Mixamo FBX exports, so the build flips V (`flip_v` in `BODIES`). The small eyeball mesh is kept as `Eyes` with the body's eye texture (`eye_tex` meta). The body itself uses `scenes/actors/skin.gdshader`: the MakeHuman skin texture divided by its average color and tinted to `Skater.skin_tone` (one of `SkaterVisual.SKIN_TONES`, random for now, set in the player editor later). It discards skin under worn clothing (the `wear` / `wear_skates` toggles), so a jersey can come off in a fight later. Shoulder/pants bulk and goalie pads are simple meshes attached to bones. Stripes are drawn only where a triangle belongs to a single body part, so part boundaries (armpits, shoulders) don't show slivers. The back number is a `Decal` attached to the chest bone, projecting the digits forward onto the jersey so they wrap with its curve and the pads beneath (`normal_fade` keeps them off side and front surfaces). Digits come from `assets/characters/digits.png`, rendered once by `tools/build_digits.gd` (needs a window) and tinted per team in `SkaterVisual.number_texture()`. Head, chest and hip gear is placed from mesh-based anchor boxes saved by the build step, so it fits any body shape; limb gear follows the joints.
+  - **Teams:** `scripts/core/teams.gd` (`Teams.LIST`) holds the league's 39 teams in three conferences of thirteen (`Teams.CONFERENCES`; each team's `conference`, `Teams.in_conference()`). The four launch teams come first: New Bedford Whalers (red, white, black), Minnesota Geese (green, gold, black), Rhode Island Quahogs (blue, grey, yellow) and Maine Lobsters (white, maroon, green); the rest have palettes taken from their logos and no chants yet. East: Whalers, Quahogs, Lobsters, Burlington Lake Monsters, Adirondack Trailblazers, Mystic Mariners, New Hampshire Granite, Cape Cod Cranberries, New York Rats, Quebec Poutine. Central: Geese, Michigan Mitts, Wisconsin Curds, Lake Superior Gales, Manitoba Moose Jaws, Nashville Twang, Kentucky Moonshiners, Okefenokee Swamp Things, Florida Man, Texas Armadillos. West: Tacoma Geoducks, Roswell Grays, Anchorage Sourdoughs, Portland Lumberjacks, Monterey Otters, Hollywood Stuntmen, Mojave Gila Monsters, Boise Spuds, Seattle Seagulls, Yellowstone Geysers. Expansion teams (added 2026-11-11, at the end of the list so saved team indices hold): East: Carolina Sweet Tea, Philadelphia Jawns, Pine Barrens Campers; Central: Chicago Deep Dish, Mexico City Luchadores, North Dakote (one name, no city); West: Baja Chupacabras, Rocky Mountain Goats, Xochimilco Axolotls. The roster sheet's `display_name` is the name shown (`Rosters.display_name`); the Luchadores have ring names with no last name, so the whole ring name goes where the last name would. Team select steps through teams by conference (`Teams.menu_order`) and shows each team's conference as a colored badge on its name plate (`Teams.CONFERENCE_COLORS`). Every team has a 15-player roster in `data/knockout_hockey_rosters.csv` (its `conference` column agrees with the table; `tools/roster_check.gd` flags any mismatch). Abbreviations match the roster sheet. When the two jerseys are too alike (`Teams.CLASH`), the away team wears road whites with its main color as trim (`Teams.uniform_vs`). Each has a full uniform palette (jersey, trim, pants, gloves, helmet, skates, number face and outline); the four launch teams also have crowd chants. The setup screen picks home and away (`home_team` / `away_team` in `GameSettings`; `-- home=<i> away=<i>` on the command line); the HUD shows team names; the home crowd chants for its own team. Logos: every team's logo is its own image in `assets/images/` (`<team>.jfif`, one logo on a white or off-white background, redrawn in Gemini in a flat NHL-primary style); `tools/build_logos.gd` (`SHEETS`: one entry per image, with per-logo background cutoffs, `keep` for logos with small separate pieces and `recolor` to swap flat colors to the team's) flood-fills the background from the edges, drops stray specks and leaves a soft one-pixel edge, into `assets/characters/logo_<team>.png`. Two old four-logo sheets are kept only for the two spare logos. `tools/build_logo_sheet.gd` (needs a window) renders every logo to `docs/logo_sheet.png` to compare them. Each player wears the team crest on the jersey front as a `Decal` projected onto the chest (like the back number), and the home team's logo is painted into the ice at center (`Rink.set_center_logo`, 6.4 m wide, over the red line and under the blue circle). The team editor (M7) will replace the table.
+  - **Skin and uniforms:** each vertex gets its body part (torso, arm, leg, hand, foot; the head and neck are bare skin) from its dominant bone, plus its position along that part (torso by height from the hips joint to the neck, limbs from shoulder/hip to wrist/ankle). `scenes/actors/uniform_regions.gdshaderinc` turns those into pants, jersey, socks, gloves and skates per pixel, with the stripes (`hem_band`, `sleeve_band`, `cuff_start`, `sock_band`) as clean anti-aliased bands. Stripe positions are shader uniforms, so a team's design can change them. The uniform is its own skinned layer (`Outfit_*` meshes): every covered triangle is copied, welded across UV seams, smoothed (`CLOTH_SMOOTH_PASSES`) so it drapes instead of showing muscles, and pushed out along the new normals by `cloth_thickness()` (bulkier over pads). It shares the body's bones, so it deforms with every clip. `scenes/actors/uniform.gdshader` colors it per team via `SkaterVisual.uniform_colors()`. Fabric detail is procedural, pinned to the cloth by each outfit vertex's rest-pose position and normal (baked into `CUSTOM0` / `CUSTOM1` by the build step, with the arms swung out to a T-pose by the skin weights, the origin at the base of the neck and the torso scaled to 0.6 m, so A-pose and T-pose bodies get the same pattern sizes and yoke). The chest, belly and hip bulk spheres wear the same uniform material with matching coordinates (`SkaterVisual._cloth_mesh`), so stripes and the yoke carry across them: jersey knit dimples, coarser mesh panels down the sides and under the sleeves, drape folds (rings around the sleeves, long folds down the body) and sewn seams at every stripe edge, cuff and shoulder; quilted, slightly glossy nylon breezers; vertical sock ribbing (around the leg by the rest normal's heading); leather grain on the hands. Height detail becomes per-pixel normals (screen-space bump, no tangents needed), and fine patterns fade with distance (`keep()`) so they don't shimmer. `detail` = 0 gives the old flat look. Each team has a jersey design (`Teams.DESIGN_OF` → `Teams.DESIGNS`): classic, double, triple, yoke, yoke_stripe, bold, pinstripe or hoops. A design sets how many stripes the hem, sleeve and sock bands split into, their positions, whether every other stripe uses the accent color (the team's number outline), and a shoulder yoke in the trim color (`yoke_r`: one smooth shape around the base of the neck, measured on the front/back silhouette so it's continuous across body, sleeves and the chest pad; everything above the neck line is yoke). Yoke designs carry the back number a little lower (`SkaterVisual.number_drop`). Road uniforms keep the home design. Stripe positions on the cloth layer are measured again on the smoothed cloth (smoothing slides vertices along the limbs), so stripe and yoke edges stay straight instead of stepping from one ring of triangles to the next; shoulder-bone vertices are measured along the upper arm. The skin textures come from the glTF versions of the bodies, whose texture coordinates are upside down relative to the Mixamo FBX exports, so the build flips V (`flip_v` in `BODIES`). The small eyeball mesh is kept as `Eyes` with the body's eye texture (`eye_tex` meta). The body itself uses `scenes/actors/skin.gdshader`: the MakeHuman skin texture divided by its average color and tinted to `Skater.skin_tone` (one of `SkaterVisual.SKIN_TONES`, seeded from the player's name for roster players and set in the player editor for created ones). It discards skin under worn clothing (the `wear` / `wear_skates` toggles), so a jersey can come off in a fight later. Shoulder/pants bulk and goalie pads are simple meshes attached to bones. Stripes are drawn only where a triangle belongs to a single body part, so part boundaries (armpits, shoulders) don't show slivers. The back number is a `Decal` attached to the chest bone, projecting the digits forward onto the jersey so they wrap with its curve and the pads beneath (`normal_fade` keeps them off side and front surfaces). Digits come from `assets/characters/digits.png`, rendered once by `tools/build_digits.gd` (needs a window) and tinted per team in `SkaterVisual.number_texture()`. Head, chest and hip gear is placed from mesh-based anchor boxes saved by the build step, so it fits any body shape; limb gear follows the joints.
   - **Equipment models:** `godot --headless --path . -s res://tools/build_gear.gd` turns `assets/equip/` models into plain meshes in `assets/characters/`. Source textures (real team and brand logos) are dropped, surfaces are split by role so the game paints them per team, and dense scans are welded and simplified (meshoptimizer, falling back to vertex clustering for noisy scans). Outputs: two goalie masks (`goalie_mask`, `goalie_mask_b`: shell, cage), and, copied over from the project's own Blender models (`tools/blender/`), two helmets (`helmet`: modern two-piece, `helmet_b`: classic one-piece; shell, trim, dark, visor, visor clips; `helmet_gear.py`, modeled on the male head from `tools/dump_heads.gd` and set on each body's crown, scaled by head width, so the Y chin strap sits under the chin; `Skater.visor` drops the visor surfaces), `stick` (shaft, tape: blade and butt-end knob; heel at the origin) and `goalie_stick` (body, grip, tape; same layout) (`stick_gear.py`), `skate` (boot, steel; `skate_gear.py`), `glove`, `glove_cuff` and `fist` (`hand_gear.py`; a right glove, mirrored for the left hand) and the goalie's pads, boots, thigh rises, blocker and catcher (`goalie_gear.py`). `Skater.gear_style` picks the helmet or mask (`SkaterVisual.HELMETS`, `GoalieVisual.MASKS`, each with its own fit). The stick model is posed every frame from the heel to the top of the shaft, with the blade flat along the ice in the stick's plane and its hook toward the forehand; the mesh skews slightly when the hands and blade don't match its lie. Goalies hold the goalie stick in the blocker hand with the blade across the crease toward the glove side; they wear the catcher on the left hand, pocket toward the shooter. `tools/preview_model.gd` renders any model from the front, side and top to check orientation.
   - **Posing:** `SkaterRig` (a `SkeletonModifier3D`) runs after the clip player and builds the body procedurally: the skating stride (two-bone leg IK to the ice; cadence from speed, amplitude from push), the forward lean, twists for windups and follow-through, and arms gripping the stick (two-bone IK). The top hand is placed from its own shoulder, down and well forward at belt height within ~80% of the arm's reach so the elbow stays bent, rocking with the stride. The bottom hand slides down the shaft toward the blade. Elbow poles flare out to the sides for an open stance. Skating hard without the puck (`SkaterRig.free_arm`), the bottom hand lets go and swings forward and across as the same-side leg drives back. Goalies use free hand targets for the glove and blocker. Each region (legs, spine, arms) blends between the clip and the procedural pose, so clips can own just the upper body.
-  - **Clips in use:** knockdowns (`knocked_down`, `falling_down`), stumbles (`big_side_hit`, `hit_to_body`), goal celebrations (`fist_pump`, `cheering`, `rallying`; upper body only, so legs keep gliding) and the beaten goalie's `angry_gesture`. Fight clips are imported and waiting for M4.
-  - **Sound:** recordings in `assets/sound/` are cut into game clips by `python tools/cut_sounds.py` (ffmpeg; trims, fades, peak-normalizes, makes the crowd bed loop seamlessly) into `assets/sound/cut/<name>_<n>.ogg`. The `Sfx` autoload loads those (a random variant per play) in place of its synthesized stand-ins; whatever has no recording yet (stick clicks, posts, glass, the net, pads, glove saves, whistle, "ooh") is still synthesized. Recorded (ElevenLabs): slap and wrist shots, board and open-ice hits, hockey stops, strides, the goal horn, the crowd bed, cheers, boos, a rising crowd, a disappointed groan, an outraged crowd, "De-fense!", four team chants, two organ pieces and the announcer. `MatchAudio` hooks match events to it. The crowd belongs to the home team (team 0): horn and big cheer for home goals, a groan for goals against; cheers for home big hits and glove saves; boos for home penalties and cheers for the visitors'; "De-fense!" when the home team is pinned in its zone; a rising crowd as a home attack builds (faded if it fizzles); the home team's chant every minute or two; a disappointed groan when a home shot is saved by the visitors, rings a post or misses wide; and boos for the visitors' big hits on home players. The arena organ (its own channel) plays an upbeat piece through stoppages, starting at a random point and fading at the drop, and sounds the charge as a home attack builds. **Announcer:** play-by-play lines live in `assets/sound/announcer/` as `<line><n>.mp3` or `<line>_<nn>.mp3` (trailing digits = another take of the same line; just drop new files in). `AnnouncerLines` (scripts/core/announcer_lines.gd) is the list of every line by category, when it plays, and the other file names that count as its takes (the names in `data/hockey_announcer_lines.csv`, e.g. `hit_01` joins `bighit`, `period_end_01` joins `periodend`). `tools/announcer_check.gd` (`-- md=docs/ANNOUNCER_TODO.md`) reports takes per line against the target of 3 with the CSV's scripts for each. Added since: second/third period, overtime, shootout, final minute, final horn, faceoff win/loss, pass to the point, dump-ins, zone entries, behind the net, along the boards, setting up, cycling, wrist and point shots, misses, blocks, rebounds, pad/glove saves, top-shelf and calm goals, goal follow-ups (tie, lead, insurance, hat trick, power play, short-handed, comeback, reactions), hits into the boards, penalty killed, whistles, hot streaks, close games and blowouts. With `KH_AUDIO_LOG` set, lines that would have played but have no recording print as `(not recorded)`. **Two voices:** Steve Sheldon (play-by-play, calm and British, `announcer/pbp/`) calls the play; Bobby Niedemyer (color, loud, `announcer/color/`, plus the original recordings in `announcer/`) reacts after big saves, big hits, goals, the third period's call and the final horn, and fills quiet spells. One talks at a time. Each line in `AnnouncerLines` names the voice that records its new takes, but every voice's takes of a line share one pool, so Bobby's original play-by-play takes keep playing alongside Steve's. **Duets** (both in one ElevenLabs dialogue clip) go in `announcer/both/`: a duet can be a take of any line (`both/crowdreactgood_01.mp3` the crowd remark), and the banter lines are duets only (quiet spells, intermissions, after penalties, fights, goals, big hits and the final horn, blowouts and close games), each falling back to the solo line when not recorded. `Sfx.announce` plays one line at a time (a line only cuts off a lower-priority one, takes don't repeat back to back), and `MatchAudio._say` gives each line a chance and a cooldown so the commentary stays occasional: faceoff, pass, shot, fullslapshot (hard slap shots), save, bigsave (glove saves and saves right after a breakaway), bighit, pokecheck, breakaway (a carrier racing at the net with no defender between them and it), penalty / trippingcall / bigpenalty (boarding), then powerplay, and goal once goal lines exist. Offsides and icing whistles get their own calls; each period start says `period<N>` if that file exists (period2, period3: the number is part of the line, so these are looked up by exact file name), else `newperiod`, after the `periodend` call finishes; `idle` chatter fills long quiet spells. Intros: `assets/sound/intro/intro_<call>.mp3` ("Tonight: a matchup between the <team> and the <team>.") are split by `tools/cut_sounds.py` at the quietest moment between the halves into `intro_home_<call>` and `intro_away_<call>`, and the matchup screen plays the home team's opening then the away team's close (`Sfx.announce_chain`; Teams `call` names the clips). As the screen closes, Steve and Bobby welcome everyone in a duet (`intro_duet`, files `both/doubleintro*.mp3`) every game, in place of the first period's call; Steve's solo `intro` plays there only if no duet is recorded. More lines: goal, post, deke (when the carrier dekes), check, onetimer, checking ("they're really fighting for it!": possession flips between the teams three times in 5 s), downice ("heading down the ice": a carrier crossing center toward the other net with speed), turnover (the puck straight from one team's carrier to the other's), defenderup (a defenseman carrying into the offensive zone), centerice (the faceoff after a goal), big hits mixing bighit / flattened / gottahurt (+ bighitenforcer from defensemen and heavy checkers), and crowdreactgood / crowdreactbad when the home crowd has reacted the same way three times in 75 s. `fighting` is waiting for M4. Set the `KH_AUDIO_LOG` environment variable to print every announcer line and crowd reaction as it fires. Crowd reactions play one at a time on their own channel (`Sfx.crowd_react`, by priority: goal > reaction > ambient).
+  - **Clips in use:** knockdowns (`knocked_down`, `falling_down`), stumbles (`big_side_hit`, `hit_to_body`), goal celebrations (`fist_pump`, `cheering`, `rallying`; upper body only, so legs keep gliding) and the beaten goalie's `angry_gesture`. Fight clips: see §5.2 and the M4 notes.
+  - **Sound:** recordings in `assets/sound/` are cut into game clips by `python tools/cut_sounds.py` (ffmpeg; trims, fades, peak-normalizes, makes the crowd bed loop seamlessly) into `assets/sound/cut/<name>_<n>.ogg`. The `Sfx` autoload loads those (a random variant per play) in place of its synthesized stand-ins; whatever has no recording yet (stick clicks, posts, glass, the net, pads, glove saves, whistle, "ooh") is still synthesized. Recorded (ElevenLabs): slap and wrist shots, board and open-ice hits, hockey stops, strides, the goal horn, the crowd bed, cheers, boos, a rising crowd, a disappointed groan, an outraged crowd, "De-fense!", four team chants, two organ pieces and the announcer. `MatchAudio` hooks match events to it. The crowd belongs to the home team (team 0): horn and big cheer for home goals, a groan for goals against; cheers for home big hits and glove saves; boos for home penalties and cheers for the visitors'; "De-fense!" when the home team is pinned in its zone; a rising crowd as a home attack builds (faded if it fizzles); the home team's chant every minute or two; a disappointed groan when a home shot is saved by the visitors, rings a post or misses wide; and boos for the visitors' big hits on home players. The arena organ (its own channel) plays an upbeat piece through stoppages, starting at a random point and fading at the drop, and sounds the charge as a home attack builds. **Announcer:** play-by-play lines live in `assets/sound/announcer/` as `<line><n>.mp3` or `<line>_<nn>.mp3` (trailing digits = another take of the same line; just drop new files in). `AnnouncerLines` (scripts/core/announcer_lines.gd) is the list of every line by category, when it plays, and the other file names that count as its takes (the names in `data/hockey_announcer_lines.csv`, e.g. `hit_01` joins `bighit`, `period_end_01` joins `periodend`). `tools/announcer_check.gd` (`-- md=docs/ANNOUNCER_TODO.md`) reports takes per line against the target of 3 with the CSV's scripts for each. Added since: second/third period, overtime, shootout, final minute, final horn, faceoff win/loss, pass to the point, dump-ins, zone entries, behind the net, along the boards, setting up, cycling, wrist and point shots, misses, blocks, rebounds, pad/glove saves, top-shelf and calm goals, goal follow-ups (tie, lead, insurance, hat trick, power play, short-handed, comeback, reactions), hits into the boards, penalty killed, whistles, hot streaks, close games and blowouts. With `KH_AUDIO_LOG` set, lines that would have played but have no recording print as `(not recorded)`. **Two voices:** Steve Sheldon (play-by-play, calm and British, `announcer/pbp/`) calls the play; Bobby Niedemyer (color, loud, `announcer/color/`, plus the original recordings in `announcer/`) reacts after big saves, big hits, goals, the third period's call and the final horn, and fills quiet spells. One talks at a time. Each line in `AnnouncerLines` names the voice that records its new takes, but every voice's takes of a line share one pool, so Bobby's original play-by-play takes keep playing alongside Steve's. **Duets** (both in one ElevenLabs dialogue clip) go in `announcer/both/`: a duet can be a take of any line (`both/crowdreactgood_01.mp3` the crowd remark), and the banter lines are duets only (quiet spells, intermissions, after penalties, fights, goals, big hits and the final horn, blowouts and close games), each falling back to the solo line when not recorded. `Sfx.announce` plays one line at a time (a line only cuts off a lower-priority one, takes don't repeat back to back), and `MatchAudio._say` gives each line a chance and a cooldown so the commentary stays occasional: faceoff, pass, shot, fullslapshot (hard slap shots), save, bigsave (glove saves and saves right after a breakaway), bighit, pokecheck, breakaway (a carrier racing at the net with no defender between them and it), penalty / trippingcall / bigpenalty (boarding), then powerplay, and goal once goal lines exist. Offsides and icing whistles get their own calls; each period start says `period<N>` if that file exists (period2, period3: the number is part of the line, so these are looked up by exact file name), else `newperiod`, after the `periodend` call finishes; `idle` chatter fills long quiet spells. Intros: `assets/sound/intro/intro_<call>.mp3` ("Tonight: a matchup between the <team> and the <team>.") are split by `tools/cut_sounds.py` at the quietest moment between the halves into `intro_home_<call>` and `intro_away_<call>`, and the matchup screen plays the home team's opening then the away team's close (`Sfx.announce_chain`; Teams `call` names the clips). As the screen closes, Steve and Bobby welcome everyone in a duet (`intro_duet`, files `both/doubleintro*.mp3`) every game, in place of the first period's call; Steve's solo `intro` plays there only if no duet is recorded. More lines: goal, post, deke (when the carrier dekes), check, onetimer, checking ("they're really fighting for it!": possession flips between the teams three times in 5 s), downice ("heading down the ice": a carrier crossing center toward the other net with speed), turnover (the puck straight from one team's carrier to the other's), defenderup (a defenseman carrying into the offensive zone), centerice (the faceoff after a goal), big hits mixing bighit / flattened / gottahurt (+ bighitenforcer from defensemen and heavy checkers), and crowdreactgood / crowdreactbad when the home crowd has reacted the same way three times in 75 s. `fighting` plays as a fight starts and `banter_fight` after it; `glass_break` (Bobby, with a goal-sized crowd roar), `injury`, `goalie_pulled` and the `goal_emptynet` follow-up are hooked up but not recorded yet; there are no calls during a fight yet, and Knockout Mode has no lines of its own (§14). Set the `KH_AUDIO_LOG` environment variable to print every announcer line and crowd reaction as it fires. Crowd reactions play one at a time on their own channel (`Sfx.crowd_react`, by priority: goal > reaction > ambient).
   - **Goalies off the crease (`GoalieVisual`):** on a scripted walk (the period-opener walkout, bench trips) or skating well out of the crease, the goalie blends from the ready crouch to a travel pose: upright, a long relaxed stride at the skaters' cadence, the torso counter-rotating and rocking over the pushing leg, the glove swinging with the stride and the stick carried in the blocker hand with its blade on the ice. In the crease the ready stance breathes. The face behind the mask is alive too: hair at the hairline (the flattened under-helmet cut) and facial hair, eyes on the puck with a focused expression in the crease, and looking where it skates (now and then a word or a smirk) when traveling.
   - **Close-up check:** `scenes/tests/CharacterViewer.tscn -- shot=<png> view=front|side|back|quarter|top focus=<0-6> style=<gear style> save=glove|blocker|butterfly`; `gwalk=1` has the goalie skate a loop at walkout pace (`focus=6` follows it).
 - **M6 additions:**
@@ -457,10 +481,13 @@ user://
   - **Screenshot timing:** the first frame's delta is the whole load time, so `-- shot` and the debug timers wait one frame before starting their clocks.
 - **Going around the nets:** AI skaters steer with `Net.detour(from, to, radius)`, which hands back the target when the way is clear, else the best corner of the net's footprint (grown by the skater's radius); a target inside the net (a puck in it) is moved out to the nearest side first. `AIBrain._route` runs every move (arrive, chase, carry, pressure) through both nets. Goalies never set up behind their goal line, so a loose puck on the line or just in the net is covered from out front. `godot --headless --path . -s res://scripts/tests/net_route_check.gd` walks a body to targets all around a net.
 - **M8 additions:**
-  - **Saved settings (`GameSettings`):** the rules (`config`) and the player's options (`options`: volumes 0–10 for master, music, effects, crowd and announcer; display Window / Borderless / Fullscreen, VSync, anti-aliasing 0/2/4/8×, frame cap) are saved to `user://settings.cfg` and loaded at startup, so the last rules used are the next game's defaults. The rules screen saves on start and back, the pause menu when the camera changes, the options screen on the way out. `GameSettings` makes the Music, Effects, Crowd and Announcer audio buses; `Sfx` puts its players on them (crowd, reactions and organ on Crowd). Video options aren't applied in headless runs.
+  - **Saved settings (`GameSettings`):** the rules (`config`) and the player's options (`options`: volumes 0–10 for master, music, effects, crowd and announcer; display Window / Borderless / Fullscreen, VSync, anti-aliasing 0/2/4/8×, frame cap, graphics Quality / Performance, fight blood On / Off) are saved to `user://settings.cfg` and loaded at startup, so the last rules used are the next game's defaults. The rules screen saves on start and back, the pause menu when the camera changes, the options screen on the way out. `GameSettings` makes the Music, Effects, Crowd and Announcer audio buses; `Sfx` puts its players on them (crowd, reactions and organ on Crowd). Video options aren't applied in headless runs.
   - **Rules and options (`scenes/ui/Options.tscn`, `options_menu.gd`):** tabs RULES (the rules screen's rows, `RulesSelect.RULES`, editing the saved defaults), AUDIO, VIDEO and CONTROLS (the pause menu's chart, `PauseMenu.draw_controls_chart`), switched with LB / RB (Q / E) or a click. Rows work like the rules screen; each tab ends in a RESET row. Changes apply at once; audio changes play a sample on their bus (a cheer for the crowd, a line for the booth). `-- tab=rules|audio|video|controls sel=<n> shot=<png>`.
   - **Game extras:** a sub-list on the main menu (CREDITS; RECORDS and UNLOCKABLES coming soon). **Credits (`scenes/ui/Credits.tscn`, `credits.gd`):** a roll in a dark panel that scrolls by itself and loops; up / down or the wheel takes over for 2.5 s. Its `ROLL` list must carry every CC-BY asset in the game (keep it in step with `assets/CREDITS.md`); entries still missing an author show "Author to be added" in orange. `-- scroll=<px> shot=<png>` holds the roll at one spot.
   - Coming back from a screen lands on its main menu item (`GameSettings.menu_select`).
+  - **Main menu (as built):** PLAY NOW; GAME MODES (Exhibition, Knockout Mode, Practice; Shootout coming soon); SEASON MODE (coming soon); CUSTOMIZE (Create Player; Create Team, Create Arena, Create Uniform and Edit Roster coming soon); RULES AND OPTIONS; GAME EXTRAS (Credits; Records and Unlockables coming soon); QUIT. The menus play the music playlist (`assets/sound/music/`).
+  - **Graphics option (Quality / Performance, VIDEO tab):** Quality is the full look. Performance, for laptops and integrated graphics, renders at 0.75 scale with FSR, no MSAA, two-split hard sun shadows, a 2048 shadow atlas and no menu fog or depth of field. Both get the LODs: the crowd is split into culled chunks with 6-sided fans past 30 m and in the upper bowl (seats don't use instance or vertex colors, which fixed see-through seats on AMD integrated graphics); players get generated mesh LODs (`MeshLod`, keeping blend shapes); bench and box players cast no sun shadows and freeze their idle off screen. The menu stages are physics-interpolated, and cameras moved every frame have interpolation off so they don't lag a tick. Quality must look the same as it did before the option existed.
+  - **FPS counter (`FpsCounter` autoload):** F3 shows or hides it; it starts hidden.
   - **Title font:** the chrome title words (KNOCKOUT, HOCKEY, the team select's VS) use Baron Kuffner (`assets/fonts/`, `MenuStyle.TITLE_FONT`), upright, letter-spaced by `TITLE_SPACING` (12 px per 100 px of size). The font's loose splatter specks shouldn't get rims, so the words are baked: `godot --path . res://tools/BuildTitle.tscn` (needs a window) draws each word plain at 2×, splits it into connected shapes (anything under 12% of the biggest is a speck; drips touching a letter stay with it), grows the white, red and navy rims and the shadow from the letters only (exact distance transform) and lays the chrome fill over letters and specks, saving `assets/ui/title/<word>_<size>.png`. `chrome_text` uses the image when it exists, else builds the word live from layered Labels. Rebake after changing the font, spacing or words. `-- titlefont=<file> titlespacing=<n>` previews another face live.
 - The puck is drawn 2.8× size with a white outline and shows through players, so it always reads from the high camera. Its collision stays regulation size.
 
@@ -475,41 +502,79 @@ The current assets were quick placeholders; none of them are a requirement.
 | Rink | Built in engine (`rink.gd` from `RinkSpec`) | Exact NHL dimensions (200×85 ft), boards, glass, benches, boxes and colliders, all in code. The Sketchfab rinks were removed. An outdoor venue still to come. |
 | Arena seating | **M6:** generated bowl (`Arena`) | Stepped lower and upper bowls, suites, roof, light rig and a center-hung scoreboard built in code; seats and fans recolor per team. The Stadium GLB is unused. |
 | Skater base | **M5:** male and female bases (Braingapps, rigged via Mixamo) + Y Bot for tests | More bodies: rig in Mixamo, drop in `assets/player/`, add a line to `BODIES` in the build step. |
-| Animations | **M5:** 51 Mixamo clips + procedural skating rig | Hockey moves (stride, stop, shots, stick handling, goalie stance and saves) are procedural; Mixamo supplies falls, hit reactions, celebrations, fights and crowd. |
-| Gear | **M5:** two helmets (`helmet_gear.py`, visor optional) and the sticks modeled in Blender; skates, gloves and fists modeled in Blender for the project; uniform as a skinned layer | Shoulder and pants bulk are still simple shapes. |
+| Animations | 86 Mixamo clips (fights, hits, falls, bench, reactions, goalie, shooting, menu) + procedural skating rig | Hockey moves (stride, stop, shots, stick handling, goalie stance and saves) are procedural; Mixamo supplies falls, hit reactions, celebrations, fights, bench idles and the crowd. **Needed:** many more fight clips (§14), better checking animations, a proper side head-snap reaction for hooks. |
+| Gear | Two helmets (`helmet_gear.py`, visor optional) and the sticks modeled in Blender; skates, gloves and fists modeled in Blender for the project; the jersey modeled in Blender (`build_jersey.py`); pants and socks as a skinned layer | Shoulder and pants bulk are still simple shapes. |
 | Goalie gear | Two mask models; stick, pads, boots, thigh rises, blocker and catcher modeled in Blender for the project (`goalie_gear.py`) | |
-| Stick | Skater and goalie sticks modeled in Blender for the project (`stick_gear.py`) | Tape colors per player. |
-| Puck, nets | None | Built in engine. |
-| Audio | **M5:** recordings for shots, hits, skates, horn and the crowd; the rest synthesized | Puck clicks, posts, glass, whistle, organ, punches, music. |
-| UI | None | Fonts, preset logos, menu style. |
+| Stick | Skater and goalie sticks modeled in Blender for the project (`stick_gear.py`) | Six stick graphics and four blade tapes per player. |
+| Puck, nets | Built in engine | |
+| Logos | All 39 team logos cut in (Gemini, one image per team); KHL league logos drawn | Wire the league logos in (title, scorebug, center ice, playoffs); their flaws are listed in §14. |
+| Audio | Recorded (ElevenLabs): shots, hits, punches and grunts, skates, horn, crowd bed and reactions, four team chants, "De-fense!", two organ pieces, every team's announcer intro, two announcers plus duets; nine music tracks. Synthesized stand-ins: stick clicks, posts, glass, the net, pads, glove saves, whistle, "ooh" | Record the synthesized ones; chants for the other 35 teams; the announcer backlog (§14). |
+| UI | Menu style (`MenuStyle`), Baron Kuffner title font, PlayStation button font, TV graphics, fight HUD | |
+| Zamboni | None | Waits on a model from the designer. |
 
-**Credits:** every CC-BY asset must be listed on a credits screen.
+**Credits:** every CC-BY asset must be listed on the credits screen (`credits.gd` `ROLL`, kept in step with `assets/CREDITS.md`); entries without an author show in orange.
 
 ---
 
 ## 12. Open questions / to test
 
-- **Catch-up AI:** test with and without; decide on the default.
+- **Catch-up AI:** test with and without; decide on the default and whether the boost is enough to notice.
 - **CPU difficulty tuning:** reaction time and decision values for each level.
-- **Conference structure:** 8 teams per conference — divisions or not?
+- **Conference structure:** 13 teams per conference: divisions or not?
 - **Fight threshold tuning:** how often fights happen (target: about 1–2 per game when fighting is on).
-- **Glass breaks:** frequency limits.
-- **Horizontal camera:** add as an option later?
-- **The 4 launch teams:** names, cities, colors, rosters (designer to provide).
+- **Fight style balance:** at equal ratings the boxer still wins most (§5.2). The boxer should be a rare, trained style, not the best one by style alone, and reach should come from the body, not the style.
+- **Glass breaks:** how often they happen in practice at power 19+ (soak games: count them).
+- **Injuries and referee strictness:** whether the rates feel right over a few games.
+- **Button prompts:** the PlayStation button font stays unless the game ever goes commercial (then licensed images).
 
 ---
 
 ## 13. Milestones
 
-| # | Milestone | Done when |
-|---|---|---|
-| **M0** | Project setup | Godot project, folder structure, input map, gray-box rink with colliders, nets, puck bouncing correctly. |
-| **M1** | Skate & shoot | One capsule skater (with stick) skating, picking up the puck, deking, passing to a dummy, wrist/slap shots, goals detected. *The "does it feel good?" milestone.* |
-| **M2** | 3v3 hockey | Two 3v3 teams of capsules, basic AI, AI goalies, checking (bump/check/big hit), faceoffs, clock, score, periods. |
-| **M3** | Full rules | 5v5, line changes and stamina, offsides/icing/penalties with toggles, player switching, OT/shootout, local multiplayer (up to 4). |
-| **M4** | Fighting | Fight triggers, prompt, forced fights, the mini-game, consequences. |
-| **M5** | Characters | Shared skeleton, retargeted animations, gear, recolorable jerseys, goalie model. |
-| **M6** | Presentation | HUD, announcer pop-ups, replays, three stars, big-hit slow-mo, glass breaks, crowd, audio, Zamboni. |
-| **M7** | Editors | Team, player and arena editors saving to `user://`. |
-| **M8** | Exhibition release | Front-end menus, 4 teams, indoor and outdoor arenas, settings, credits. |
-| Later | Expansion | 32 teams, season/playoffs, management/franchise, custom logo builder, horizontal camera. |
+| # | Milestone | Done when | Status (2026-11-12) |
+|---|---|---|---|
+| **M0** | Project setup | Godot project, folder structure, input map, gray-box rink with colliders, nets, puck bouncing correctly. | Done |
+| **M1** | Skate & shoot | One capsule skater (with stick) skating, picking up the puck, deking, passing to a dummy, wrist/slap shots, goals detected. *The "does it feel good?" milestone.* | Done (Practice mode keeps it) |
+| **M2** | 3v3 hockey | Two 3v3 teams of capsules, basic AI, AI goalies, checking (bump/check/big hit), faceoffs, clock, score, periods. | Done |
+| **M3** | Full rules | 5v5, line changes and stamina, offsides/icing/penalties with toggles, player switching, OT/shootout, local multiplayer (up to 4). | Done, except four of the seven planned minor penalties |
+| **M4** | Fighting | Fight triggers, prompt, forced fights, the mini-game, consequences. | Done and being reworked (styles, reach, rocked, hit feedback), plus Knockout Mode. Left: §14.2 |
+| **M5** | Characters | Shared skeleton, retargeted animations, gear, recolorable jerseys, goalie model. | Done, plus body size from height and weight, faces, hair, names on the back and the referee |
+| **M6** | Presentation | HUD, announcer pop-ups, replays, three stars, big-hit slow-mo, glass breaks, crowd, audio, Zamboni. | Mostly done. Left: Zamboni, goal light, the glass repair crew, the announcer backlog (§14.1) |
+| **M7** | Editors | Team, player and arena editors saving to `user://`. | Player editor done; team, arena and uniform editors and Edit Roster to come |
+| **M8** | Exhibition release | Front-end menus, 4 teams, indoor and outdoor arenas, settings, credits. | Menus, 39 teams, settings (with Performance graphics) and credits done. Left: outdoor arena, Shootout mode |
+| Later | Expansion | 32 teams, season/playoffs, management/franchise, custom logo builder, horizontal camera. | 39 teams and the side camera are already in; the rest to come |
+
+---
+
+## 14. Open work
+
+What's built but not finished, and what's waiting. The not-built items are also marked through §2–§9.
+
+### 14.1 Announcer
+
+- **Takes still needed:** about 124 (Steve 99, Bobby 18, duets 7) against the target of 3 per line. `tools/announcer_check.gd -- md=docs/ANNOUNCER_TODO.md` regenerates the list with the CSV's scripts.
+- **Recorded files that never play** (the name matches no line): the team banter files.
+- **Recheck the whole line list** against what's in the game now: Knockout Mode, the fight rework (styles, rocked, knockdowns, decisions), period openers, the penalty-call and goal-celebration cutscenes, created players and the new teams.
+- **Fights need far more lines:** play-by-play and color reactions during a fight (big shots, a fighter rocked, the clinch, the knockdown, a decision, a draw, the styles), not just `fighting` at the start and `banter_fight` after.
+- **Knockout Mode** has no announcer lines of its own yet (the tale of the tape, each bout's result, the final card).
+- **Team banter (in progress):** one or two duet files per team (`both/banter_<team>.mp3`) that play **once per game, at a random time**, when that team is playing. Recorded so far: Quahogs (2), North Dakote, Mountain Goats, Florida Man. Not wired in yet.
+- **Unused CSV penalty calls** (hooking, slashing, roughing, high-sticking) wait for those penalties.
+
+### 14.2 Fights
+
+- Rebalance the styles (§12).
+- Fists still arrive at chest height (the IK lifts head shots 15–25 cm).
+- **Many more fight clips:** more punches per style, more reactions (a proper side head-snap for hooks), more knockdowns and finishes.
+- Winner's skate / taunt after a fight (§5.2).
+- Jersey: a slight flare at the back of the male collar mid-punch; the jersey creases into itself at the shoulder.
+
+### 14.3 Presentation and content
+
+- More replay camera angles to cycle through; better checking animations.
+- Wire in the KHL logos. Known flaws: the main logo's spiky knuckles and gradient letters, a stray stroke under the monogram's K/H, and the belt is too busy at small sizes.
+- Crowd chants for the 35 teams without one.
+- Record the synthesized sounds (§11).
+
+### 14.4 Not built yet (from the plan)
+
+The Zamboni; a repair crew for glass breaks; hooking, high-sticking, holding and charging; a setting to turn off shake and slow motion; a goal light; the team, arena and uniform editors and Edit Roster; the outdoor arena; Shootout mode; a remapping screen; Season, playoffs and management; Records and Unlockables.

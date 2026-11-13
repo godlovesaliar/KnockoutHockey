@@ -38,6 +38,8 @@ static func default_config() -> Dictionary:
 		"icing": true,
 		"penalties": true,
 		"fighting": true,
+		"injuries": true,          ## big hits and lost fights can knock a player out for the game
+		"catch_up": false,         ## a team down by two or more plays a little sharper
 		"line_changes": true,
 		"difficulty": 0.5,
 		"camera": "broadcast",      ## BroadcastCamera play angle

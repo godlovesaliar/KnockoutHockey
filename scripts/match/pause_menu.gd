@@ -26,6 +26,7 @@ const CONTROLS := [
 	["Turbo", "R2", "SHIFT", "NUM 0"],
 	["Skate backwards (hold)", "L2", "Q", "NUM 6"],
 	["Protect the puck (hold): slower, harder to strip", "L1", "SPACE", "NUM ENTER"],
+	["Pull the goalie / put them back", "SELECT", "G", "G"],
 	["Pause", "START", "ESC", "ESC"],
 ]
 const TIPS := [
@@ -126,6 +127,8 @@ func _build_main() -> void:
 		entries.append(["CAMERA", _next_camera, "The play angle. Pick to switch."])
 		if camera_host.human_team() >= 0:
 			entries.append(["CAMERA TURNS", _toggle_follow, "With my team: the view turns at the change of ends so you always attack up."])
+		if camera_host.has_method("toggle_goalie") and camera_host.human_team() >= 0 and not camera_host.knockout:
+			entries.append(["GOALIE", _pull_goalie, "Pull your goalie for an extra attacker, or put them back. In play: SELECT / G."])
 	entries.append_array([
 		[restart_text, _restart, {"PRACTICE": "Start the practice over.", "KNOCKOUT MODE": "Start the card over: new fighters, new pairs."}.get(mode, "Start over from the opening faceoff.")],
 		["QUIT TO MENU", _quit, "Leave this game for the main menu."],
@@ -159,6 +162,9 @@ func _refresh_camera() -> void:
 		elif it.text == "CAMERA TURNS":
 			it.value = "My team" if camera_host.camera_follow else "Never"
 			it.value_w = 190.0
+		elif it.text == "GOALIE":
+			it.value = "Pulled" if camera_host.pulled[camera_host.human_team()] else "In net"
+			it.value_w = 190.0
 
 
 func _next_camera() -> void:
@@ -170,6 +176,12 @@ func _next_camera() -> void:
 	GameSettings.config["camera"] = angle
 	GameSettings.save_settings()
 	_refresh_camera()
+
+
+## Pull the goalie (or send them back) and get back to the game.
+func _pull_goalie() -> void:
+	camera_host.toggle_goalie(camera_host.human_team())
+	_resume()
 
 
 func _toggle_follow() -> void:

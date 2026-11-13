@@ -110,6 +110,9 @@ var bench_sit := true              ## on the bench: a seat (false: standing at t
 var bench_claim := Callable()
 var _walk: Tween
 var momentum := false             ## the team won a fight lately: a little faster, hits harder
+var catch_up := 0.0               ## 0..1: catch-up AI for a team two or more goals down (a touch faster, sharper shots)
+var injured := false              ## hurt and out for the rest of the game (MatchDirector._injure)
+var last_impact := 0.0            ## the last body check this skater took, after balance and the boards (glass breaks)
 var changing := false             ## heading to the bench for a line change
 var is_defense := false
 var position_name := "C"
@@ -597,6 +600,8 @@ func _fire_shot(kind: StringName, charge: float) -> void:
 		_:
 			spd = wrist_speed
 			spread = PlayerStats.lerp_stat(stats.shot_accuracy, 4.0, 1.2)
+	spread *= 1.0 - 0.15 * catch_up
+	spd *= 1.0 + 0.03 * catch_up
 
 	var target: Vector3
 	var to_net := Vector3.ZERO
@@ -685,6 +690,7 @@ func receive_hit(power: float, dir: Vector3, _attacker: Skater) -> Dictionary:
 			p *= BOARDS_MULT
 			boards = true
 	fall_side = signf(dir.dot(right_dir())) if absf(dir.dot(right_dir())) > 0.1 else 1.0
+	last_impact = p
 	var kind: StringName
 	if p < BUMP_LIMIT:
 		kind = &"bump"
@@ -702,6 +708,12 @@ func receive_hit(power: float, dir: Vector3, _attacker: Skater) -> Dictionary:
 		if has_puck():
 			puck.strip(self, dir * 4.0)
 	return {"kind": kind, "boards": boards}
+
+
+## Hurt: stays down on the ice this long (from now) before getting up.
+func stay_down(seconds: float) -> void:
+	if state == State.DOWN:
+		_down_time = maxf(_down_time, _state_time + seconds)
 
 
 func _knock(v: Vector3, s: State, duration: float) -> void:
@@ -832,6 +844,7 @@ func top_speed() -> float:
 		top *= TURBO_SPEED_MULT
 	if momentum:
 		top *= 1.05
+	top *= 1.0 + 0.03 * catch_up
 	return top * fatigue_mult()
 
 

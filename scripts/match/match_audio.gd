@@ -93,6 +93,9 @@ func setup(d: MatchDirector) -> void:
 	d.whistle_blown.connect(_on_whistle)
 	d.faceoff_won.connect(_on_faceoff_won)
 	d.penalty_expired.connect(_on_penalty_expired)
+	d.goalie_pulled.connect(func(_t: int) -> void: _say("goalie_pulled", 0.9, 3, 10.0))
+	d.player_injured.connect(func(_s: Skater) -> void: _say("injury", 0.9, 3, 20.0))
+	d.glass_broken.connect(_on_glass)
 	var chant: String = Teams.team(d.team_ids[HOME]).get("chant", "")
 	home_chant = chant if Sfx.has(chant) else ""
 	_chant_in = randf_range(CHANT_EVERY.x * 0.5, CHANT_EVERY.y * 0.5)
@@ -337,6 +340,12 @@ func _check_rebound(g: Goalie) -> void:
 		_say("rebound", 0.6, 2, 12.0)
 
 
+## Through the glass: the building erupts, Bobby loses it.
+func _on_glass(_at: Vector3) -> void:
+	_react("goal_cheer" if Sfx.has("goal_cheer") else "cheer", 0.0, P_GOAL)
+	_say_later("glass_break", 0.6, 4)
+
+
 func _on_goal(team: int, scorer: Skater) -> void:
 	_goal_time = _now()
 	var other := 1 - team
@@ -358,6 +367,8 @@ func _on_goal(team: int, scorer: Skater) -> void:
 	var short := director.strength(team) < director.strength(other)
 	var last := director.period >= director.periods
 	var follow := []
+	if director.last_goal_empty_net:
+		follow.append("goal_emptynet")
 	if goals == 3:
 		follow.append("goal_hattrick")
 	if short:

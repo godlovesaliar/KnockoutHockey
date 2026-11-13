@@ -92,7 +92,7 @@ func nearest_free(h: HumanBrain, point: Vector3) -> Skater:
 	var best_d := INF
 	for s in on_ice:
 		var owner := human_of(s)
-		if owner and owner != h:
+		if (owner and owner != h) or s.injured:
 			continue
 		var d := s.global_position.distance_squared_to(point)
 		if d < best_d:

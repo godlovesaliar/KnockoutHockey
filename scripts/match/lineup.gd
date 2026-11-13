@@ -22,6 +22,7 @@ var pending := {false: -1, true: -1}   ## is_defense -> incoming group index for
 var on_ice: Array[Skater] = []
 var in_box := {}                       ## Skater -> seconds left
 var offsetting := {}                   ## in the box without leaving the team short (fighting majors)
+var injured: Array[Skater] = []        ## out for the game: off the lines, sitting on the bench
 
 
 func all_skaters() -> Array[Skater]:
@@ -50,11 +51,12 @@ func composition(strength: int) -> Vector2i:
 	return [Vector2i(2, 1), Vector2i(3, 1), Vector2i(3, 2)][strength - 3]
 
 
-## Rebuilds who's on the ice (at a faceoff). Forwards first, then defense.
-func fill(strength: int) -> void:
+## Rebuilds who's on the ice (at a faceoff). Forwards first, then defense. `extra`: more
+## forwards on top (an extra attacker for a pulled goalie).
+func fill(strength: int, extra := 0) -> void:
 	var comp := composition(strength)
 	var pick: Array[Skater] = []
-	_take(pick, f_groups, cur_f, comp.x)
+	_take(pick, f_groups, cur_f, comp.x + extra)
 	_take(pick, d_groups, cur_d, comp.y)
 	on_ice.clear()
 	on_ice.append_array(pick)
@@ -73,6 +75,36 @@ func _take(pick: Array[Skater], groups: Array, start: int, n: int) -> void:
 				continue
 			pick.append(s)
 			count += 1
+
+
+## The freshest skater on the bench (not in the box): forwards first. Null if none.
+func freshest_on_bench() -> Skater:
+	for group: Array[Skater] in [forwards, defense]:
+		var best: Skater = null
+		for s in group:
+			if s in on_ice or in_box.has(s) or s.injured:
+				continue
+			if best == null or s.energy > best.energy:
+				best = s
+		if best:
+			return best
+	return null
+
+
+## Takes a skater off the roster for the rest of the game (injured) and rebuilds the
+## lines without them. They stay on the bench.
+func remove_skater(s: Skater) -> void:
+	on_ice.erase(s)
+	in_box.erase(s)
+	offsetting.erase(s)
+	forwards.erase(s)
+	defense.erase(s)
+	if not s in injured:
+		injured.append(s)
+	build_groups()
+	cur_f = cur_f % maxi(f_groups.size(), 1)
+	cur_d = cur_d % maxi(d_groups.size(), 1)
+	pending = {false: -1, true: -1}
 
 
 func forwards_on_ice() -> Array[Skater]:

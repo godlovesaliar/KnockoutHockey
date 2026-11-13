@@ -431,6 +431,7 @@ func _build_all() -> void:
 	_streams["shot_slap"] = _wav(_shot(0.3, 1.0, 18.0))
 	_streams["boards"] = _wav(_thud(0.5, 70.0, 0.08, 0.6, 22.0))
 	_streams["glass"] = _wav(_glass())
+	_streams["shatter"] = _wav(_shatter())
 	_streams["post"] = _wav(_ping())
 	_streams["body"] = _wav(_thud(0.3, 58.0, 0.05, 0.4, 0.0))
 	_streams["big_hit"] = _wav(_thud(0.6, 48.0, 0.12, 0.9, 30.0))
@@ -518,6 +519,33 @@ func _glass() -> PackedFloat32Array:
 	for i in s.size():
 		var t := float(i) / RATE
 		s[i] += 0.18 * (sin(TAU * 430.0 * t) + 0.6 * sin(TAU * 1110.0 * t)) * exp(-t * 12.0)
+	return s
+
+
+## A pane of rink glass breaking: a body slamming the boards, the crack, then a shower of
+## tinkling pieces that thins out as they land.
+func _shatter() -> PackedFloat32Array:
+	var s := _thud(1.8, 52.0, 0.14, 0.8, 0.0)
+	var hp := 0.0
+	var prev := 0.0
+	for i in s.size():
+		var t := float(i) / RATE
+		var n := _n()
+		hp = 0.92 * (hp + n - prev)   # bright noise for the crack
+		prev = n
+		s[i] = s[i] * 0.7 + hp * 0.75 * exp(-t * 14.0)
+	# The shower: hundreds of tiny glassy pings, most of them early.
+	for k in 150:
+		var start := pow(_rng.randf(), 2.2) * 1.5
+		var f := _rng.randf_range(2200.0, 7800.0)
+		var dur := _rng.randf_range(0.03, 0.08)
+		var amp := 0.16 * (1.0 - start / 1.7) * _rng.randf_range(0.4, 1.0)
+		var i0 := int(start * RATE)
+		for j in int(dur * RATE):
+			if i0 + j >= s.size():
+				break
+			var tt := float(j) / RATE
+			s[i0 + j] += amp * sin(TAU * f * tt) * exp(-tt * 60.0) + amp * 0.3 * _n() * exp(-tt * 200.0)
 	return s
 
 

@@ -20,7 +20,7 @@ func _init(p_team_ai: TeamAI, seed_value := 0) -> void:
 
 
 func update(s: Skater, i: SkaterIntent, delta: float) -> void:
-	var diff := team_ai.difficulty
+	var diff := team_ai.sharpness()
 	_think_left -= delta
 	var think := _think_left <= 0.0
 	if think:
@@ -110,7 +110,7 @@ func _receive(s: Skater, i: SkaterIntent) -> void:
 		_one_timer_flight = puck.flight
 		var net := s.attacking_net()
 		var in_range := s.global_position.distance_to(net.global_position) < 12.0
-		s.set_meta("ai_one_timer", in_range and _rng.randf() < lerpf(0.3, 0.8, team_ai.difficulty))
+		s.set_meta("ai_one_timer", in_range and _rng.randf() < lerpf(0.3, 0.8, team_ai.sharpness()))
 	if s.get_meta("ai_one_timer", false):
 		i.shoot_held = true
 		i.move = (s.attacking_net().global_position - s.global_position).normalized() * 0.01
@@ -147,13 +147,16 @@ func _carry(s: Skater, i: SkaterIntent, think: bool) -> void:
 	var from_net := s.global_position - net.global_position
 	from_net.y = 0.0
 	var angle_ok := out.angle_to(from_net) < deg_to_rad(65.0)
-	var diff := team_ai.difficulty
+	var diff := team_ai.sharpness()
 	if team_ai.shootout:
 		if dist < 7.5 and dist > 4.0 and _rng.randf() < 0.25:
 			i.deke_down = true
 			return
 		if dist < 6.0 or (dist < 11.0 and _rng.randf() < 0.12):
 			_shoot(s, i, net, dist < 8.0)
+		return
+	if team_ai.net_empty() and dist < 30.0 and ahead > 2.0 and (angle_ok or dist < 12.0):
+		_shoot(s, i, net, dist < 9.0)   # an empty net: let it go from anywhere with a lane
 		return
 	if dist < 14.0 and angle_ok and (dist < 9.0 or ahead > 3.0 or _rng.randf() < 0.3):
 		_shoot(s, i, net, dist < 9.0 or nearest < 3.0)
@@ -179,6 +182,8 @@ func _shoot(s: Skater, i: SkaterIntent, net: Net, quick: bool) -> void:
 	var to_net := net.global_position - s.global_position
 	to_net.y = 0.0
 	var side := -signf(gx) if absf(gx) > 0.1 else (1.0 if _rng.randf() < 0.5 else -1.0)
+	if team_ai.net_empty():
+		side = 0.0   # nobody home: straight at the middle
 	_shoot_aim = to_net.normalized() * 0.5 + Vector3(side * 0.85, 0, 0)
 	i.move = _shoot_aim
 	i.shoot_down = true
@@ -232,7 +237,7 @@ func _pressure(s: Skater, i: SkaterIntent, think: bool) -> void:
 	var aggression := s.stats.aggression / 99.0
 	if d < 1.9 and closing > 2.0 and _rng.randf() < lerpf(0.25, 0.7, aggression):
 		i.check_down = true
-	elif d < 1.8 and _rng.randf() < lerpf(0.35, 0.75, team_ai.difficulty):
+	elif d < 1.8 and _rng.randf() < lerpf(0.35, 0.75, team_ai.sharpness()):
 		i.deke_down = true # poke check (deke button without the puck)
 
 

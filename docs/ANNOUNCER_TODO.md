@@ -1,7 +1,7 @@
 # Announcer lines: takes still needed (target 3 per line)
 
 - **Steve Sheldon** (play-by-play, `assets/sound/announcer/pbp/`): 108 takes needed
-- **Bobby Niedemyer** (color, `assets/sound/announcer/color/`): 18 takes needed
+- **Bobby Niedemyer** (color, `assets/sound/announcer/color/`): 21 takes needed
 - **Steve & Bobby** (duets, `assets/sound/announcer/both/`): 7 takes needed
 
 ## Game flow
@@ -27,15 +27,15 @@
 |---|---|---|---|---|---|
 | `faceoff` | Steve | 5 (3 / 2 / 0) | — | faceoff_01 "Faceoff at center ice."<br>faceoff_02 "Drop of the puck..."<br>faceoff_03 "Lined up for the faceoff." | players line up for a faceoff |
 | `centerice` | Steve | 4 (3 / 1 / 0) | — |  | the faceoff after a goal |
-| `faceoff_win` | Steve | 0 | 3 | faceoff_win_01 "Wins the draw!"<br>faceoff_win_02 "Clean win on the faceoff." | someone wins the draw |
-| `faceoff_loss` | Steve | 0 | 3 | faceoff_loss_01 "Lost the faceoff." | the player's team loses the draw |
+| `faceoff_win` | Steve | 3 (3 / 0 / 0) | — | faceoff_win_01 "Wins the draw!"<br>faceoff_win_02 "Clean win on the faceoff." | someone wins the draw |
+| `faceoff_loss` | Steve | 3 (3 / 0 / 0) | — | faceoff_loss_01 "Lost the faceoff." | the player's team loses the draw |
 
 ## Puck movement
 
 | Line | Records new takes | Takes (Steve / Bobby / duet) | Still needed | CSV scripts | Plays when |
 |---|---|---|---|---|---|
 | `pass` | Steve | 6 (3 / 3 / 0) | — |  | a pass, now and then |
-| `pass_point` | Steve | 0 | 3 | pass_point_01 "Pass back to the point." | a pass back to a defender at the blue line ("back to the point") |
+| `pass_point` | Steve | 3 (3 / 0 / 0) | — | pass_point_01 "Pass back to the point." | a pass back to a defender at the blue line ("back to the point") |
 | `dumpin` | Steve | 0 | 3 | dumpin_01 "Dumps it in deep." | the puck is shot in from outside the offensive zone |
 | `downice` | Steve | 1 (0 / 1 / 0) | 2 | downice_01 "Carrying it up the ice..." | a carrier crosses center at speed ("carrying it up the ice") |
 | `blueline` | Steve | 0 | 3 | blueline_01 "Crossing the blue line." | a forward carries the puck into the offensive zone |
@@ -88,6 +88,7 @@
 | `goal_powerplay` | Steve | 0 | 3 | goal_powerplay_01 "Power play goal!" | after a power-play goal |
 | `goal_shorthanded` | Steve | 0 | 3 | goal_shorthanded_01 "Short-handed goal!" | after a short-handed goal |
 | `goal_comeback` | Steve | 0 | 3 | goal_comeback_01 "What a comeback!" | after a goal that erases a deficit of two or more |
+| `goal_emptynet` | Steve | 0 | 3 |  | after a goal into an empty net ("...into the empty net!") |
 | `goal_react` | Bobby | 2 (0 / 2 / 0) | 1 | goal_react_02 "You won't see a prettier one than that."<br>goal_react_03 "The goalie had no chance on that one." | after a goal, when nothing above fits |
 | `goal_react_home` | Steve | 0 | 3 | goal_react_home_01 "The crowd goes wild!" | after a home goal ("The crowd goes wild!") |
 
@@ -101,6 +102,8 @@
 | `hit_react` | Bobby | 1 (0 / 1 / 0) | 2 | hit_react_01 "Ooh, he felt that one!" | after a big hit call ("Ooh, felt that one!") |
 | `bighitenforcer` | Bobby | 1 (0 / 1 / 0) | 2 |  | after a big hit by a defender or heavy hitter |
 | `fighting` | Steve | 1 (0 / 1 / 0) | 2 | fight_01 "The gloves are off!"<br>fight_02 "They're going at it!" | a fight starts |
+| `glass_break` | Bobby | 0 | 3 |  | a big hit shatters a pane of glass ("He put him right through the glass!") |
+| `injury` | Steve | 0 | 3 |  | a hurt player is helped off ("He's slow to get up... and he's done for the night.") |
 
 ## Penalties and whistles
 
@@ -115,6 +118,7 @@
 | `whistle` | Steve | 0 | 3 | whistle_01 "There's the whistle." | a whistle for a frozen puck or a puck out of play |
 | `icing` | Steve | 2 (0 / 2 / 0) | 1 | icing_01 "Icing." | icing |
 | `offsides` | Steve | 2 (0 / 2 / 0) | 1 | offsides_01 "Offsides. We'll come back for a faceoff." | offside |
+| `goalie_pulled` | Steve | 0 | 3 |  | a team pulls its goalie for an extra attacker |
 
 ## Color commentary
 
@@ -140,6 +144,13 @@
 | `banter_blowout` | Both | 0 | 3 |  | when a team is up by four or more, in place of the blowout line now and then |
 | `banter_close` | Both | 0 | 3 |  | late in a close game, in place of the close-game line now and then |
 | `banter_final` | Both | 3 (0 / 0 / 3) | — |  | after the final horn, in place of Bobby's wrap-up now and then |
+
+## Recorded, but the name matches no line (never plays)
+
+- `banter_floridaman` (both/, 1 file(s))
+- `banter_goats` (both/, 1 file(s))
+- `banter_northdakote` (both/, 1 file(s))
+- `banter_quahogs` (both/, 2 file(s))
 
 ## In the CSV, not used by the game
 

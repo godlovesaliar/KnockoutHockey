@@ -17,7 +17,7 @@ func _ready() -> void:
 	var period := float(args.get("period", "45"))
 	var t0 := Time.get_ticks_msec()
 	var totals := {"goals": 0, "shots": 0, "saves": 0, "hits": 0, "big": 0, "faceoffs": 0,
-			"penalties": 0, "offsides": 0, "icings": 0, "changes": 0, "shootouts": 0, "fights": 0}
+			"penalties": 0, "offsides": 0, "icings": 0, "changes": 0, "shootouts": 0, "fights": 0, "glass": 0, "injuries": 0}
 	for g in games:
 		await _play(g + 1, period, totals)
 	print("TOTAL over %d games: %s" % [games, totals])
@@ -101,6 +101,8 @@ func _play(n: int, period: float, totals: Dictionary) -> void:
 	_check(longest_carry < 120 * 25, "game %d: nobody holds the puck forever (longest %.1fs)" % [n, longest_carry / 120.0])
 	_check(phases_seen.has(MatchDirector.Phase.PERIOD_END), "game %d: periods advance" % n)
 	_check(stranded == 0, "game %d: everyone off the ice is on the bench or in the box (%d strays%s)" % [n, stranded, (": " + stranded_note) if stranded_note != "" else ""])
+	totals.glass += m._glass_breaks
+	totals.injuries += st.injuries[0] + st.injuries[1]
 	totals.goals += m.score[0] + m.score[1]
 	totals.shots += st.shots[0] + st.shots[1]
 	totals.saves += st.saves[0] + st.saves[1]

@@ -16,7 +16,7 @@ extends Node
 ## other's face / body, or their guard, so blows land). PlayStation buttons:
 ##   Cross     jab (lead hand, fast, light)
 ##   Square    cross (rear hand, straight)
-##   Triangle  hook (lead hand, big, a visible windup: slip it or block it)
+##   Triangle  hook (dominant hand, big, a visible windup: slip it or block it)
 ##   hold L1   the same three to the body (body jab / cross / hook): less damage, more
 ##             balance, and they drain the other's stamina
 ##   Circle    grab: a hand on their jersey pulls you together, drains their balance and
@@ -129,13 +129,20 @@ const EXHAUSTED_TIME := 4.0    ## both out of wind this long: a decision
 const DRAW_MARGIN := 0.08     ## damage within this share of each other = a draw
 const BUFFER := 0.3           ## a press this long before the fighter is free still fires
 const STANCE_YAW := 0.42      ## rad the body turns to square the bladed clips up to the other
-## A punch is called STEER s before contact, so the hand can be eased onto the target (the
-## clips throw at chest height: head shots lift 20-40 cm), with REACH_EARLY slack (arm
-## lengths: the punch is still turning the shoulders and lunging in). At contact it's
-## judged again for real (reach, a slip, a guard), so the defender's time is the same; out
-## of reach then, the arm straightens at the target and stops short.
+## From STEER s before contact a punch is called every tick, so the hand can be eased onto
+## the target (the clips throw at chest height: head shots lift 20-40 cm), with REACH_EARLY
+## slack (arm lengths: the punch is still turning the shoulders and lunging in). A "miss"
+## can still turn into a hit as the punch comes in, and a hit into a block (or back) as the
+## guard comes up or drops, so the glove goes where the call says; once steered it isn't
+## dropped. At contact it's judged for real (reach, a slip, a guard), so the defender's time
+## is the same; a steered punch gets REACH_STEERED slack there (the straightened arm puts
+## the knuckles within a couple of cm). Reach is to the knuckles, FIST m (at body scale 1)
+## past the wrist bone the arm length is measured to: out of reach, the arm straightens and
+## the glove visibly stops short.
 const STEER := 0.2
 const REACH_EARLY := 0.3
+const REACH_STEERED := 0.05
+const FIST := 0.09
 
 ## clip, start (clip s), contact (clip s), end (clip s), clip speed, hand (0 left / 1 right),
 ## damage, balance damage, stamina cost, lunge (m), reach (how far the target may be from
@@ -298,7 +305,9 @@ class Fighter:
 	var act_t := 0.0          ## seconds into the act
 	var stun := 0.0           ## "hit": seconds it lasts
 	var landed := false
-	var connects := ""        ## at contact: "hit" / "block" / "miss" (decided at contact)
+	var connects := ""        ## the call: "hit" / "block" / "miss" (from STEER before contact; final at contact)
+	var steer_at := INF       ## act_t the call first said hit / block (the hand eases on from there)
+	var called := ""          ## the call just before contact (for the fightlog)
 	var rate := 1.0           ## act speed (tired fighters are slower)
 	var blocking := false
 	var block_low := false    ## the guard is down at the body (L1 with R1)
@@ -359,6 +368,7 @@ var _debug_b := false  ## `-- fightside=b`: the second fighter throws it (the fi
 var _debug_clinch := false  ## `-- fightclinch`: ...thrown from a clinch
 var _debug_yaw := INF      ## `-- fightyaw=<rad>`: the turn while throwing the fightmove= move (aiming clips)
 var _debug_reach := false   ## `-- fightdebug`: at each contact, mark and log the clip's fist vs the target
+var _call_log: FileAccess   ## `-- fightlog` (or fightdebug): every punch's call, to user://fight_calls.log
 var _over_time := OVER_TIME   ## the knockout's fall can hold the finish longer
 ## After a knockout: seconds from the blow until the loser is down on the ice (the replay
 ## runs that long past it).
@@ -389,6 +399,8 @@ func setup(d: MatchDirector, fa: Skater, fb: Skater, prompt: HumanBrain) -> void
 			_debug_reach = true
 		elif arg.begins_with("fightyaw="):
 			_debug_yaw = float(arg.substr(9))
+		if arg in ["fightlog", "fightdebug"] and _call_log == null:
+			_open_call_log(fa, fb)
 	center =(fa.global_position + fb.global_position) * 0.5
 	center.y = 0.0
 	# Keep the fight off the boards.
@@ -883,6 +895,8 @@ func _start(f: Fighter, move: String) -> void:
 	f.act_t = 0.0
 	f.landed = false
 	f.connects = ""
+	f.steer_at = INF
+	f.called = ""
 	f.blocking = false
 	# Tired fighters throw slower; one hand on a jersey costs more. Every punch also wears
 	# the ceiling the wind comes back to.
@@ -978,9 +992,15 @@ func _tick_fighter(f: Fighter, delta: float) -> void:
 		return
 	var m: Dictionary = f.moves[f.act]
 	var contact := _windup(m) / f.rate
-	if not f.landed and f.connects == "" and f.act_t >= contact - STEER:
-		f.connects = _will_connect(f, f.act)
-	# Steer the punching hand onto the target around contact.
+	if not f.landed and f.act_t >= contact - STEER:
+		# Called every tick on the way in: a miss can come into reach, a guard go up or drop.
+		# Once the glove is being steered on it stays on (the contact call has the last word).
+		var call := _will_connect(f, f.act)
+		if not (call == "miss" and f.connects in ["hit", "block"]):
+			if call != "miss" and f.steer_at == INF:
+				f.steer_at = f.act_t
+			f.connects = call
+	# Steer the punching hand onto the target around contact (eased on from the call).
 	if f.connects in ["hit", "block"]:
 		var w := 0.0
 		var t := f.act_t - contact
@@ -990,6 +1010,7 @@ func _tick_fighter(f: Fighter, delta: float) -> void:
 			w = 1.0 - smoothstep(0.06, 0.2, t)
 		if f.act == "grab":
 			w = smoothstep(-0.2, 0.0, t)
+		w = minf(w, clampf((f.act_t - f.steer_at) / 0.08, 0.0, 1.0))
 		f.reach[m.hand] = maxf(f.reach[m.hand], w)
 	if not f.landed and f.act_t >= contact:
 		f.landed = true
@@ -1001,11 +1022,11 @@ func _tick_fighter(f: Fighter, delta: float) -> void:
 
 
 ## Does the move land, hit the guard, or miss (out of reach, slipped)? `final`: at contact
-## (no reach slack; see STEER).
+## (only a steered punch's small slack; see STEER).
 func _will_connect(f: Fighter, move: String, final := false) -> String:
 	var o := f.other
 	var m: Dictionary = f.moves[move]
-	if _need(f, move) > m.reach + (0.0 if final else REACH_EARLY):
+	if _need(f, move) > m.reach + _slack(f, final):
 		return "miss"
 	if m.slip > 0.0 and absf(o.lean) > m.slip:
 		return "miss"
@@ -1020,14 +1041,20 @@ func _land(f: Fighter, move: String) -> void:
 	if o.act == "down":
 		return
 	var at := _mid() + Vector3.UP * 1.5
-	# Called STEER s before contact (with slack, to steer the hand): now for real.
+	# Called from STEER s before contact (with slack, to steer the hand): now for real.
 	var how := _will_connect(f, move, true)
+	var short: bool = _need(f, move) > float(m.reach) + _slack(f, true)
+	f.called = f.connects
+	if how != "miss" and f.steer_at == INF:
+		f.steer_at = f.act_t
 	f.connects = how
+	if _call_log:
+		_log_call(f, move, how, short)
 	var key := "%s %s" % [move, how]
 	_log[key] = int(_log.get(key, 0)) + 1
 	if how == "miss":
 		f.stamina_cap = maxf(f.max_stamina * CEIL_MIN, f.stamina_cap - m.cost * CEIL_MISS)
-		if _need(f, move) > m.reach:
+		if short:
 			_hud.flash_for(f, "OUT OF REACH — STEP IN")
 		else:
 			f.balance -= 6.0 if m.get("heavy", false) else 2.0
@@ -1239,6 +1266,9 @@ func _over(w: Skater, l: Skater, text: String) -> void:
 		var keys := _log.keys()
 		keys.sort()
 		print("[fight] ", ", ".join(keys.map(func(k: String) -> String: return "%s %d" % [k, _log[k]])))
+	if _call_log:
+		_call_line("  -> %s (%s)" % [text, "a" if w == a.s else ("b" if w == b.s else "draw")])
+		_call_log.flush()
 	stage = Stage.OVER
 	_t = 0.0
 	_hud.banner(text)
@@ -1509,6 +1539,10 @@ func _aim_hands(f: Fighter) -> void:
 		if aim == "" and f.act in MOVES and f.connects in ["hit", "block"]:
 			aim = MOVES[f.act].aim
 		var target := _target(f, aim)
+		if aim != "collar":
+			# The IK places the wrist: hold it a fist short, so the knuckles meet the target.
+			var sh := f.s.visual.bone_world(("Left" if k == 0 else "Right") + "Arm")
+			target -= (target - sh).normalized() * _fist(f)
 		if aim == "collar":
 			# Yanked about while they struggle.
 			target += Vector3(sin(_t * 41.0), cos(_t * 37.0) * 0.6, 0.0) * 0.05 * maxf(f.jolt, o.jolt)
@@ -1534,13 +1568,29 @@ func _target(f: Fighter, aim: String) -> Vector3:
 	return o.s.visual.bone_world("Head") + dir * 0.1 + Vector3.DOWN * 0.02
 
 
-## How far f's punch has to go for `move`: from the punching shoulder to where it lands,
-## in f's own arm lengths (upper arm + forearm, scaled with the body). Over 1 the arm
-## can't get there straight; MOVES reach is how much each move gets.
+## How far f's punch has to go for `move`: from the punching shoulder to where the
+## knuckles land (a fist short of the target; a grab's hand is open), in f's own arm
+## lengths (upper arm + forearm, scaled with the body). Over 1 the arm can't get there
+## straight; MOVES reach is how much each move gets.
 func _need(f: Fighter, move: String) -> float:
 	var m: Dictionary = f.moves[move]
 	var side := "Left" if int(m.hand) == 0 else "Right"
-	return f.s.visual.bone_world(side + "Arm").distance_to(_target(f, m.aim)) / _arm(f, side)
+	var d := f.s.visual.bone_world(side + "Arm").distance_to(_target(f, m.aim))
+	if move != "grab":
+		d -= _fist(f)
+	return d / _arm(f, side)
+
+
+## Wrist bone to knuckles, m.
+func _fist(f: Fighter) -> float:
+	return FIST * f.s.visual.body_size.x
+
+
+## Reach slack (arm lengths) for a call: the early one's, or at contact a steered punch's.
+func _slack(f: Fighter, final: bool) -> float:
+	if not final:
+		return REACH_EARLY
+	return REACH_STEERED if f.connects in ["hit", "block"] else 0.0
 
 
 func _arm(f: Fighter, side: String) -> float:
@@ -1594,6 +1644,40 @@ func _measure_reach(f: Fighter, move: String) -> void:
 		add_child(mi)
 		mi.global_position = pair[0]
 		get_tree().create_timer(1.2, true, false, true).timeout.connect(mi.queue_free)
+
+
+## `-- fightlog`: appends this fight's calls to user://fight_calls.log (and prints them).
+func _open_call_log(fa: Skater, fb: Skater) -> void:
+	var path := "user://fight_calls.log"
+	if FileAccess.file_exists(path):
+		_call_log = FileAccess.open(path, FileAccess.READ_WRITE)
+	else:
+		_call_log = FileAccess.open(path, FileAccess.WRITE)
+	if _call_log == null:
+		return
+	_call_log.seek_end()
+	_call_line("")
+	_call_line("=== %s  %s vs %s" % [Time.get_datetime_string_from_system(false, true), _name(fa), _name(fb)])
+	_call_line("    t  who style    move        need/reach  sep   called -> contact (why)")
+
+
+## One punch: who threw it, how far it had to go (arm lengths) against the move's reach,
+## the call on the way in and at contact, and why it missed.
+func _log_call(f: Fighter, move: String, how: String, short: bool) -> void:
+	var o := f.other
+	var why := ""
+	if how == "miss":
+		why = "out of reach" if short else "slipped (lean %.2f)" % o.lean
+	elif how == "block":
+		why = "guard %s" % ("low" if o.block_low else "high")
+	_call_line("%5.1f %s %-8s %-11s %.2f/%.2f  %.2f  %-6s -> %-6s %s" % [TIME_LIMIT - _time_left,
+			"YOU" if f.human else "cpu", STYLE_NAMES[f.style], move, _need(f, move), float(f.moves[move].reach),
+			separation(), f.called if f.called != "" else "-", how, why])
+
+
+func _call_line(line: String) -> void:
+	print("[call] ", line)
+	_call_log.store_line(line)
 
 
 func _name(s: Skater) -> String:

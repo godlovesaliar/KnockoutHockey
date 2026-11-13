@@ -32,19 +32,23 @@ const RULES := [
 		"hint": "Trips, boarding and interference send players to the box."},
 	{"key": "fighting", "label": "FIGHTING", "values": [true, false], "names": ["On", "Off"],
 		"hint": "Big hits can start a fight: drop the gloves or skate away."},
+	{"key": "injuries", "label": "INJURIES", "values": [true, false], "names": ["On", "Off"],
+		"hint": "Big hits and lost fights can knock a player out for the rest of the game."},
 	{"key": "line_changes", "label": "LINE CHANGES", "values": [true, false], "names": ["Auto", "Off"],
 		"hint": "Tired lines change on the fly. Off: no fatigue."},
 	{"key": "difficulty", "label": "CPU DIFFICULTY", "values": [0.2, 0.5, 0.75, 0.95], "names": ["Rookie", "Pro", "All-Star", "Legend"],
 		"hint": "How sharp the computer plays."},
+	{"key": "catch_up", "label": "CATCH-UP", "values": [false, true], "names": ["Off", "On"],
+		"hint": "A team down by two or more goals skates and shoots a little sharper."},
 	{"key": "camera", "label": "CAMERA", "values": ["broadcast", "close", "side", "high"],
 		"names": ["Broadcast", "Close", "Side", "High"], "hint": "The play angle. You can change it from the pause menu too."},
 	{"key": "camera_follow", "label": "CAMERA TURNS", "values": [false, true], "names": ["Never", "With my team"],
 		"hint": "With my team: the view turns when the teams switch ends, so you always attack up (right, from the side)."},
 ]
 
-const ROW_POS := Vector2(80, 178)
-const ROW_SIZE := Vector2(800, 40)
-const ROW_GAP := 4.0
+const ROW_POS := Vector2(80, 160)
+const ROW_SIZE := Vector2(800, 35)
+const ROW_GAP := 3.0
 
 var config := {}
 var _canvas: Control

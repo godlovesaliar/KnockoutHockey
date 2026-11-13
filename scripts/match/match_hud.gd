@@ -66,6 +66,12 @@ func penalty_card(team: int, offender: Skater, foul: String, minutes: String, se
 		"line": "%s  ·  %s" % [foul.to_upper(), minutes], "sub": "", "start": _now, "until": _now + seconds}
 
 
+## Lower third: a player hurt and out for the game.
+func injury_card(team: int, s: Skater, seconds: float) -> void:
+	_card = {"kind": "injury", "team": team, "title": MenuStyle.player_name(s),
+		"line": "INJURED  ·  OUT FOR THE GAME", "sub": "", "start": _now, "until": _now + seconds}
+
+
 func _process(_delta: float) -> void:
 	# The wall clock, so slow motion and load stalls don't drag the graphics; a long gap
 	# (the game was paused) only counts a moment, so a banner survives the pause menu.
@@ -163,6 +169,9 @@ func _draw_status(at: Vector2) -> void:
 		text = "DELAYED PENALTY"
 	elif d.rules and d.rules.offside_team >= 0:
 		text = "DELAYED OFFSIDE"
+	elif d.pulled[0] or d.pulled[1]:
+		text = "EMPTY NET"
+		col = MenuStyle.team_color(d.team_ids[0 if d.pulled[0] else 1])
 	if text == "":
 		return
 	var w := maxf(CLOCK_W, MenuStyle.text_width(text, 16, 0.12) + 24)
@@ -220,9 +229,10 @@ func _draw_card() -> void:
 	var h := 104.0
 	var x := lerpf(-w - 60.0, 48.0, k)
 	var y := 690.0
-	# The tag: GOAL in red, PENALTY in amber.
-	var tag := "GOAL" if goal else "PENALTY"
-	var tag_col := MenuStyle.RED if goal else Color(0.95, 0.66, 0.08)
+	# The tag: GOAL in red, PENALTY in amber, INJURY in white.
+	var injury: bool = _card.kind == "injury"
+	var tag := "GOAL" if goal else ("INJURY" if injury else "PENALTY")
+	var tag_col := MenuStyle.RED if goal else (Color(0.92, 0.94, 0.97) if injury else Color(0.95, 0.66, 0.08))
 	var tagw := MenuStyle.text_width(tag, 24, 0.12) + 40
 	MenuStyle.draw_slant(ci, Rect2(x + 4, y - 34, tagw, 34), tag_col, 12)
 	ci.draw_string(MenuStyle.font(0.12), Vector2(x + 22, y - 9), tag, HORIZONTAL_ALIGNMENT_LEFT, -1, 24, Color.WHITE if goal else MenuStyle.INK)
@@ -273,6 +283,9 @@ func _draw_hints() -> void:
 			any_human = true
 			if sk is Goalie and not hints.has("GOALIE HAS IT   CROSS pass  ·  SQUARE clear  ·  TRIANGLE cover"):
 				hints.append("GOALIE HAS IT   CROSS pass  ·  SQUARE clear  ·  TRIANGLE cover")
+		var pull := d.pull_hint(t)
+		if pull != "" and not hints.has(pull):
+			hints.append(pull)
 	if d.phase == MatchDirector.Phase.FACEOFF and any_human:
 		hints.append("FACEOFF   press pass or shoot right as the puck drops")
 	if d.phase in [MatchDirector.Phase.STOPPAGE, MatchDirector.Phase.FACEOFF] and any_human:

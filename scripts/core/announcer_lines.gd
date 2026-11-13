@@ -99,6 +99,7 @@ const GROUPS := [
 		["goal_powerplay", "pbp", [], "after a power-play goal"],
 		["goal_shorthanded", "pbp", [], "after a short-handed goal"],
 		["goal_comeback", "pbp", [], "after a goal that erases a deficit of two or more"],
+		["goal_emptynet", "pbp", [], "after a goal into an empty net (\"...into the empty net!\")"],
 		["goal_react", "color", [], "after a goal, when nothing above fits"],
 		["goal_react_home", "pbp", [], "after a home goal (\"The crowd goes wild!\")"],
 	]],
@@ -109,6 +110,8 @@ const GROUPS := [
 		["hit_react", "color", ["gottahurt"], "after a big hit call (\"Ooh, felt that one!\")"],
 		["bighitenforcer", "color", [], "after a big hit by a defender or heavy hitter"],
 		["fighting", "pbp", ["fight"], "a fight starts"],
+		["glass_break", "color", [], "a big hit shatters a pane of glass (\"He put him right through the glass!\")"],
+		["injury", "pbp", [], "a hurt player is helped off (\"He's slow to get up... and he's done for the night.\")"],
 	]],
 	["Penalties and whistles", [
 		["penalty", "pbp", [], "a penalty (any kind without its own line)"],
@@ -120,6 +123,7 @@ const GROUPS := [
 		["whistle", "pbp", [], "a whistle for a frozen puck or a puck out of play"],
 		["icing", "pbp", [], "icing"],
 		["offsides", "pbp", [], "offside"],
+		["goalie_pulled", "pbp", [], "a team pulls its goalie for an extra attacker"],
 	]],
 	["Color commentary", [
 		["idle", "color", [], "a long quiet spell"],

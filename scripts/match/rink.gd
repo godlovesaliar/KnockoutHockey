@@ -35,6 +35,13 @@ var nets: Array[Net] = []
 var ends_swapped := false
 var _doors := {}   ## id ("bench0_0", "bench0_1", "box0"...) -> {pivot, sign, angle, hold}
 var _bench_walls: Array[MeshInstance3D] = []   ## per team: the bench's back wall (team color)
+var _glass_mat_main: StandardMaterial3D
+var _glass_holes: Array = []      ## broken panes: [center (x, z) on the glass line, half width]
+var _shards: GlassShards
+var _new_pane: MeshInstance3D
+var _fringe: MeshInstance3D       ## the jagged glass left in the frame around a broken pane
+var _pane_tween: Tween
+const PANE_W := 1.6               ## meters: one pane of the rink glass
 
 const DOOR_OPEN := deg_to_rad(105.0)
 const DOOR_SPEED := 4.5          ## rad/s
@@ -155,6 +162,7 @@ func _build_boards() -> void:
 	glass.roughness = 0.05
 	glass.metallic = 0.2
 	glass.cull_mode = BaseMaterial3D.CULL_DISABLED
+	_glass_mat_main = glass
 	_add_wall(glass_line, RinkSpec.BOARD_HEIGHT, RinkSpec.GLASS_TOP, true, glass, "Glass", RinkSpec.glass_gaps())
 	_add_glass_rail(glass_line, RinkSpec.glass_gaps())
 
@@ -267,7 +275,7 @@ static func _keep(a: Vector2, b: Vector2, gaps: Array) -> Array:
 	return spans
 
 
-func _add_wall(pts: PackedVector2Array, y0: float, y1: float, inward: bool, mat: Material, node_name: String, gaps := []) -> void:
+func _add_wall(pts: PackedVector2Array, y0: float, y1: float, inward: bool, mat: Material, node_name: String, gaps := [], holes := []) -> void:
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
 	var u := 0.0
@@ -279,7 +287,7 @@ func _add_wall(pts: PackedVector2Array, y0: float, y1: float, inward: bool, mat:
 		if (n2.dot((a0 + b0) * 0.5) > 0.0) == inward:
 			n2 = -n2
 		var n := Vector3(n2.x, 0.0, n2.y)
-		for sp: Array in _keep(a0, b0, gaps):
+		for sp: Array in _cut_holes(a0, b0, _keep(a0, b0, gaps), holes):
 			var a := a0.lerp(b0, sp[0])
 			var b := a0.lerp(b0, sp[1])
 			var ua: float = u + seg.length() * sp[0]
@@ -289,6 +297,39 @@ func _add_wall(pts: PackedVector2Array, y0: float, y1: float, inward: bool, mat:
 					Vector2(ua, y0), Vector2(ub, y0), Vector2(ub, y1), Vector2(ua, y1))
 		u += seg.length()
 	_add_mesh(st, mat, node_name)
+
+
+## `spans` (pieces of a -> b, as from _keep) with the stretches within each hole's half
+## width of its center taken out: [[center Vector2, half width], ...].
+static func _cut_holes(a: Vector2, b: Vector2, spans: Array, holes: Array) -> Array:
+	if holes.is_empty():
+		return spans
+	var seg := b - a
+	var len2 := seg.length_squared()
+	if len2 < 0.000001:
+		return spans
+	var out := spans
+	for h: Array in holes:
+		var c: Vector2 = h[0]
+		var r: float = h[1]
+		var tc := (c - a).dot(seg) / len2
+		var perp := (a + seg * tc).distance_to(c)
+		if perp >= r:
+			continue
+		var half := sqrt(r * r - perp * perp) / sqrt(len2)
+		var lo := tc - half
+		var hi := tc + half
+		var next := []
+		for sp: Array in out:
+			if hi <= sp[0] or lo >= sp[1]:
+				next.append(sp)
+				continue
+			if lo > sp[0]:
+				next.append([sp[0], lo])
+			if hi < sp[1]:
+				next.append([hi, sp[1]])
+		out = next
+	return out
 
 
 func _add_cap(inner: PackedVector2Array, outer: PackedVector2Array, y: float, mat: Material, node_name: String, gaps := []) -> void:
@@ -317,6 +358,162 @@ func _add_mesh(st: SurfaceTool, mat: Material, node_name: String) -> void:
 	mi.mesh = st.commit()
 	mi.material_override = mat
 	add_child(mi)
+
+
+# --- Glass breaks ------------------------------------------------------------
+
+## Breaks the pane of glass nearest `near` (MatchDirector's glass breaks): the pane goes,
+## shards fly (most out into the seats, some onto the ice). Returns the pane's center
+## (on the glass, half way up), or Vector3.INF where there's no glass (the bench fronts,
+## the box doors) or a pane is already out.
+func shatter_glass(near: Vector3) -> Vector3:
+	if not _glass_holes.is_empty():
+		return Vector3.INF
+	var line := RinkSpec.perimeter(0.03, SEGS)
+	var p2 := Vector2(near.x, near.z)
+	var best := Vector2.ZERO
+	var best_d := INF
+	for i in line.size():
+		var q := Geometry2D.get_closest_point_to_segment(p2, line[i], line[(i + 1) % line.size()])
+		var d := q.distance_squared_to(p2)
+		if d < best_d:
+			best_d = d
+			best = q
+	if absf(best.x) > RinkSpec.HALF_W - 0.3:
+		for g: Array in RinkSpec.glass_gaps():
+			if signf(best.x) == signf(g[0]) and best.y > g[1] - PANE_W * 0.5 - 0.3 and best.y < g[2] + PANE_W * 0.5 + 0.3:
+				return Vector3.INF
+	_glass_holes = [[best, PANE_W * 0.5]]
+	_rebuild_glass()
+	var c := Vector3(best.x, (RinkSpec.BOARD_HEIGHT + RinkSpec.GLASS_TOP) * 0.5, best.y)
+	if _shards:
+		_shards.queue_free()
+	_shards = GlassShards.new()
+	_shards.name = "GlassShards"
+	add_child(_shards)
+	_shards.burst(c, glass_normal(c), PANE_W, RinkSpec.GLASS_TOP - RinkSpec.BOARD_HEIGHT)
+	_make_fringe(c)
+	Sfx.play("shatter", c, 6.0)
+	return c
+
+
+## Jagged teeth of glass still stuck in the frame around the hole, cloudier than the
+## clear panes so the break reads from the broadcast camera.
+func _make_fringe(c: Vector3) -> void:
+	var n := glass_normal(c)
+	var side := n.cross(Vector3.UP).normalized()
+	var w := PANE_W
+	var h := RinkSpec.GLASS_TOP - RinkSpec.BOARD_HEIGHT
+	var rng := RandomNumberGenerator.new()
+	rng.randomize()
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var at := func(u: float, v: float) -> Vector3:   # u across the pane, v up from its center
+		return c + side * u + Vector3.UP * v
+	# Bottom and top edges: teeth pointing into the hole.
+	for edge in [-1.0, 1.0]:
+		var u := -w * 0.5
+		while u < w * 0.5:
+			var step := rng.randf_range(0.07, 0.24)
+			var u1 := minf(u + step, w * 0.5)
+			var reach := rng.randf_range(0.04, 0.5 if edge < 0.0 else 0.35) * pow(rng.randf(), 0.6)
+			var base: float = edge * h * 0.5
+			var tip_u := rng.randf_range(u, u1)
+			for p in [at.call(u, base), at.call(u1, base), at.call(tip_u, base - edge * reach)]:
+				st.set_normal(n)
+				st.add_vertex(p)
+			u = u1
+	# The sides: teeth along the frame posts.
+	for edge in [-1.0, 1.0]:
+		var v := -h * 0.5
+		while v < h * 0.5:
+			var step := rng.randf_range(0.08, 0.26)
+			var v1 := minf(v + step, h * 0.5)
+			var reach := rng.randf_range(0.03, 0.3) * pow(rng.randf(), 0.7)
+			var base: float = edge * w * 0.5
+			for p in [at.call(base, v), at.call(base, v1), at.call(base - edge * reach, rng.randf_range(v, v1))]:
+				st.set_normal(n)
+				st.add_vertex(p)
+			v = v1
+	var m := StandardMaterial3D.new()
+	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	m.albedo_color = Color(0.9, 0.95, 1.0, 0.42)
+	m.metallic = 0.3
+	m.roughness = 0.1
+	m.cull_mode = BaseMaterial3D.CULL_DISABLED
+	_fringe = MeshInstance3D.new()
+	_fringe.name = "GlassFringe"
+	_fringe.mesh = st.commit()
+	_fringe.material_override = m
+	_fringe.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(_fringe)
+
+
+## The level direction from the glass at `p` in toward the ice.
+func glass_normal(p: Vector3) -> Vector3:
+	var e := 0.05
+	var g := Vector3(RinkSpec.sdf(p.x + e, p.z) - RinkSpec.sdf(p.x - e, p.z), 0.0,
+			RinkSpec.sdf(p.x, p.z + e) - RinkSpec.sdf(p.x, p.z - e))
+	return -g.normalized() if g.length() > 0.0001 else Vector3.RIGHT
+
+
+## The repair: a new pane lowered into the gap over `seconds`, then the glass made whole.
+func replace_pane(seconds: float) -> void:
+	if _glass_holes.is_empty() or _new_pane != null:
+		return
+	var c2: Vector2 = _glass_holes[0][0]
+	var c := Vector3(c2.x, (RinkSpec.BOARD_HEIGHT + RinkSpec.GLASS_TOP) * 0.5, c2.y)
+	var n := glass_normal(c)
+	var q := QuadMesh.new()
+	q.size = Vector2(PANE_W, RinkSpec.GLASS_TOP - RinkSpec.BOARD_HEIGHT)
+	_new_pane = MeshInstance3D.new()
+	_new_pane.name = "NewPane"
+	_new_pane.mesh = q
+	var m := _glass_mat_main.duplicate() as StandardMaterial3D
+	m.albedo_color.a = 0.22   # fresh glass, a touch shinier until it's in
+	_new_pane.material_override = m
+	_new_pane.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(_new_pane)
+	_new_pane.global_transform = Transform3D(Basis.looking_at(n, Vector3.UP), c + Vector3.UP * 2.2)
+	_pane_tween = create_tween()
+	_pane_tween.tween_property(_new_pane, "global_position", c, seconds * 0.85) \
+			.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+	_pane_tween.tween_callback(func() -> void:
+		Sfx.play("glass", c, -2.0, 1.3)
+		repair_glass())
+
+
+## Makes the glass whole again and sweeps up the shards (safe to call any time).
+func repair_glass() -> void:
+	if _pane_tween:
+		_pane_tween.kill()
+		_pane_tween = null
+	if _new_pane:
+		_new_pane.queue_free()
+		_new_pane = null
+	if _shards:
+		_shards.queue_free()
+		_shards = null
+	if _fringe:
+		_fringe.queue_free()
+		_fringe = null
+	if _glass_holes.is_empty():
+		return
+	_glass_holes.clear()
+	_rebuild_glass()
+
+
+func glass_broken() -> bool:
+	return not _glass_holes.is_empty()
+
+
+func _rebuild_glass() -> void:
+	var old := get_node_or_null("Glass")
+	if old:
+		old.name = "GlassOld"
+		old.queue_free()
+	_add_wall(RinkSpec.perimeter(0.03, SEGS), RinkSpec.BOARD_HEIGHT, RinkSpec.GLASS_TOP, true, _glass_mat_main, "Glass",
+			RinkSpec.glass_gaps(), _glass_holes)
 
 
 # --- Colliders ---------------------------------------------------------------

@@ -17,6 +17,9 @@ signal penalty_called(offender: Skater, kind: StringName)
 signal match_finished(score: Array)
 signal faceoff_won(team: int)
 signal penalty_expired(team: int)   ## a minor ran out (not a goal against, not offsetting)
+signal goalie_pulled(team: int)     ## a team's goalie heads for the bench (extra attacker)
+signal player_injured(s: Skater)    ## hurt: out for the rest of the game
+signal glass_broken(at: Vector3)    ## a big hit put someone through a pane of glass
 
 enum Phase { PREGAME, FACEOFF, LIVE, STOPPAGE, PERIOD_END, SHOOTOUT, FINAL, INTRO, FIGHT }
 
@@ -43,6 +46,20 @@ const FIGHT_COOLDOWN := 60.0     ## sitting out instead, when penalties are off
 const MOMENTUM_TIME := 75.0
 const INTRO_MIN := 3.5            ## the matchup screen shows at least this long...
 const INTRO_MAX := 20.0           ## ...and at most this long (the intro line normally ends it)
+## Injuries (DESIGN §4.8): a big hit or a lost fight can put a skater out for the game.
+const INJURY_HIT := 0.035        ## chance a big hit hurts the player hit (average durability)...
+const INJURY_BOARDS := 1.6       ## ...this much more into the boards
+const INJURY_FIGHT := 0.12       ## chance the loser of a fight is hurt...
+const INJURY_KO := 2.0           ## ...this much more if knocked out
+const INJURY_WHISTLE := 4.0      ## s after a player's hurt, the whistle (sooner if their team gets the puck)
+const MAX_INJURIES := 2          ## per team per game
+## Glass breaks (DESIGN §4.5): a huge hit into the boards can put the victim through a pane.
+const GLASS_IMPACT := 19.0       ## hit power (after balance, with the boards) that can break it...
+const GLASS_CHANCE := [0.6, 0.25]   ## ...with this chance for the first break, then the second
+## Pulling the goalie (DESIGN §4.7).
+const PULL_SPEED := 7.5          ## m/s: a pulled goalie hustles to and from the bench
+const LATE_PULL := 0.12          ## share of the last period's clock left when a trailing CPU team pulls...
+const LATE_PULL_RANGE := Vector2(20.0, 120.0)   ## ...in seconds, at least / at most (x1.6 down two)
 
 @export var use_game_settings := true
 @export var format := 5
@@ -56,6 +73,8 @@ const INTRO_MAX := 20.0           ## ...and at most this long (the intro line no
 @export var penalties := true
 @export var line_changes := true
 @export var fighting := true
+@export var injuries := true
+@export var catch_up := false     ## catch-up AI: a team down two or more plays a little sharper
 @export_range(0.0, 1.0) var difficulty := 0.5
 @export var rng_seed := 0
 @export var team_ids: Array[int] = [0, 1]   ## Teams.LIST index for home, away
@@ -77,7 +96,7 @@ var clock := 0.0
 var score := [0, 0]
 var stats := {"shots": [0, 0], "saves": [0, 0], "hits": [0, 0], "big_hits": [0, 0], "faceoffs": [0, 0],
 		"penalties": [0, 0], "pp_goals": [0, 0], "offsides": 0, "icings": 0, "changes": [0, 0],
-		"period_goals": [[0, 0, 0, 0], [0, 0, 0, 0]], "fights": 0}   ## per team: goals in periods 1-3 and OT
+		"period_goals": [[0, 0, 0, 0], [0, 0, 0, 0]], "fights": 0, "injuries": [0, 0]}   ## per team: goals in periods 1-3 and OT
 var box := BoxScore.new()     ## per-player stats (hot / cold players, three stars)
 var teams: Array[Dictionary] = []    ## {lineup: Lineup, goalie: Goalie, ai: TeamAI, control: TeamControl}
 var rules: MatchRules
@@ -89,6 +108,20 @@ var _fight: Fight
 var tension := [0.0, 0.0]     ## per team: built by hits taken (see FIGHT_TENSION)
 var momentum := [0.0, 0.0]    ## per team: seconds of momentum left after winning a fight
 var _last_hitter: Array = [null, null]   ## per team: who last hit them
+## The referee's strictness (DESIGN §2.2): hidden, rolled each game around a base that
+## rises with the difficulty. Scales the chance each foul is called.
+var ref_strictness := 1.0
+var _cmd_ref := -1.0
+var _hurt: Array[Skater] = []    ## hurt in live play, helped off at the next stoppage
+var _fight_ko := false
+var _glass_breaks := 0
+var _glass_at := Vector3.INF     ## a broken pane waiting for the stoppage (repair cutscene)
+var pulled := [false, false]     ## per team: goalie off (or on the way) for an extra attacker
+var _pull_why := ["", ""]        ## "delayed" (delayed penalty), "late" (trailing late), "manual"
+var _pull_wait := [0.0, 0.0]     ## s before the computer may pull its goalie again
+var _extra_out: Array = [null, null]   ## the extra attacker heading off so the goalie can return
+var _extra_time := [0.0, 0.0]
+var last_goal_empty_net := false   ## the last goal went into an empty net (MatchAudio)
 var _last_victim: Array = [null, null]
 var _since_fight := 999.0
 var _fight_spot := Vector3.ZERO
@@ -124,6 +157,10 @@ func _ready() -> void:
 		_rng.seed = rng_seed
 	else:
 		_rng.randomize()
+	ref_strictness = _cmd_ref if _cmd_ref >= 0.0 \
+			else clampf(lerpf(0.85, 1.1, difficulty) + _rng.randfn(0.0, 0.12), 0.65, 1.35)
+	if OS.get_cmdline_user_args().has("reflog"):
+		print("[ref] strictness %.2f" % ref_strictness)
 	sun.rotation = Vector3(deg_to_rad(-62.0), deg_to_rad(25.0), 0.0)
 	GameSettings.sun_shadow_mode(sun)
 	rules = MatchRules.new(self)
@@ -185,6 +222,8 @@ func _apply_settings(c: Dictionary, h: Array) -> void:
 	penalties = bool(c.get("penalties", penalties))
 	line_changes = bool(c.get("line_changes", line_changes))
 	fighting = bool(c.get("fighting", fighting))
+	injuries = bool(c.get("injuries", injuries))
+	catch_up = bool(c.get("catch_up", catch_up))
 	difficulty = float(c.get("difficulty", difficulty))
 	camera = str(c.get("camera", camera))
 	camera_follow = bool(c.get("camera_follow", camera_follow))
@@ -208,6 +247,18 @@ func _parse_cmdline() -> void:
 		ot_length = period_length
 	if args.has("diff"):
 		difficulty = clampf(float(args["diff"]), 0.0, 1.0)
+	if args.has("ref"):   # the referee's strictness (0.65 lenient .. 1.35 strict), instead of the roll
+		_cmd_ref = clampf(float(args["ref"]), 0.0, 3.0)
+	if args.has("injuries"):
+		injuries = args["injuries"] != "0"
+	if args.has("catchup"):
+		catch_up = args["catchup"] != "0"
+	if args.has("injurytest"):   # a few seconds in: a home skater is hurt (stays down, whistle, helped off)
+		_injury_demo.call_deferred()
+	if args.has("glasstest"):    # a few seconds in: a pane breaks behind a skater (cutscene, repair)
+		_glass_demo.call_deferred()
+	if args.has("pulltest"):     # the away team pulls its goalie a few seconds in (pulltest=late: down a goal late)
+		_pull_demo.call_deferred(str(args["pulltest"]))
 	if args.has("home"):
 		team_ids[0] = int(args["home"])
 	if args.has("away"):
@@ -503,6 +554,8 @@ func _physics_process(delta: float) -> void:
 			_update_faceoff()
 		Phase.LIVE:
 			clock = maxf(0.0, clock - delta)
+			_tick_catch_up()
+			_tick_goalie_pull(delta)
 			_tick_fight_state(delta)
 			rules.tick()
 			if phase == Phase.LIVE:
@@ -541,8 +594,17 @@ func _unhandled_input(event: InputEvent) -> void:
 				_open_pause()
 	if event is InputEventJoypadButton and event.pressed and event.button_index == JOY_BUTTON_START:
 		_open_pause()
-	if Input.is_action_just_pressed("debug_camera"):
-		cam.cycle_mode()
+	# Select / G: pull the goalie (or send them back), for the team of whoever pressed it.
+	var pull_team := -1
+	if event is InputEventJoypadButton and event.pressed and event.button_index == JOY_BUTTON_BACK:
+		pull_team = _human_team_for(event)
+	elif event is InputEventKey and event.pressed and not event.echo and event.physical_keycode == KEY_G:
+		pull_team = _human_team_for(event)
+	if pull_team >= 0:
+		get_viewport().set_input_as_handled()
+		toggle_goalie(pull_team)
+	elif event is InputEventKey and event.pressed and not event.echo and event.physical_keycode == KEY_C:
+		cam.cycle_mode()   # (debug: cycle the camera angle)
 
 
 ## Called by the rules (and events) to stop play.
@@ -564,6 +626,7 @@ func _stoppage(seconds: float, dot: Vector2, text := "", team := -1) -> void:
 	rink.disarm_nets()
 	_stoppage_len = seconds
 	_next_dot = dot
+	var carded := false
 	# Any called penalty is served now, and the faceoff moves to the penalized team's end.
 	for t in 2:
 		var pen = rules.pending[t]
@@ -585,7 +648,15 @@ func _stoppage(seconds: float, dot: Vector2, text := "", team := -1) -> void:
 		text = ""
 		if _hud:
 			_hud.penalty_card(t, offender, FOUL_NAMES.get(pen.kind, str(pen.kind)), "2:00", 4.0)
+			carded = true
+	# Anyone hurt in the play is helped off (their card waits for a penalty card first).
+	for s in _hurt:
+		if is_instance_valid(s):
+			_injure(s, 4.2 if carded else 0.0)
+	_hurt.clear()
 	_set_phase(Phase.STOPPAGE)
+	if _glass_at != Vector3.INF:
+		_glass_repair()
 	if replay and not replay.busy():
 		replay.play_pending(1, ["hit", "ko"], Replay.STOPPAGE_MAX_AGE)
 	if text != "" and _hud:
@@ -595,6 +666,14 @@ func _stoppage(seconds: float, dot: Vector2, text := "", team := -1) -> void:
 func _end_period() -> void:
 	puck.dead = true
 	rink.disarm_nets()
+	pulled = [false, false]
+	_extra_out = [null, null]
+	_glass_at = Vector3.INF
+	rink.repair_glass()
+	for s in _hurt:
+		if is_instance_valid(s):
+			_injure(s)
+	_hurt.clear()
 	var tied: bool = score[0] == score[1]
 	var in_ot := period > periods
 	if period >= periods and not tied:
@@ -721,7 +800,7 @@ func _try_fight(t: int) -> void:
 
 
 func _fightable(s: Skater) -> bool:
-	return s != null and is_instance_valid(s) and not (s is Goalie) and not s.benched and not s.changing
+	return s != null and is_instance_valid(s) and not (s is Goalie) and not s.benched and not s.changing and not s.injured
 
 
 func _toughest(t: int, prefer: Skater) -> Skater:
@@ -750,7 +829,9 @@ func _start_fight(a: Skater, b: Skater, prompt: HumanBrain) -> void:
 	_fight = Fight.new()
 	add_child(_fight)
 	_fight.finished.connect(_on_fight_over)
+	_fight_ko = false
 	_fight.knockout.connect(func(w: Skater, l: Skater) -> void:
+		_fight_ko = true
 		if replay and show_hud:
 			replay.capture("ko", "KNOCKOUT  ·  %s" % MenuStyle.player_name(w), [w, l], 2.8, maxf(1.6, _fight.ko_fall + 0.8),
 					{"play_now": true, "speed": 0.45, "cam": "orbit"}))
@@ -781,6 +862,9 @@ func _on_fight_over(winner: Skater, loser: Skater) -> void:
 		momentum[winner.team] = MOMENTUM_TIME
 		_bench_react(winner.team, "cheer", 0.8)
 		_bench_react(1 - winner.team, "groan", 0.5)
+	var hurt: Skater = null
+	if loser and _can_injure(loser) and _rng.randf() < _injury_chance(loser, INJURY_FIGHT * (INJURY_KO if _fight_ko else 1.0)):
+		hurt = loser
 	for s in fighters:
 		if not is_instance_valid(s):
 			continue
@@ -789,6 +873,9 @@ func _on_fight_over(winner: Skater, loser: Skater) -> void:
 			box.add(s, "pim", 5)
 		if s == winner:
 			box.add(s, "fight_w")
+		if s == hurt:
+			_injure(s, 2.4)   # helped to the bench instead of the box
+			continue
 		_send_to_box(s.team, s, FIGHT_MAJOR if penalties else FIGHT_COOLDOWN, false)
 		_reassign_control(s.team, s)
 	var text := "FIGHTING — 5:00 MAJORS" if penalties else "BOTH FIGHTERS SIT"
@@ -1017,7 +1104,7 @@ func period_name(p: int) -> String:
 func _on_foul(offender: Skater, _victim: Skater, kind: StringName) -> void:
 	if not penalties or phase != Phase.LIVE:
 		return
-	if _rng.randf() >= FOUL_CHANCE.get(kind, 0.5):
+	if _rng.randf() >= clampf(FOUL_CHANCE.get(kind, 0.5) * ref_strictness, 0.05, 0.95):
 		return
 	var delayed := rules.call_penalty(offender, kind)
 	if delayed and _hud:
@@ -1083,6 +1170,8 @@ func _tick_line_changes() -> void:
 				lu.plan_change(true)
 		var gate: Vector3 = rink.bench_gate(t)
 		for s in lu.on_ice.duplicate():
+			if s == _extra_out[t]:
+				continue   # (the extra attacker going off for the goalie: _tick_goalie_pull)
 			if s.changing and not s.has_puck() and s.global_position.distance_to(gate) < 2.5:
 				var from: Vector3 = s.global_position
 				var inn := lu.swap_at_gate(s)
@@ -1108,14 +1197,14 @@ func _change_through_doors(t: int, out: Skater, from: Vector3, inn: Skater) -> v
 
 ## Walks `s` along `to_door` (ending at the door), through it and along `after`, opening
 ## the door just before they get there.
-func _walk_through(s: Skater, door: String, to_door: Array, after: Array, face: Vector3, done := Callable()) -> void:
+func _walk_through(s: Skater, door: String, to_door: Array, after: Array, face: Vector3, done := Callable(), speed := WALK_SPEED) -> void:
 	var dist := 0.0
 	var p := s.global_position
 	for q: Vector3 in to_door:
 		dist += p.distance_to(q)
 		p = q
-	var t_door := dist / WALK_SPEED
-	s.walk(to_door + after, WALK_SPEED, face, done)
+	var t_door := dist / speed
+	s.walk(to_door + after, speed, face, done)
 	if t_door < 0.35:
 		rink.open_door(door, 1.1)
 	else:
@@ -1390,6 +1479,7 @@ func _claim_bench(s: Skater, t: int) -> Array:
 	var taken := {}
 	var who: Array = lu.all_skaters()
 	who.append(lu.goalie)
+	who.append_array(lu.injured)
 	for o: Skater in who:
 		if o != s and is_instance_valid(o) and o.benched and not o.in_box_spot and o.bench_spot != Vector3.INF:
 			taken[o.bench_spot] = true
@@ -1445,6 +1535,430 @@ func _reassign_control(t: int, removed: Skater) -> void:
 		c.on_skater_removed(removed)
 
 
+# --- Catch-up AI -----------------------------------------------------------------------
+
+## A team two or more goals down plays a little sharper (DESIGN §6): with the toggle on,
+## +1.8% top speed, steadier and harder shots and quicker AI decisions two down; up to
+## +3% three or more down. Either team, human or computer.
+func _tick_catch_up() -> void:
+	for t in 2:
+		var k := 0.0
+		if catch_up and not knockout:
+			var down: int = score[1 - t] - score[t]
+			k = 0.0 if down < 2 else (0.6 if down == 2 else 1.0)
+		teams[t].ai.catch_up = k
+		for s in lineup(t).on_ice:
+			s.catch_up = k
+
+
+# --- Pulling the goalie ------------------------------------------------------------------
+
+## The goalie isn't in the net: pulled, or on the way to or from the bench.
+func goalie_out(t: int) -> bool:
+	var g: Goalie = teams[t].goalie
+	return pulled[t] or g.benched or g.walking()
+
+
+## Select / G for a human team: pull the goalie, or send them back in.
+func toggle_goalie(t: int) -> void:
+	if knockout or t < 0 or t >= teams.size():
+		return
+	if pulled[t]:
+		return_goalie(t)
+	else:
+		pull_goalie(t, "delayed" if rules.pending[1 - t] != null else "manual")
+
+
+## Sends team t's goalie off for an extra attacker. Live: the goalie skates to the bench
+## door nearer their net and the freshest skater comes on through the other one. In a
+## stoppage: the goalie stays on the bench for the coming faceoff (not in their own zone).
+func pull_goalie(t: int, why: String) -> bool:
+	var g: Goalie = teams[t].goalie
+	if pulled[t] or g.has_puck() or not (phase in [Phase.LIVE, Phase.STOPPAGE]):
+		return false
+	if phase == Phase.LIVE and (g.benched or g.walking()):
+		return false
+	pulled[t] = true
+	_pull_why[t] = why
+	goalie_pulled.emit(t)
+	if _hud:
+		_hud.flash("%s PULL THE GOALIE" % team_name(t))
+	if phase != Phase.LIVE:
+		return true
+	var door := _goalie_door(t)
+	_walk_through(g, door, [rink.door_point(door, -0.8)], [rink.door_point(door, 0.6)], Vector3(-RinkSpec.BENCH_SIDE, 0, 0),
+			func() -> void:
+				if not pulled[t] or g.benched:
+					return
+				g.set_benched(true)
+				if phase == Phase.LIVE:
+					_send_extra(t, door), PULL_SPEED)
+	return true
+
+
+## Back in the net: from the bench through the door (the extra attacker heads off), or,
+## still on the way off, straight back. In a stoppage the faceoff puts them back.
+func return_goalie(t: int) -> void:
+	if not pulled[t]:
+		return
+	pulled[t] = false
+	_pull_wait[t] = 5.0
+	if _hud:
+		_hud.flash("%s GOALIE BACK IN" % team_name(t))
+	if phase != Phase.LIVE:
+		return
+	var g: Goalie = teams[t].goalie
+	var net := rink.defended_net(t)
+	g.net = net
+	var crease := net.global_position + net.global_basis.z * 0.7
+	crease.y = 0.0
+	if g.benched:
+		var door := _goalie_door(t)
+		g.set_benched(false)
+		if g.bench_spot != Vector3.INF:
+			g.global_position = g.bench_spot
+		_walk_through(g, door, [rink.door_point(door, 0.7)], [rink.door_point(door, -0.8), crease],
+				net.global_basis.z, Callable(), PULL_SPEED)
+	else:
+		g.walk([crease], PULL_SPEED, net.global_basis.z)
+
+
+## The bench door nearer team t's own net (the goalie's way off and back on).
+func _goalie_door(t: int) -> String:
+	var net := rink.defended_net(t).global_position
+	var d0 := rink.bench_door_id(t, 0)
+	var d1 := rink.bench_door_id(t, 1)
+	return d0 if rink.door_point(d0, 0.0).distance_to(net) < rink.door_point(d1, 0.0).distance_to(net) else d1
+
+
+## The goalie's off: the freshest skater on the bench comes on through the other door.
+func _send_extra(t: int, goalie_door: String) -> void:
+	var lu := lineup(t)
+	var ex: Skater = _extra_out[t]
+	if ex != null and is_instance_valid(ex) and ex in lu.on_ice:
+		ex.changing = false   # pulled again before they got off: they stay out there
+		_extra_out[t] = null
+		return
+	if lu.on_ice.size() > strength(t):
+		return
+	var s := lu.freshest_on_bench()
+	if s == null:
+		return
+	var door := rink.bench_door_id(t, 1) if goalie_door == rink.bench_door_id(t, 0) else rink.bench_door_id(t, 0)
+	lu.on_ice.append(s)
+	s.set_benched(false)
+	if s.bench_spot != Vector3.INF:
+		s.global_position = s.bench_spot
+	_walk_through(s, door, [rink.door_point(door, 0.7)], [rink.door_point(door, -0.8), rink.door_point(door, -2.2)],
+			Vector3(-RinkSpec.BENCH_SIDE, 0, 0))
+
+
+## The goalie's coming back: the computer skater nearest the bench heads off.
+func _call_off_extra(t: int) -> void:
+	var lu := lineup(t)
+	var gate: Vector3 = rink.bench_gate(t)
+	var best: Skater = null
+	var best_d := INF
+	for s in lu.on_ice:
+		if s.is_human or s.has_puck() or s.walking():
+			continue
+		var d := s.global_position.distance_to(gate)
+		if d < best_d:
+			best_d = d
+			best = s
+	if best:
+		best.changing = true
+		_extra_out[t] = best
+		_extra_time[t] = 0.0
+
+
+## The extra attacker reached the bench gate (or took too long): through the door and sit.
+func _extra_off(t: int, s: Skater) -> void:
+	var lu := lineup(t)
+	_extra_out[t] = null
+	var from := s.global_position
+	lu.on_ice.erase(s)
+	_reassign_control(t, s)
+	s.set_benched(true)
+	var d0 := rink.bench_door_id(t, 0)
+	var d1 := rink.bench_door_id(t, 1)
+	var near := d0 if from.distance_to(rink.door_point(d0, 0.0)) < from.distance_to(rink.door_point(d1, 0.0)) else d1
+	s.global_position = from
+	_walk_through(s, near, [rink.door_point(near, -0.7)], [rink.door_point(near, 0.7), s.bench_spot],
+			Vector3(-RinkSpec.BENCH_SIDE, 0, 0))
+
+
+func _tick_goalie_pull(delta: float) -> void:
+	if knockout:
+		return
+	for t in 2:
+		var lu := lineup(t)
+		if not pulled[t]:
+			# Too many on the ice with the goalie back: the extra attacker heads off.
+			var ex: Skater = _extra_out[t]
+			if ex == null or not is_instance_valid(ex) or not (ex in lu.on_ice):
+				_extra_out[t] = null
+				if lu.on_ice.size() > strength(t):
+					_call_off_extra(t)
+			else:
+				_extra_time[t] += delta
+				ex.changing = true
+				if not ex.has_puck() and (ex.global_position.distance_to(rink.bench_gate(t)) < 2.5 or _extra_time[t] > 8.0):
+					_extra_off(t, ex)
+		if control(t) == null:
+			_cpu_pull(t, delta)
+
+
+## The computer's bench: pulls the goalie for a delayed penalty against the other team,
+## or down one or two late in the third, once it has the puck out of its own zone.
+func _cpu_pull(t: int, delta: float) -> void:
+	_pull_wait[t] = maxf(0.0, _pull_wait[t] - delta)
+	if pulled[t]:
+		if (_pull_why[t] == "delayed" and rules.pending[1 - t] == null) or (_pull_why[t] == "late" and not _late_trailing(t)):
+			return_goalie(t)
+		return
+	if _pull_wait[t] > 0.0 or _puck_in_defensive_zone(t):
+		return
+	var c := puck.carrier
+	if c == null or c.team != t or c is Goalie:
+		return
+	if rules.pending[1 - t] != null:
+		pull_goalie(t, "delayed")
+	elif _late_trailing(t):
+		pull_goalie(t, "late")
+
+
+## Team t is down one or two late in the last period of regulation.
+func _late_trailing(t: int) -> bool:
+	if period != periods:
+		return false
+	var down: int = score[1 - t] - score[t]
+	if down < 1 or down > 2:
+		return false
+	var late := clampf(period_length * LATE_PULL, LATE_PULL_RANGE.x, LATE_PULL_RANGE.y) * (1.6 if down == 2 else 1.0)
+	return clock <= late
+
+
+## A pulled goalie stays off for this faceoff: not after a delayed penalty, not in their
+## own zone, and (the computer) only while it's still late and close.
+func _keep_pulled(t: int, dot: Vector2) -> bool:
+	if _pull_why[t] == "delayed":
+		return false
+	if signf(dot.y) == signf(rink.defended_net(t).global_position.z) and absf(dot.y) > RinkSpec.BLUE_LINE_Z:
+		return false
+	if control(t) == null:
+		return _late_trailing(t)
+	return true
+
+
+## The hint for a human team: when pulling makes sense, or how to undo it.
+func pull_hint(t: int) -> String:
+	if knockout or not (phase in [Phase.LIVE, Phase.STOPPAGE]):
+		return ""
+	if pulled[t]:
+		return "SELECT / G   goalie back in"
+	if rules.pending[1 - t] != null or _late_trailing(t):
+		return "SELECT / G   pull the goalie"
+	return ""
+
+
+## The team of the human whose pad (or keyboard) sent `event`, or -1.
+func _human_team_for(event: InputEvent) -> int:
+	for h: Dictionary in humans:
+		var kind := str(h.get("kind", "any"))
+		var hit := false
+		if event is InputEventJoypadButton:
+			hit = kind == "any" or (kind == "pad" and int(h.get("pad", 0)) == event.device)
+		elif event is InputEventKey:
+			hit = kind in ["any", "kb1", "kb2"]
+		if hit:
+			return int(h.get("team", 0))
+	return -1
+
+
+# --- Injuries ----------------------------------------------------------------------------
+
+## A base chance scaled by durability: about 1.7x for the frailest, 0.4x for the toughest.
+func _injury_chance(s: Skater, base: float) -> float:
+	return base * PlayerStats.lerp_stat(s.stats.durability, 1.7, 0.4)
+
+
+## Injuries are on and the team can spare the player (a spare forward and defender left).
+func _can_injure(s: Skater) -> bool:
+	if not injuries or knockout or s == null or not is_instance_valid(s) or s is Goalie or s.injured:
+		return false
+	var lu := lineup(s.team)
+	if lu.injured.size() >= MAX_INJURIES:
+		return false
+	var need := lu.composition(5)
+	var fs := lu.forwards.size() - (0 if s.is_defense else 1)
+	var ds := lu.defense.size() - (1 if s.is_defense else 0)
+	return fs >= need.x + 1 and ds >= need.y + 1
+
+
+## Hurt in live play: stays down; the whistle goes when their team gets the puck, or
+## after INJURY_WHISTLE anyway. They're helped off at the stoppage.
+func _hurt_in_play(s: Skater) -> void:
+	s.injured = true
+	_hurt.append(s)
+	s.stay_down(INJURY_WHISTLE + 4.0)
+	_reassign_control(s.team, s)
+	get_tree().create_timer(INJURY_WHISTLE, false).timeout.connect(func() -> void:
+		if phase == Phase.LIVE and s in _hurt:
+			whistle(&"injury", nearest_dot(s.global_position), "INJURY"))
+
+
+## Out for the game: off the lines (rebuilt without them) and helped slowly to the bench
+## from wherever they are. The lower third says so (after `card_delay`).
+func _injure(s: Skater, card_delay := 0.0) -> void:
+	var t := s.team
+	var lu := lineup(t)
+	var on_ice := not s.benched or s.walking()
+	var from := s.global_position
+	s.injured = true
+	_reassign_control(t, s)
+	lu.remove_skater(s)
+	s.in_box_spot = false
+	s.set_benched(true)
+	stats.injuries[t] += 1
+	player_injured.emit(s)
+	if on_ice and RinkSpec.sdf(from.x, from.z) < 0.0:
+		var d0 := rink.bench_door_id(t, 0)
+		var d1 := rink.bench_door_id(t, 1)
+		var near := d0 if from.distance_to(rink.door_point(d0, 0.0)) < from.distance_to(rink.door_point(d1, 0.0)) else d1
+		s.global_position = from
+		_walk_through(s, near, [rink.door_point(near, -0.7)], [rink.door_point(near, 0.7), s.bench_spot],
+				Vector3(-RinkSpec.BENCH_SIDE, 0, 0), func() -> void:
+					if is_instance_valid(s) and s.benched and s.visual:
+						s.visual.bench_react("sulk"), 2.4)
+	if _hud:
+		if card_delay > 0.0:
+			get_tree().create_timer(card_delay, false).timeout.connect(func() -> void:
+				if _hud:
+					_hud.injury_card(t, s, 4.0))
+		else:
+			_hud.injury_card(t, s, 4.0)
+
+
+# --- Glass breaks ------------------------------------------------------------------------
+
+## A big hit into the boards: hard enough (and lucky enough) to put the victim through
+## the glass? At most GLASS_CHANCE.size() a game.
+func _try_break_glass(attacker: Skater, victim: Skater) -> bool:
+	if phase != Phase.LIVE or knockout or _glass_at != Vector3.INF or _glass_breaks >= GLASS_CHANCE.size():
+		return false
+	if victim.last_impact < GLASS_IMPACT or _rng.randf() >= GLASS_CHANCE[_glass_breaks]:
+		return false
+	return _break_glass(victim.global_position, attacker.team)
+
+
+## Shatters the pane nearest `near` (if there's glass there) and blows the whistle a
+## moment later; the stoppage plays the repair.
+func _break_glass(near: Vector3, _team := -1) -> bool:
+	var at := rink.shatter_glass(near)
+	if at == Vector3.INF:
+		return false
+	_glass_breaks += 1
+	_glass_at = at
+	glass_broken.emit(at)
+	get_tree().create_timer(1.1, false).timeout.connect(func() -> void:
+		if phase == Phase.LIVE and _glass_at != Vector3.INF:
+			whistle(&"glass", nearest_dot(at), ""))
+	return true
+
+
+## At the stoppage: the repair cutscene (after the penalty call, if there is one), or
+## without the TV graphics just a new pane.
+func _glass_repair() -> void:
+	var at := _glass_at
+	_glass_at = Vector3.INF
+	if _hud == null:
+		rink.repair_glass()
+		return
+	if _pen_cut != null:
+		_pen_cut.finished.connect(func(_skipped: bool) -> void: _glass_cutscene(at))
+	else:
+		_glass_cutscene(at)
+
+
+## The broken pane up close with the shards coming down, then a wider look as the new
+## pane is lowered in. Holds the stoppage; skipping puts the new glass in at once.
+func _glass_cutscene(at: Vector3) -> void:
+	if phase != Phase.STOPPAGE:
+		rink.repair_glass()
+		return
+	var n := rink.glass_normal(at)
+	var side := n.cross(Vector3.UP)
+	var look := Vector3(at.x, 1.6, at.z)
+	var cs := Cutscene.new()
+	cs.name = "GlassRepair"
+	cs.shots.append({"len": 2.4, "fov": 40.0, "frame": func(t: float) -> Array:
+		var pos := look + n * (4.6 - t * 0.3) + side * 1.6 + Vector3.UP * 0.2
+		var c := RinkSpec.clamp_inside(pos.x, pos.z, 0.6)
+		return [Vector3(c.x, pos.y, c.y), look]})
+	cs.shots.append({"len": 3.0, "fov": 48.0,
+		"start": func() -> void:
+			rink.replace_pane(2.4)
+			if _hud:
+				_hud.flash("NEW GLASS GOING IN"),
+		"frame": func(_t: float) -> Array:
+			var pos := look + n * 7.5 - side * 3.0 + Vector3.UP * 1.2
+			var c := RinkSpec.clamp_inside(pos.x, pos.z, 0.6)
+			return [Vector3(c.x, pos.y, c.y), look + Vector3.UP * 0.2]})
+	cs.on_skip = func() -> void: rink.repair_glass()
+	cs.finished.connect(func(skipped: bool) -> void:
+		rink.repair_glass()
+		if phase == Phase.STOPPAGE:
+			_stoppage_len = minf(_stoppage_len, _phase_time + (0.5 if skipped else 0.3)))
+	add_child(cs)
+	cs.play()
+	_stoppage_len = maxf(_stoppage_len, _phase_time + 5.9)
+
+
+# --- Test hooks for the above --------------------------------------------------------------
+
+func _wait_live(seconds: float) -> void:
+	await get_tree().process_frame
+	while phase != Phase.LIVE:
+		await get_tree().create_timer(0.25, false).timeout
+	await get_tree().create_timer(seconds, false).timeout
+	while phase != Phase.LIVE:
+		await get_tree().create_timer(0.1, false).timeout
+
+
+func _injury_demo() -> void:
+	await _wait_live(3.0)
+	for s in lineup(0).on_ice:
+		if not s.is_human and _can_injure(s):
+			s.receive_hit(14.0, Vector3.RIGHT, null)
+			_hurt_in_play(s)
+			return
+
+
+func _glass_demo() -> void:
+	await _wait_live(1.5)
+	# Along the far side boards, where there's glass: someone gets put through it.
+	var s: Skater = lineup(0).on_ice[0]
+	var at := Vector3(RinkSpec.HALF_W - 0.4, 0.0, -14.0)
+	s.place(at, Vector3.RIGHT)
+	s.receive_hit(30.0, Vector3.RIGHT, null)
+	if _hud:
+		_hud.banner("GLASS SHATTERED!", 2.2, 1)
+	_slowmo(0.7)
+	_break_glass(at, 1)
+
+
+func _pull_demo(kind: String) -> void:
+	await _wait_live(0.5)
+	if kind == "late":
+		period = periods
+		clock = minf(clock, 25.0)
+		score = [1, 0]   # the away team (the computer, normally) is down one late
+		return
+	await get_tree().create_timer(3.0, false).timeout
+	pull_goalie(1, "manual")
+
+
 # --- Faceoffs ------------------------------------------------------------------
 
 ## The nine faceoff dots as (x, z).
@@ -1495,8 +2009,13 @@ func _place_for_faceoff(dot: Vector2) -> void:
 	rules.reset()
 	for t in teams.size():
 		var lu := lineup(t)
+		# A pulled goalie stays on the bench for a faceoff outside their own zone.
+		var keep: bool = pulled[t] and _keep_pulled(t, dot)
+		if not keep:
+			pulled[t] = false
+		_extra_out[t] = null
 		lu.choose_fresh()
-		lu.fill(strength(t))
+		lu.fill(strength(t), 1 if keep else 0)
 		# Anyone off the ice who isn't on their way somewhere stands at their spot.
 		for s in lu.all_skaters():
 			if s.benched and not s.walking():
@@ -1505,6 +2024,7 @@ func _place_for_faceoff(dot: Vector2) -> void:
 		var face := -own_goal_dir(t)
 		var fi := 0
 		var di := 0
+		var xi := 0
 		var taker := faceoff_taker(t)
 		for s in lu.on_ice:
 			var p: Vector3
@@ -1515,17 +2035,21 @@ func _place_for_faceoff(dot: Vector2) -> void:
 				p = spots.f[fi]
 				fi += 1
 			else:
-				p = spots.d[di % 2] + Vector3(1.5, 0, 0)
-				di += 1
+				# The extra attacker (or anyone past a line): between a winger and a defender.
+				p = _clamp_spot((spots.f[1 + xi % 2] + spots.d[xi % 2]) * 0.5)
+				xi += 1
 			var f := face
 			if s == taker:
 				f = (Vector3(dot.x, 0, dot.y) - p).normalized()
 			s.place(p, f)
 			s.frozen = true
 		var g: Goalie = teams[t].goalie
-		g.set_benched(false)
 		g.net = rink.defended_net(t)
-		g.reset_in_net()
+		if keep:
+			g.set_benched(true)
+		else:
+			g.set_benched(false)
+			g.reset_in_net()
 		if control(t):
 			control(t).reset_to(lu.on_ice)
 
@@ -1602,6 +2126,8 @@ func _resolve_faceoff() -> void:
 # --- Shootout ---------------------------------------------------------------------
 
 func _start_shootout() -> void:
+	pulled = [false, false]
+	_extra_out = [null, null]
 	_set_phase(Phase.SHOOTOUT)
 	puck.dead = true
 	rink.disarm_nets()
@@ -1613,6 +2139,7 @@ func _start_shootout() -> void:
 		for s in lu.all_skaters():
 			s.set_benched(true)
 			s.in_box_spot = false
+			s.catch_up = 0.0
 			s.repark()
 		teams[t].ai.shootout = true
 		var order := lu.forwards.duplicate()
@@ -1733,6 +2260,10 @@ func _on_goal(net_index: int) -> void:
 		rink.arena.goal(scoring)
 	var scorer := puck.last_touch
 	var beaten := lineup(other).goalie
+	var empty_net := goalie_out(other)
+	last_goal_empty_net = empty_net
+	if empty_net:
+		beaten = null   # no goal against: nobody was in there
 	var pp := strength(scoring) > strength(other) and lineup(other).box_count() > 0
 	var assists := box.on_goal(scorer, scoring, lineup(scoring).on_ice, lineup(other).on_ice, beaten, pp)
 	goal.emit(scoring, scorer)
@@ -1763,12 +2294,16 @@ func _on_goal(net_index: int) -> void:
 	if period > periods:
 		_finish("%s WIN IN OT!" % team_name(scoring), scoring)
 	else:
-		_stoppage(3.0, Vector2.ZERO, "%sGOAL!" % ("POWER-PLAY " if pp else ""), scoring)
+		_stoppage(3.0, Vector2.ZERO, "EMPTY-NET GOAL!" if empty_net else "%sGOAL!" % ("POWER-PLAY " if pp else ""), scoring)
 	if celebrate:
 		_goal_celebration(scoring, scorer, rink.get_net(net_index).global_position)
 
 
 func _on_puck_touched(s: Skater) -> void:
+	# A hurt player's team gets the puck: the referee stops play for them.
+	if phase == Phase.LIVE and _hurt.any(func(h: Skater) -> bool: return is_instance_valid(h) and h.team == s.team):
+		whistle(&"injury", nearest_dot(s.global_position), "INJURY")
+		return
 	rules.on_touched(s)
 	if phase == Phase.LIVE:
 		box.on_touch(s)
@@ -1822,14 +2357,21 @@ func _on_hit(attacker: Skater, victim: Skater, _power: float, kind: StringName, 
 	if kind == &"big_hit":
 		stats.big_hits[attacker.team] += 1
 		box.add(attacker, "big_hits")
+		var glass := boards and _try_break_glass(attacker, victim)
 		if replay and show_hud:
-			replay.capture("hit", "BIG HIT  ·  %s" % MenuStyle.player_name(attacker), [attacker, victim], 1.8, 1.2,
-					{"speed": 0.4, "cam": "orbit"})
+			replay.capture("hit", "%s  ·  %s" % ["GLASS SHATTERED" if glass else "BIG HIT", MenuStyle.player_name(attacker)],
+					[attacker, victim], 1.8, 1.2, {"speed": 0.4, "cam": "orbit"})
 		_bench_react(attacker.team, "cheer", 0.5)
-		cam.shake(0.9)
-		_slowmo(0.45)
+		cam.shake(1.4 if glass else 0.9)
+		_slowmo(0.7 if glass else 0.45)
 		if _hud:
-			_hud.banner("BIG HIT!" if not boards else "CRUSHED INTO THE BOARDS!", 1.4, attacker.team)
+			if glass:
+				_hud.banner("GLASS SHATTERED!", 2.2, attacker.team)
+			else:
+				_hud.banner("BIG HIT!" if not boards else "CRUSHED INTO THE BOARDS!", 1.4, attacker.team)
+		if phase == Phase.LIVE and _can_injure(victim) \
+				and _rng.randf() < _injury_chance(victim, INJURY_HIT * (INJURY_BOARDS if boards else 1.0)):
+			_hurt_in_play(victim)
 	elif kind == &"check":
 		cam.shake(0.35)
 
