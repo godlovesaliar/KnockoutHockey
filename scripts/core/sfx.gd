@@ -15,6 +15,10 @@ extends Node
 
 const RATE := 22050
 const VOICES := 24
+## Background sounds that come in floods (every skater strides several times a second): each
+## has its own small budget of channels, reusing its oldest one, and they're the first to give
+## a channel up, so they never cut off a horn, a hit or a crowd sting.
+const BED_CAP := {"stride": 6, "carve": 3}
 const CROWD_DB := -5.0            ## the crowd bed under everything
 
 ## A crowd reaction started (the arena's fans stand and cheer with it).
@@ -89,6 +93,8 @@ var _pa_queue: Array[AudioStream] = []
 var _pa_priority := 0
 var _pa_gen := 0                  ## bumped by every new call, so a stale gap timer does nothing
 var _pa_wait := false             ## between two pieces of a call
+var _voice_kind := {}             ## effects channel -> the sound it last played
+var _voice_start := {}            ## effects channel -> when (ms)
 var _pa_next: Array = []          ## a call waiting for the current one to end
 var _pa_next_priority := 0
 var _pa_next_until := 0.0
@@ -188,7 +194,11 @@ func play(sound: String, at := Vector3.INF, volume_db := 0.0, pitch := 1.0) -> v
 		v -= clampf(at.distance_to(listener) * 0.45, 0.0, 18.0)
 	if v < -40.0:
 		return
-	var p := _free_voice()
+	var p := _bed_voice(sound) if BED_CAP.has(sound) else _free_voice()
+	if p == null:
+		return
+	_voice_kind[p] = sound
+	_voice_start[p] = Time.get_ticks_msec()
 	p.stream = _pick(sound)
 	p.volume_db = v
 	p.pitch_scale = pitch * _rng.randf_range(0.94, 1.06)
@@ -689,15 +699,41 @@ func _load_recordings() -> void:
 		_streams[name] = found[name]
 
 
+## A free channel; with none free, a flood sound's (the oldest), else the next in turn.
 func _free_voice() -> AudioStreamPlayer:
 	for i in VOICES:
 		var p := _voices[(_next + i) % VOICES]
 		if not p.playing:
 			_next = (_next + i + 1) % VOICES
 			return p
+	var bed := _oldest(func(p: AudioStreamPlayer) -> bool: return BED_CAP.has(_voice_kind.get(p, "")))
+	if bed:
+		return bed
 	var p := _voices[_next]
 	_next = (_next + 1) % VOICES
 	return p
+
+
+## A channel for a flood sound: its oldest once it's at its budget, else a free one (null
+## when every channel is busy with something else: the sound is skipped).
+func _bed_voice(sound: String) -> AudioStreamPlayer:
+	var same := func(p: AudioStreamPlayer) -> bool: return p.playing and _voice_kind.get(p, "") == sound
+	if _voices.filter(same).size() >= BED_CAP[sound]:
+		return _oldest(same)
+	for i in VOICES:
+		var p := _voices[(_next + i) % VOICES]
+		if not p.playing:
+			_next = (_next + i + 1) % VOICES
+			return p
+	return _oldest(func(p: AudioStreamPlayer) -> bool: return _voice_kind.get(p, "") == sound)
+
+
+func _oldest(which: Callable) -> AudioStreamPlayer:
+	var best: AudioStreamPlayer = null
+	for p: AudioStreamPlayer in _voices:
+		if which.call(p) and (best == null or _voice_start.get(p, 0) < _voice_start.get(best, 0)):
+			best = p
+	return best
 
 
 # --- Synthesis -------------------------------------------------------------------

@@ -225,11 +225,13 @@ func play(clips: Array, done := Callable()) -> bool:
 	_clip = _queue.pop_front()
 	_stage = "in"
 	_stage_t = 0.0
-	get_tree().paused = true
-	# The arena keeps sounding through the replay (crowd, organ, the booth): only the game
-	# stops. (The pause menu still silences it.)
-	_sfx_mode = Sfx.process_mode
+	# The arena keeps sounding through the replay (crowd, organ, the booth, the PA): only the
+	# game stops. Sfx goes ALWAYS before the pause, so its players never see it, not even
+	# for a frame. (The pause menu still silences it.)
+	if Sfx.process_mode != Node.PROCESS_MODE_ALWAYS:
+		_sfx_mode = Sfx.process_mode
 	Sfx.process_mode = Node.PROCESS_MODE_ALWAYS
+	get_tree().paused = true
 	_layer.visible = true
 	return true
 
