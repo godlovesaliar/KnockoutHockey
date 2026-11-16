@@ -6,8 +6,9 @@ extends Node
 ##   frame  Callable(t: float) -> [camera position, look-at point] (t = seconds into the shot)
 ##   fov    lens (degrees), optional (default 46)
 ##   start  Callable(), optional: runs as the shot begins
+##   steady true for a locked-off shot (no handheld drift)
 ## Shots cut from one to the next like a broadcast; within a shot the camera eases after
-## its target. Accept / back / Start skips: `on_skip` runs, then the cutscene ends.
+## its target, with a little handheld drift (see `handheld`). Accept / back / Start skips: `on_skip` runs, then the cutscene ends.
 ## `finished(skipped)` fires either way, after the previous camera is back.
 
 signal finished(skipped: bool)
@@ -22,6 +23,7 @@ var _input: MenuInput
 var _pos := Vector3.ZERO
 var _look := Vector3.ZERO
 var _done := false
+var _sway := randf() * 100.0       ## the handheld drift's clock (a random start per cutscene)
 
 
 func play() -> void:
@@ -56,6 +58,7 @@ func _process(delta: float) -> void:
 	if _done or _i < 0 or _i >= shots.size():
 		return
 	_t += delta
+	_sway += delta
 	if _t >= float(shots[_i].len):
 		_next()
 		return
@@ -75,6 +78,26 @@ func _frame(snap: bool, delta: float) -> void:
 		_look = _look.lerp(look, 1.0 - exp(-8.0 * delta))
 	if _pos.distance_to(_look) > 0.05:
 		_cam.look_at_from_position(_pos, _look)
+		if not shots[_i].get("steady", false):
+			handheld(_cam, _sway)
+
+
+## A camera operator's slow drift: layered slow sines on yaw, pitch and a little roll,
+## applied after the camera is aimed. Scaled with the lens so the drift on screen stays
+## about the same on a long lens as a wide one. `t`: a running clock (seconds).
+static func handheld(cam: Camera3D, t: float, amount := 1.0) -> void:
+	var k := amount * clampf(cam.fov / 46.0, 0.35, 1.2)
+	var yaw := (sin(t * 0.53) * 0.6 + sin(t * 1.31 + 1.7) * 0.3 + sin(t * 2.9 + 0.4) * 0.1) * 0.55 * k
+	var pitch := (sin(t * 0.71 + 2.1) * 0.6 + sin(t * 1.67 + 0.3) * 0.3 + sin(t * 3.3 + 1.1) * 0.1) * 0.4 * k
+	var roll := (sin(t * 0.37 + 0.9) * 0.7 + sin(t * 1.13) * 0.3) * 0.3 * k
+	cam.rotate_object_local(Vector3.UP, deg_to_rad(yaw))
+	cam.rotate_object_local(Vector3.RIGHT, deg_to_rad(pitch))
+	cam.rotate_object_local(Vector3.BACK, deg_to_rad(roll))
+
+
+## Ends it now, as if the last shot ran out (for a shot held open with a long `len`).
+func stop() -> void:
+	_end(false)
 
 
 func _skip() -> void:

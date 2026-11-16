@@ -35,6 +35,7 @@ const MOOD_WINDOW := 75.0                     ## seconds of crowd reactions the 
 const MOOD_COUNT := 3                         ## same-way reactions in the window before a remark
 const GOOD_REACTIONS := ["cheer", "short_cheer", "goal_cheer", "chant_defense"]
 const BAD_REACTIONS := ["boo", "big_boo", "outrage", "disappointed"]
+const REACT_WAIT := 3.0                       ## seconds Bobby's reaction waits for Steve to finish
 const SHOT_WINDOW := 1.6                      ## seconds a home shot counts as "just taken"
 const POINT_SHOT := 15.0                      ## a defender shooting from this far out: "from the point"
 const TOP_SHELF := 0.75                       ## puck height (m) at the goal line for "top shelf"
@@ -44,7 +45,12 @@ const STREAK_WINDOW := 45.0                   ## ...within this many seconds
 ## Reaction priorities (a reaction only interrupts one of equal or lower priority).
 enum { P_AMBIENT = 1, P_REACT = 2, P_GOAL = 3 }
 
+## A booth line just started (the HUD puts up a stat card that goes with it).
+signal said(line: String)
+
 var director: MatchDirector
+var streak_team := -1         ## the team on the last "hot streak" (shots in a row)
+var pk_team := -1             ## the team that last killed off a penalty
 var home_chant := ""          ## the home team's chant (Teams.LIST)
 var _goal_time := -100.0
 var _prev_phase := -1
@@ -79,6 +85,10 @@ var _worst := [0, 0]           ## per team: the most goals it has trailed by
 var _state_called := {}        ## "close_game" / "blowout" -> the period it was last said in
 var _last_clock := INF
 var _fights_seen := 0
+var _team_banter := ""         ## a playing team's banter (banter_<call>), said once a game
+var _team_banter_at := 0.0     ## ...at the first stoppage after this many seconds of live play
+const PA_GAG_CHANCE := 0.25    ## share of games where Bobby gets into it with the arena PA
+var _pa_gag_at := -1.0         ## live seconds before bobby_vs_pa may play (-1: not this game)
 
 
 func setup(d: MatchDirector) -> void:
@@ -93,12 +103,26 @@ func setup(d: MatchDirector) -> void:
 	d.whistle_blown.connect(_on_whistle)
 	d.faceoff_won.connect(_on_faceoff_won)
 	d.penalty_expired.connect(_on_penalty_expired)
-	d.goalie_pulled.connect(func(_t: int) -> void: _say("goalie_pulled", 0.9, 3, 10.0))
-	d.player_injured.connect(func(_s: Skater) -> void: _say("injury", 0.9, 3, 20.0))
+	d.goalie_pulled.connect(func(_t: int) -> void:
+		if _say("goalie_pulled", 0.9, 3, 10.0):
+			_react_line("goalie_pulled_react", 0.8, 1.6, 10.0))
+	d.player_injured.connect(func(_s: Skater) -> void:
+		if _say("injury", 0.9, 3, 20.0):
+			_react_line("injury_react", 0.85, 2.0, 20.0))
 	d.glass_broken.connect(_on_glass)
 	var chant: String = Teams.team(d.team_ids[HOME]).get("chant", "")
 	home_chant = chant if Sfx.has(chant) else ""
 	_chant_in = randf_range(CHANT_EVERY.x * 0.5, CHANT_EVERY.y * 0.5)
+	var banter := []
+	for t in 2:
+		var line := "banter_" + str(Teams.team(d.team_ids[t]).get("call", ""))
+		if Sfx.has_line(line):
+			banter.append(line)
+	if not banter.is_empty():
+		_team_banter = banter.pick_random()
+		_team_banter_at = randf_range(0.25, 0.7) * d.period_length * d.periods
+	if Sfx.has_line("bobby_vs_pa") and randf() < PA_GAG_CHANCE:
+		_pa_gag_at = randf_range(0.2, 0.8) * d.period_length * d.periods
 	_play_intro.call_deferred()
 	for t in 2:
 		var lu: Lineup = d.lineup(t)
@@ -116,7 +140,8 @@ func _hook(s: Skater) -> void:
 	s.hit_landed.connect(_on_hit)
 	s.poke_succeeded.connect(func(p: Skater, _v: Skater) -> void:
 		Sfx.play("click", p.global_position, -4.0, 1.3)
-		_say("pokecheck", 0.35, 1, 14.0))
+		if _say("pokecheck", 0.35, 1, 14.0):
+			_react_line("turnover_react", 0.4, 1.0, 15.0))
 
 
 func _now() -> float:
@@ -150,8 +175,8 @@ func _physics_process(delta: float) -> void:
 	_check_final_minute()
 	# Idle chatter after a long quiet spell in the booth.
 	_idle_in -= delta
-	if _idle_in <= 0.0 and Sfx.announcer_quiet_for() > 18.0:
-		_idle_in = randf_range(30.0, 55.0)
+	if _idle_in <= 0.0 and Sfx.announcer_quiet_for() > 6.0:
+		_idle_in = randf_range(20.0, 40.0)
 		if not _banter("banter", 0.4):
 			_say("idle", 1.0, 1, 0.0)
 	_chant_in -= delta
@@ -172,7 +197,8 @@ func _on_surface(surface: String, speed: float, at: Vector3) -> void:
 	# A shot that misses the net and hits the end boards or glass behind it.
 	if surface in ["boards", "glass"] and absf(at.z) > RinkSpec.GOAL_LINE_Z - 1.0 and shot_live:
 		_shot.time = -100.0
-		_say("miss", 0.5, 1, 10.0)
+		if _say("miss", 0.5, 1, 10.0):
+			_react_line("miss_react", 0.45, 1.0, 15.0)
 	if surface in ["boards", "glass"] and _home_shot_live() and absf(at.z) > RinkSpec.GOAL_LINE_Z - 1.0:
 		_home_shot = -10.0
 		_react("disappointed", -6.0, P_REACT)
@@ -187,7 +213,8 @@ func _on_surface(surface: String, speed: float, at: Vector3) -> void:
 			if speed > 12.0:
 				Sfx.play("ooh", Vector3.INF, -6.0)
 			_shot.time = -100.0
-			_say("post", 0.9, 2, 4.0)
+			if _say("post", 0.9, 2, 4.0):
+				_react_line("post_react", 0.7, 1.2, 10.0)
 			if _home_shot_live():
 				_home_shot = -10.0
 				_react("disappointed", -3.0, P_REACT)
@@ -200,7 +227,8 @@ func _on_surface(surface: String, speed: float, at: Vector3) -> void:
 				var g := director.lineup(1 - int(_shot.team)).goalie
 				if g and g.global_position.distance_to(at) > 2.5:
 					_shot.time = -100.0
-					_say("block", 0.6, 2, 12.0)
+					if _say("block", 0.4, 2, 15.0):
+						_react_line("block_react", 0.5, 1.0, 15.0)
 
 
 func _on_possession(c: Skater) -> void:
@@ -267,6 +295,7 @@ func _log_shot(t: int) -> void:
 		if int(v.y) != t:
 			return
 	_shots_log.clear()
+	streak_team = t
 	_say_later("hot_streak", 1.5, 1, 60.0)
 
 
@@ -288,14 +317,15 @@ func _on_hit(attacker: Skater, victim: Skater, power: float, kind: StringName, b
 			if _say_one_of(lines, 0.85, 2, 6.0):
 				var heavy := attacker and (attacker.is_defense or attacker.stats.checking >= 70)
 				if not _banter("banter_hit", 0.2, 1.6):
-					_react_line("bighitenforcer" if heavy and Sfx.has_line("bighitenforcer") else "hit_react", 0.5, 1.6, 15.0)
+					_react_line("bighitenforcer" if heavy and Sfx.has_line("bighitenforcer") else "hit_react", 0.8, 1.6, 12.0)
 			# The home crowd loves its own big hits and boos the visitors' on its players.
 			if attacker and attacker.team == HOME:
 				_react("cheer", -2.0, P_REACT)
 			elif victim.team == HOME:
 				_react("outrage" if Sfx.has("outrage") and randf() < 0.5 else "boo", -3.0, P_REACT)
 		&"check":
-			_say("check", 0.3, 1, 8.0)
+			if _say("check", 0.3, 1, 8.0):
+				_react_line("hit_react", 0.25, 1.4, 20.0)
 			if recorded:
 				Sfx.play("board_hit" if boards else "ice_hit", at, -7.0, 1.08)
 			else:
@@ -316,12 +346,12 @@ func _on_save(g: Goalie, kind: StringName) -> void:
 	elif kind == &"catch":
 		big = _say_one_of(["bigsave", "save_glove"], 0.65, 2, 8.0)
 	if big:
-		_react_line("save_react", 0.5, 1.4, 20.0)
+		_react_line("save_react", 0.75, 1.4, 15.0)
 	elif kind == &"rebound":
 		_say_one_of(["save", "save_pad"], 0.35, 1, 8.0)
 		_check_rebound(g)
-	else:
-		_say("save", 0.35, 1, 8.0)
+	elif _say("save", 0.35, 1, 8.0):
+		_react_line("save_react", 0.3, 1.4, 15.0)   # Bobby chimes in on ordinary saves too
 	if g.team != HOME:
 		_home_shot = -10.0
 		_react("disappointed", -5.0, P_REACT)
@@ -392,7 +422,7 @@ func _on_goal(team: int, scorer: Skater) -> void:
 			break
 	if picked != "":
 		_say_later(picked, 2.4, 3, 0.0)
-	elif not _banter("banter_goal", 0.35, 2.4) and randf() < 0.5:
+	elif not _banter("banter_goal", 0.35, 2.4) and randf() < 0.85:
 		# Nothing remarkable: a reaction, the crowd's for home goals when there is one.
 		var reacts := ["goal_react_home", "goal_react"] if team == HOME else ["goal_react"]
 		for line: String in reacts:
@@ -413,7 +443,12 @@ func _on_penalty(offender: Skater, kind: StringName) -> void:
 		line = "penalty"
 	_say(line, 1.0, 3, 0.0)
 	if not _banter("banter_penalty", 0.35, 3.2):
-		_say_later("powerplay", 3.2, 2)
+		# Bobby has his say on the call (he backs the home side), else Steve sets up the power play.
+		var take := "penalty_dispute" if offender.team == HOME else "penalty_agree"
+		if Sfx.has_line(take) and randf() < 0.65:
+			_react_line(take, 1.0, 2.6, 0.0)
+		else:
+			_say_later("powerplay", 3.2, 2)
 	if offender.team == HOME:
 		_react("boo", -4.0, P_REACT)
 	else:
@@ -422,7 +457,9 @@ func _on_penalty(offender: Skater, kind: StringName) -> void:
 
 func _on_penalty_expired(t: int) -> void:
 	if director.lineup(t).box_count() == 0:
-		_say("pk_success", 0.7, 2, 0.0)
+		pk_team = t
+		if _say("pk_success", 0.7, 2, 0.0):
+			_react_line("pk_react", 0.6, 1.4, 0.0)
 
 
 func _on_faceoff_won(team: int) -> void:
@@ -447,7 +484,16 @@ func _on_phase(phase: MatchDirector.Phase) -> void:
 				_organ_later(1.2)
 			if was == MatchDirector.Phase.FIGHT and director.stats.fights > _fights_seen:
 				_fights_seen = director.stats.fights
-				_banter("banter_fight", 0.8, 1.2)
+				if not _banter("banter_fight", 0.8, 1.2):
+					_react_line("fight_react", 0.5, 1.2, 0.0)
+			elif _team_banter != "" and _live >= _team_banter_at and _now() - _goal_time > 8.0:
+				# Once a game: Steve and Bobby on one of the teams, while play is stopped.
+				_say_later(_team_banter, 1.5, 2)
+				_team_banter = ""
+			elif _pa_gag_at >= 0.0 and _live >= _pa_gag_at and _now() - _goal_time > 8.0 and not Sfx.pa_playing():
+				# A rare gag: Bobby gets into it with the arena PA. Waits for the real PA to be quiet.
+				_say_later("bobby_vs_pa", 1.5, 2)
+				_pa_gag_at = -1.0
 			elif _now() - _goal_time > 0.5:
 				# Offside, icing and penalty calls (higher priority) talk over this.
 				_say.call_deferred("whistle", 0.35, 1, 20.0)
@@ -461,7 +507,8 @@ func _on_phase(phase: MatchDirector.Phase) -> void:
 				_say("faceoff", 0.35, 1, 20.0)
 		MatchDirector.Phase.PERIOD_END:
 			_say("periodend", 1.0, 3, 0.0)
-			_banter("banter_intermission", 0.8, 3.5)
+			if not _banter("banter_intermission", 0.8, 3.5):
+				_react_line("period_recap", 0.8, 3.5, 0.0)
 			_organ_later(3.5)
 			if _now() - _goal_time > 0.5:
 				Sfx.play("horn", Vector3.INF, -5.0)
@@ -477,6 +524,7 @@ func _on_phase(phase: MatchDirector.Phase) -> void:
 			_say_later("final_horn", at, 3, 0.0, true)
 			if not _banter("banter_final", 0.5, at + 2.2, true):
 				_react_line("final_react", 0.8, at + 2.2, 0.0, true)
+				_react_line("final_wrap", 0.7, at + 4.5, 0.0, true)
 		MatchDirector.Phase.PREGAME:
 			# Leaving the matchup screen: Steve and Bobby open the broadcast together.
 			if was == MatchDirector.Phase.INTRO:
@@ -537,6 +585,7 @@ func _say(line: String, chance: float, priority: int, cooldown: float) -> bool:
 		return false
 	if Sfx.announce(line, priority):
 		_said[line] = now
+		said.emit(line)
 		return true
 	if Sfx.log_events and not Sfx.has_line(line):
 		_said[line] = now   # as if said, so the log shows the real rate
@@ -573,6 +622,13 @@ func _react_line(line: String, chance: float, delay: float, cooldown := 0.0, aft
 
 func _say_later(line: String, delay: float, priority: int, cooldown := 0.0, after_final := false) -> void:
 	await get_tree().create_timer(delay).timeout
+	# Bobby (and a duet) answers Steve: if Steve's still talking, wait for him to finish
+	# rather than drop the reaction, as long as it's still fresh.
+	if AnnouncerLines.voice_of(line) in ["color", "both"]:
+		var waited := 0.0
+		while Sfx.announcing() and waited < REACT_WAIT:
+			await get_tree().create_timer(0.1).timeout
+			waited += 0.1
 	if director and (after_final or director.phase != MatchDirector.Phase.FINAL):
 		_say(line, 1.0, priority, cooldown)
 
@@ -602,7 +658,8 @@ func _check_breakaway() -> void:
 func _on_whistle(reason: StringName) -> void:
 	match reason:
 		&"offside":
-			_say("offsides", 0.85, 2, 0.0)
+			if _say("offsides", 0.85, 2, 0.0):
+				_react_line("offsides_react", 0.25, 1.0, 40.0)
 		&"icing":
 			_say("icing", 0.85, 2, 0.0)
 
@@ -656,7 +713,8 @@ func _on_carrier(c: Skater) -> void:
 	# A turnover: the puck goes straight from one team's carrier to the other's.
 	if c and _prev_carrier and not (c is Goalie) and not (_prev_carrier is Goalie) \
 			and c.team != _prev_carrier.team and _now() - _carrier_lost < 0.8:
-		_say("turnover", 0.35, 1, 15.0)
+		if _say("turnover", 0.25, 1, 18.0):
+			_react_line("turnover_react", 0.4, 1.0, 15.0)
 	# A puck battle: possession flipping between the teams again and again.
 	if c and _prev_carrier and c.team != _prev_carrier.team:
 		var now := _now()
@@ -664,7 +722,7 @@ func _on_carrier(c: Skater) -> void:
 		_flips = _flips.filter(func(t: float) -> bool: return now - t < 5.0)
 		if _flips.size() >= 3:
 			_flips.clear()
-			_say("checking", 0.8, 2, 25.0)
+			_say("checking", 0.5, 2, 30.0)
 	if c == null and _carrier:
 		_carrier_lost = _now()
 	if c:
@@ -687,7 +745,8 @@ func _check_carrier_moves() -> void:
 	if c.state == Skater.State.DEKE:
 		if not _deke_called:
 			_deke_called = true
-			_say("deke", 0.45, 1, 10.0)
+			if _say("deke", 0.45, 1, 10.0):
+				_react_line("deke_react", 0.55, 1.0, 12.0)
 	# Heading down the ice: crossing center toward the other net, with speed.
 	var net_z := director.rink.defended_net(1 - c.team).global_position.z
 	var toward := net_z - pos.z
@@ -699,7 +758,7 @@ func _check_carrier_moves() -> void:
 		_moves_called["entry"] = true
 		if c.is_defense and c != _rush_for:
 			_rush_for = c
-			_say("defenderup", 0.6, 2, 20.0)
+			_say("defenderup", 0.4, 2, 25.0)
 		elif not c.is_defense and _now() - _carrier_since > 0.5:
 			_say("blueline", 0.25, 1, 20.0)
 	if in_zone and absf(pos.z) > RinkSpec.GOAL_LINE_Z + 0.5 and signf(pos.z) == signf(net_z) and not _moves_called.has("behindnet"):

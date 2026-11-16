@@ -145,15 +145,19 @@ func _set_view(v: String) -> void:
 
 func _process(_delta: float) -> void:
 	if goalie and goalie.net:
+		# `save=glove|blocker|butterfly`: a save every 1.5 s (GoalieVisual's save action;
+		# scenes/tests/AnimCheck.tscn shoots real pucks at it).
+		var spot := Vector3.INF
 		match _arg("save", ""):
 			"glove":
-				goalie.save_point = Vector2(0.6, 1.1)
-				goalie.save_anim = 1.0
+				spot = Vector3(0.6, 1.1, 0.1)
 			"blocker":
-				goalie.save_point = Vector2(-0.6, 0.9)
-				goalie.save_anim = 1.0
+				spot = Vector3(-0.6, 0.9, 0.1)
 			"butterfly":
 				goalie.butterfly = true
+		if spot != Vector3.INF and Engine.get_process_frames() % 90 == 0:
+			goalie.save_spot = goalie.global_position + goalie.net.global_basis * spot
+			goalie.save_count += 1
 
 	_grip_debug()
 	if _arg("helmhair", "") != "":   # the helmet shell hidden, the hair under it left as is

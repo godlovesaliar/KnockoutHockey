@@ -288,6 +288,32 @@ func _run() -> void:
 	_check(goals == [1], "one-timer scores (goals %s)" % [goals])
 	await _reset()
 
+	print("Shot aiming")
+	s = _spawn(0, Vector3(1, 0, -16), Vector3.FORWARD, idle)
+	var np := s.attacking_net().global_position
+	var hi_l := s.aimed_spot(&"wrist", Vector3(-1, 0, -1))
+	var lo_r := s.aimed_spot(&"wrist", Vector3(1, 0, 1))
+	var side := s.aimed_spot(&"wrist", Vector3(-1, 0, 0))
+	_check(hi_l.x < np.x - 0.6 and hi_l.y > 0.9, "stick up-left aims top left (%s)" % hi_l)
+	_check(lo_r.x > np.x + 0.6 and lo_r.y < 0.15, "stick down-right aims low right (%s)" % lo_r)
+	_check(side.y > 0.3 and side.y < 0.5, "stick sideways aims mid-low (%s)" % side)
+	_check(s._shot_on_net(&"wrist", Vector3(0, 0, 1)), "close in, stick pulled back still shoots at the net")
+	await _reset()
+	s = _spawn(0, Vector3(1, 0, -16), Vector3.FORWARD, func(_s: Skater, i: SkaterIntent, t: float) -> void:
+		i.move = Vector3(-1, 0, -1).normalized()
+		i.shoot_down = edge(t, 0.2)
+		i.shoot_held = t >= 0.2 and t < 0.25
+		i.shoot_up = edge(t, 0.25))
+	s.stats.shot_accuracy = 99
+	_give_puck(s)
+	var cross := Vector3.INF
+	for k in 240:
+		await get_tree().physics_frame
+		if cross == Vector3.INF and puck.global_position.z < np.z + 0.2 and puck.carrier == null:
+			cross = puck.global_position
+	_check(cross != Vector3.INF and cross.x < np.x and cross.y > 0.6, "an aimed wrist shot goes top left (at the line: %s)" % cross)
+	await _reset()
+
 	print("Control switching")
 	var a := _spawn(0, Vector3(0, 0, 10), Vector3.FORWARD, idle)
 	var b := _spawn(0, Vector3(5, 0, -5), Vector3.FORWARD, idle)

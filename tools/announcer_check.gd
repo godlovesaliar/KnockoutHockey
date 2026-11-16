@@ -5,6 +5,8 @@ extends SceneTree
 ##
 ##   Godot --headless --path . -s res://tools/announcer_check.gd
 ##   ... -- md=<path>   also writes the report as Markdown
+##   ... -- json=<path> also writes every CSV row of a known line and each line's need as JSON
+##                      (read by data/hockey_voicegen/voicegen.py)
 
 const CSV := "res://data/hockey_announcer_lines.csv"
 
@@ -16,15 +18,17 @@ func _initialize() -> void:
 	for a in OS.get_cmdline_user_args():
 		var kv := a.split("=", true, 1)
 		args[kv[0]] = kv[1] if kv.size() > 1 else ""
-	var v_name := func(v: String) -> String: return "Both" if v == "both" else AnnouncerLines.VOICES[v].name.get_slice(" ", 0)
+	var v_name := func(v: String) -> String: return {"both": "Both", "pa": "PA"}.get(v, AnnouncerLines.VOICES[v].name.get_slice(" ", 0))
 	var known := {}
-	for g: Array in AnnouncerLines.GROUPS:
+	for g: Array in AnnouncerLines.groups():
 		for l: Array in g[1]:
 			known[l[0]] = true
 	# CSV scripts by the line they'd count toward.
 	var todo := {}
 	var stray := []
-	var f := FileAccess.open(CSV, FileAccess.READ)
+	var json_rows := []
+	var json_lines := {}
+	var f :=FileAccess.open(CSV, FileAccess.READ)
 	if f:
 		f.get_csv_line()
 		while not f.eof_reached():
@@ -32,9 +36,13 @@ func _initialize() -> void:
 			if row.size() < 5:
 				continue
 			var name := row[0].strip_edges()
+			var line := AnnouncerLines.line_for_file(name)
+			if known.has(line):
+				json_rows.append({"file": name, "line": line, "voice": AnnouncerLines.voice_of(line),
+						"csv_voice": row[2].strip_edges(), "intensity": row[3].strip_edges(),
+						"prompt": row[4].strip_edges(), "recorded": sfx.has_file(name.to_lower())})
 			if sfx.has_file(name.to_lower()):
 				continue
-			var line := AnnouncerLines.line_for_file(name)
 			var text := row[4].strip_edges()
 			if text.begins_with("["):
 				text = text.substr(text.find("]") + 1).strip_edges()
@@ -47,21 +55,23 @@ func _initialize() -> void:
 				entry += " *(CSV: %s)*" % v_name.call(csv_voice)
 			todo.get_or_add(line, []).append(entry)
 	var t := AnnouncerLines.TARGET
-	var need := {"pbp": 0, "color": 0, "both": 0}
+	var need := {"pbp": 0, "color": 0, "both": 0, "pa": 0}
 	var body := PackedStringArray()
-	for g: Array in AnnouncerLines.GROUPS:
+	for g: Array in AnnouncerLines.groups():
 		body.append("\n## %s\n" % g[0])
-		body.append("| Line | Records new takes | Takes (Steve / Bobby / duet) | Still needed | CSV scripts | Plays when |")
+		body.append("| Line | Records new takes | Takes (Steve / Bobby / duet / PA) | Still needed | CSV scripts | Plays when |")
 		body.append("|---|---|---|---|---|---|")
 		for l: Array in g[1]:
 			var line: String = l[0]
 			var v: String = l[1]
-			var counts := [sfx.voice_take_count(line, "pbp"), sfx.voice_take_count(line, "color"), sfx.voice_take_count(line, "both")]
-			var total: int = counts[0] + counts[1] + counts[2]
-			var n := maxi(0, t - total)
+			var counts := [sfx.voice_take_count(line, "pbp"), sfx.voice_take_count(line, "color"), sfx.voice_take_count(line, "both"), sfx.voice_take_count(line, "pa")]
+			var total: int = counts[0] + counts[1] + counts[2] + counts[3]
+			var target: int = l[4]
+			var n := maxi(0, target - total)
 			need[v] += n
+			json_lines[line] = {"voice": v, "takes": total, "need": n, "target": target, "when": l[3]}
 			var rows: Array = todo.get(line, [])
-			var rec := "%d" % total if total == 0 else "%d (%d / %d / %d)" % [total, counts[0], counts[1], counts[2]]
+			var rec := "%d" % total if total == 0 else "%d (%d / %d / %d / %d)" % [total, counts[0], counts[1], counts[2], counts[3]]
 			body.append("| `%s` | %s | %s | %s | %s | %s |" % [line, v_name.call(v), rec,
 					str(n) if n > 0 else "—", "<br>".join(rows), l[3]])
 	# Recordings whose name doesn't match any line: the game never plays them.
@@ -80,7 +90,7 @@ func _initialize() -> void:
 			body.append("- %s" % s)
 	var head := PackedStringArray()
 	head.append("# Announcer lines: takes still needed (target %d per line)\n" % t)
-	for v: String in ["pbp", "color", "both"]:
+	for v: String in ["pbp", "color", "both", "pa"]:
 		var vv: Dictionary = AnnouncerLines.VOICES[v]
 		head.append("- **%s** (%s, `assets/sound/announcer/%s`): %d takes needed" % [vv.name, vv.role, vv.dir, need[v]])
 	var text := "\n".join(head) + "\n" + "\n".join(body)
@@ -88,4 +98,7 @@ func _initialize() -> void:
 	if args.has("md"):
 		var w := FileAccess.open(args.md, FileAccess.WRITE)
 		w.store_string(text + "\n")
+	if args.has("json"):
+		var j := FileAccess.open(args.json, FileAccess.WRITE)
+		j.store_string(JSON.stringify({"target": t, "lines": json_lines, "rows": json_rows}, "\t"))
 	quit()

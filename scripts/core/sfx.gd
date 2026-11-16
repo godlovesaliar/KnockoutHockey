@@ -7,6 +7,7 @@ extends Node
 ##   Sfx.crowd_react("cheer", volume_db, priority)   # one crowd reaction at a time
 ##   Sfx.play_organ("organ_upbeat", volume_db, true) # the arena organ (one at a time)
 ##   Sfx.announce("bighit", priority)               # play-by-play (assets/sound/announcer/)
+##   Sfx.pa_chain(["pa_goal_whalers", "pa_scored_by", "pa_n17_big"])   # the arena PA
 ##   Sfx.play_music() / Sfx.stop_music(fade)        # the menu playlist (assets/sound/music/)
 ##
 ## Positional sounds get quieter with distance from `listener` (the director keeps it on
@@ -31,6 +32,21 @@ const ANNOUNCER_DB := 1.0
 ## Menu music: every track in this folder, shuffled, one after another.
 const MUSIC_DIR := "res://assets/sound/music/"
 const MUSIC_DB := -10.0
+## The arena PA: its own voice, through the building's speakers (the "PA" bus: a touch of
+## filtering, a faint echo and room, light because the voice has its own reverb), on the crowd's volume. It dips
+## under the booth so Steve and Bobby stay on top, the way a broadcast hears it.
+const PA_DB := -3.0
+const PA_DUCK := 9.0              ## dB the PA drops while the booth talks
+const PA_GAP := 0.3               ## seconds between the pieces of a PA call
+const PA_BREAK := 1.0             ## seconds between one PA call and a call that waited for it
+const PA_HOLD := 15.0             ## a waiting PA call is dropped if it can't start within this
+## The booth doesn't talk over itself. A line that outranks the one playing waits for it
+## to end when it ends soon enough (VOICE_WAIT seconds, more for big calls); only lines of
+## CUT_IN priority (goals, knockouts) cut a longer one off, and then with a quick fade.
+const CUT_IN := 4
+const VOICE_WAIT := 1.2
+const VOICE_WAIT_BIG := 3.0       ## priority 3 calls: breakaways, injuries, period calls
+const CUT_FADE := 0.25
 
 var _streams := {}                ## name -> AudioStream or Array of variants
 var _voices: Array[AudioStreamPlayer] = []
@@ -42,12 +58,23 @@ var _react_tween: Tween
 var _organ: AudioStreamPlayer
 var _voice: AudioStreamPlayer
 var _voice_priority := 0
+var _voice_speaker := ""          ## who's talking: "pbp", "color", "both" ("" = a chain or unknown)
+var _stream_voice := {}           ## announcer take -> the voice that recorded it
+## Routine calls (this priority and below) never cut off Bobby or a duet once one has the
+## mic: Steve's play-by-play waits its turn unless it's a goal, penalty, period call etc.
+const PROTECT_COLOR := 2
 var _lines := {}                  ## announcer line -> Array of takes
 var _last_take := {}
 var _voice_takes := {}            ## voice -> announcer line -> that voice's takes
 var _files := {}                ## announcer file name (no extension) -> stream, for numbered lines like period2
 var _voice_queue: Array[AudioStream] = []   ## rest of an announce_chain
 var _voice_end := 0.0             ## Time.get_ticks_msec() / 1000 when the announcer last went quiet
+var _voice_tail: AudioStreamPlayer   ## the line a goal call cut off, fading out under it
+var _tail_tween: Tween
+var _cut_speaker := ""            ## who a goal call just cut off (for the log)
+var _next_line := Callable()      ## a line waiting for the current one to end
+var _next_priority := 0
+var _next_until := 0.0
 var _organ_tween: Tween
 var _music: AudioStreamPlayer
 var _music_tween: Tween
@@ -55,6 +82,16 @@ var _music_on := false
 var _playlist: Array[String] = []
 var _last_track := ""
 var _rng := RandomNumberGenerator.new()
+var _pa: AudioStreamPlayer
+var _pa_lines := {}               ## PA line -> Array of takes
+var _pa_last := {}
+var _pa_queue: Array[AudioStream] = []
+var _pa_priority := 0
+var _pa_gen := 0                  ## bumped by every new call, so a stale gap timer does nothing
+var _pa_wait := false             ## between two pieces of a call
+var _pa_next: Array = []          ## a call waiting for the current one to end
+var _pa_next_priority := 0
+var _pa_next_until := 0.0
 
 
 func _ready() -> void:
@@ -82,14 +119,60 @@ func _ready() -> void:
 	_voice.bus = "Announcer"
 	add_child(_voice)
 	_voice.finished.connect(_on_voice_finished)
+	_voice_tail = AudioStreamPlayer.new()
+	_voice_tail.bus = "Announcer"
+	add_child(_voice_tail)
 	_music = AudioStreamPlayer.new()
 	_music.bus = "Music"
 	add_child(_music)
 	_music.finished.connect(func() -> void:
 		if _music_on:
 			_next_track())
+	_pa = AudioStreamPlayer.new()
+	_pa.bus = _pa_bus()
+	_pa.volume_db = PA_DB
+	add_child(_pa)
+	_pa.finished.connect(_on_pa_finished)
 	_load_announcer()
 	_rng.randomize()
+
+
+func _process(delta: float) -> void:
+	var target := PA_DB - (PA_DUCK if _voice.playing else 0.0)
+	_pa.volume_db = move_toward(_pa.volume_db, target, delta * (40.0 if target < _pa.volume_db else 12.0))
+
+
+## The "PA" bus: arena speakers (no lows, no sparkle), an echo off the far end, a big room.
+func _pa_bus() -> String:
+	if AudioServer.get_bus_index("PA") >= 0:
+		return "PA"
+	AudioServer.add_bus()
+	var i := AudioServer.bus_count - 1
+	AudioServer.set_bus_name(i, "PA")
+	AudioServer.set_bus_send(i, "Crowd" if AudioServer.get_bus_index("Crowd") >= 0 else "Master")
+	# Kept light: the PA voice was generated with its own arena sound (reverb and all), so
+	# this only sets it a little further back in the building than the booth.
+	var hp := AudioEffectHighPassFilter.new()
+	hp.cutoff_hz = 150.0
+	var lp := AudioEffectLowPassFilter.new()
+	lp.cutoff_hz = 9000.0
+	var echo := AudioEffectDelay.new()
+	echo.dry = 1.0
+	echo.tap1_active = true
+	echo.tap1_delay_ms = 180.0
+	echo.tap1_level_db = -24.0
+	echo.tap2_active = false
+	echo.feedback_active = false
+	var room := AudioEffectReverb.new()
+	room.room_size = 0.6
+	room.damping = 0.5
+	room.predelay_msec = 40.0
+	room.wet = 0.08
+	room.dry = 1.0
+	room.spread = 0.6
+	for fx: AudioEffect in [hp, lp, echo, room]:
+		AudioServer.add_bus_effect(i, fx)
+	return "PA"
 
 
 func has(sound: String) -> bool:
@@ -121,7 +204,8 @@ func stop_crowd() -> void:
 	_crowd.stop()
 	end_reaction(0.2)
 	stop_organ(0.2)
-	_voice.stop()
+	stop_voice()
+	stop_pa()
 
 
 ## A crowd reaction (cheer, boo, chant). Only one plays at a time: a new one replaces
@@ -236,25 +320,116 @@ func _next_track() -> void:
 	_music_tween.tween_property(_music, "volume_db", MUSIC_DB, 1.5)
 
 
-## Says an announcer line (a random take, not the last one used). One voice: a line
-## only cuts off one of lower priority; otherwise it is dropped. Returns whether it plays.
+## Says an announcer line (a random take, not the last one used). One voice, which doesn't
+## talk over itself (_voice_admit): a line that outranks the one playing waits for it when
+## it ends soon, a goal call fades a longer one out, anything else is dropped. Returns
+## whether it plays (now or once the current line ends).
 func announce(line: String, priority := 1) -> bool:
 	if muted or not _lines.has(line):
 		return false
-	if _voice.playing and priority <= _voice_priority:
-		return false
+	match _voice_admit(priority, func() -> void: announce(line, priority), line):
+		Admit.NO:
+			return false
+		Admit.LATER:
+			return true
 	_voice_queue.clear()
 	var takes: Array = _lines[line]
 	var i := _rng.randi() % takes.size()
 	if takes.size() > 1 and i == _last_take.get(line, -1):
 		i = (i + 1) % takes.size()
 	_last_take[line] = i
+	var cut := _cut_speaker
+	_cut_speaker = ""
 	_voice.stream = takes[i]
+	_voice_speaker = _stream_voice.get(takes[i], "")
 	_voice.play()
 	if log_events:
-		print("[audio] %.1f announcer %s" % [Time.get_ticks_msec() / 1000.0, line])
+		print("[audio] %.1f announcer %s [%s]%s" % [Time.get_ticks_msec() / 1000.0, line, _voice_speaker,
+				" (cut off %s)" % cut if cut != "" else ""])
 	_voice_priority = priority
 	return true
+
+
+## True when the announcer is mid-line and a line of `priority` may not cut in: it has to
+## outrank what's playing, and Bobby's lines and duets are held to at least PROTECT_COLOR.
+func _voice_blocks(priority: int) -> bool:
+	if not _voice.playing:
+		return false
+	var held := _voice_priority
+	if _voice_speaker == "color" or _voice_speaker == "both":
+		held = maxi(held, PROTECT_COLOR)
+	return priority <= held
+
+
+enum Admit { NOW, LATER, NO }
+
+## Whether a line of `priority` may play: NOW (the booth is free, or a goal cuts in with a
+## fade), LATER (it outranks the line playing, which ends soon: `retry` runs when it does)
+## or NO (dropped).
+func _voice_admit(priority: int, retry: Callable, what: String) -> Admit:
+	if not announcing():
+		return Admit.NOW
+	if _voice_blocks(priority):
+		return Admit.NO
+	var left := _voice_left()
+	var wait := VOICE_WAIT_BIG if priority >= 3 else VOICE_WAIT
+	if left <= wait:
+		if _next_line.is_valid() and priority <= _next_priority:
+			return Admit.NO
+		_next_line = retry
+		_next_priority = priority
+		_next_until = Time.get_ticks_msec() / 1000.0 + left + 0.5
+		if log_events:
+			print("[audio] %.1f announcer %s waits %.1fs" % [Time.get_ticks_msec() / 1000.0, what, left])
+		return Admit.LATER
+	if priority >= CUT_IN:
+		_fade_out_voice()
+		return Admit.NOW
+	return Admit.NO
+
+
+## Seconds left of what the booth is saying (the rest of a chain included).
+func _voice_left() -> float:
+	var left := 0.0
+	if _voice.playing and _voice.stream:
+		left = _voice.stream.get_length() - _voice.get_playback_position()
+	for s in _voice_queue:
+		left += s.get_length()
+	return left
+
+
+## Hands the line playing to the tail player to fade out under the new one.
+func _fade_out_voice() -> void:
+	_voice_queue.clear()
+	_next_line = Callable()
+	if not _voice.playing:
+		return
+	if _tail_tween:
+		_tail_tween.kill()
+	_cut_speaker = _voice_speaker if _voice_speaker != "" else "chain"
+	_voice_tail.stream = _voice.stream
+	_voice_tail.volume_db = _voice.volume_db
+	_voice_tail.play(_voice.get_playback_position())
+	_voice.stop()
+	_tail_tween = create_tween()
+	_tail_tween.tween_property(_voice_tail, "volume_db", -40.0, CUT_FADE)
+	_tail_tween.tween_callback(_voice_tail.stop)
+
+
+## Says `line` after `delay` seconds, first waiting up to `wait` s for the announcer to
+## finish (so Bobby answers Steve instead of being dropped). For code without MatchAudio's
+## helpers: fights and Knockout Mode.
+func announce_after(line: String, delay: float, priority := 1, wait := 3.0) -> void:
+	if not _lines.has(line):
+		if log_events:
+			print("[audio] %.1f announcer %s (not recorded)" % [Time.get_ticks_msec() / 1000.0 + delay, line])
+		return
+	await get_tree().create_timer(delay).timeout
+	var waited := 0.0
+	while announcing() and waited < wait:
+		await get_tree().create_timer(0.1).timeout
+		waited += 0.1
+	announce(line, priority)
 
 
 func has_line(line: String) -> bool:
@@ -266,10 +441,14 @@ func has_line(line: String) -> bool:
 func announce_file(name: String, priority := 1) -> bool:
 	if muted or not _files.has(name):
 		return false
-	if _voice.playing and priority <= _voice_priority:
-		return false
+	match _voice_admit(priority, func() -> void: announce_file(name, priority), name):
+		Admit.NO:
+			return false
+		Admit.LATER:
+			return true
 	_voice_queue.clear()
 	_voice.stream = _files[name]
+	_voice_speaker = _stream_voice.get(_files[name], "")
 	_voice.play()
 	_voice_priority = priority
 	if log_events:
@@ -289,9 +468,13 @@ func announce_chain(sounds: Array, priority := 1) -> bool:
 	for s: String in sounds:
 		if not (_streams.has(s) or (s.begins_with("line:") and _lines.has(s.substr(5)))):
 			return false
-	if _voice.playing and priority <= _voice_priority:
-		return false
+	match _voice_admit(priority, func() -> void: announce_chain(sounds, priority), " + ".join(sounds)):
+		Admit.NO:
+			return false
+		Admit.LATER:
+			return true
 	_voice_queue.clear()
+	_voice_speaker = ""
 	for i in range(1, sounds.size()):
 		_voice_queue.append(_chain_stream(sounds[i]))
 	_voice.stream = _chain_stream(sounds[0])
@@ -317,6 +500,8 @@ func take_count(line: String) -> int:
 ## Cuts the announcer off (and drops the rest of a chain).
 func stop_voice() -> void:
 	_voice_queue.clear()
+	_next_line = Callable()
+	_voice_tail.stop()
 	if _voice.playing:
 		_voice.stop()
 		_voice_end = Time.get_ticks_msec() / 1000.0
@@ -332,6 +517,11 @@ func _on_voice_finished() -> void:
 	if log_events:
 		print("[audio] %.1f announcer done" % (Time.get_ticks_msec() / 1000.0))
 	_voice_end = Time.get_ticks_msec() / 1000.0
+	if _next_line.is_valid():
+		var next := _next_line
+		_next_line = Callable()
+		if _voice_end <= _next_until:
+			next.call()
 
 
 ## Seconds since the announcer last finished a line (0 while talking).
@@ -349,7 +539,8 @@ func announcing() -> bool:
 
 ## The booth's recordings (AnnouncerLines.VOICES: announcer/pbp/, announcer/color/,
 ## announcer/both/ for duets, and the original files in announcer/ itself). A line's
-## takes from every voice share one pool: a new voice adds to it, never replaces it.
+## takes from every booth voice share one pool: a new voice adds to it, never replaces it.
+## The PA's (announcer/pa/) are kept apart: they play on the PA, never in the booth.
 func _load_announcer() -> void:
 	var dirs := [[ANNOUNCER_DIR, AnnouncerLines.LEGACY_VOICE]]
 	for v: String in AnnouncerLines.VOICES:
@@ -366,6 +557,7 @@ func _load_announcer() -> void:
 			if stream == null:
 				continue
 			_files[f.get_basename().to_lower()] = stream
+			_stream_voice[stream] = d[1]
 			# Trailing digits mark another take; other names join their line's takes
 			# (AnnouncerLines: the CSV's names, older recordings).
 			var line := AnnouncerLines.line_for_file(f.get_basename())
@@ -373,10 +565,95 @@ func _load_announcer() -> void:
 	# Every voice's takes of a line share one pool (Steve's, Bobby's and duets alike).
 	for v: String in _voice_takes:
 		for line: String in _voice_takes[v]:
-			_lines.get_or_add(line, []).append_array(_voice_takes[v][line])
+			var pool: Dictionary = _pa_lines if v == "pa" else _lines
+			pool.get_or_add(line, []).append_array(_voice_takes[v][line])
 
 
-## Takes of a line in one voice's own recordings ("pbp" / "color" / "both").
+# --- The arena PA ----------------------------------------------------------------
+
+func has_pa(line: String) -> bool:
+	return _pa_lines.has(line)
+
+
+## A PA call: its pieces one after another with a short breath between (a random take of
+## each, not the last one used), e.g. ["pa_goal_whalers", "pa_scored_by", "pa_n17_big"].
+## Pieces that aren't recorded are left out; nothing plays if none are. One call at a time,
+## and the PA never cuts itself off: a call made while one is playing waits for it to end
+## (one waiting call, the more important one; dropped after PA_HOLD s). Returns whether it
+## plays or waits.
+func pa_chain(lines: Array, priority := 1) -> bool:
+	if muted:
+		return false
+	var have := lines.filter(func(l: String) -> bool: return _pa_lines.has(l))
+	if log_events and have.size() < lines.size():
+		var missing := lines.filter(func(l: String) -> bool: return not _pa_lines.has(l))
+		print("[audio] %.1f PA %s (not recorded: %s)" % [Time.get_ticks_msec() / 1000.0, " + ".join(lines), ", ".join(missing)])
+	if have.is_empty():
+		return false
+	if pa_playing():
+		if not _pa_next.is_empty() and priority <= _pa_next_priority:
+			return false
+		_pa_next = have
+		_pa_next_priority = priority
+		_pa_next_until = Time.get_ticks_msec() / 1000.0 + PA_HOLD
+		if log_events:
+			print("[audio] %.1f PA %s waits" % [Time.get_ticks_msec() / 1000.0, " + ".join(have)])
+		return true
+	_pa_gen += 1
+	_pa_wait = false
+	_pa_queue.clear()
+	for l: String in have:
+		var takes: Array = _pa_lines[l]
+		var i := _rng.randi() % takes.size()
+		if takes.size() > 1 and i == _pa_last.get(l, -1):
+			i = (i + 1) % takes.size()
+		_pa_last[l] = i
+		_pa_queue.append(takes[i])
+	_pa.stream = _pa_queue.pop_front()
+	_pa.play()
+	_pa_priority = priority
+	if log_events and have.size() == lines.size():
+		print("[audio] %.1f PA %s" % [Time.get_ticks_msec() / 1000.0, " + ".join(have)])
+	return true
+
+
+func pa(line: String, priority := 1) -> bool:
+	return pa_chain([line], priority)
+
+
+func pa_playing() -> bool:
+	return _pa.playing or _pa_wait or not _pa_queue.is_empty()
+
+
+func stop_pa() -> void:
+	_pa_gen += 1
+	_pa_wait = false
+	_pa_queue.clear()
+	_pa_next = []
+	_pa.stop()
+
+
+## Next piece of the call after a breath, or once the call is done, the call that waited.
+func _on_pa_finished() -> void:
+	if _pa_queue.is_empty() and _pa_next.is_empty():
+		return
+	var gen := _pa_gen
+	_pa_wait = true
+	await get_tree().create_timer(PA_GAP if not _pa_queue.is_empty() else PA_BREAK).timeout
+	if gen != _pa_gen:
+		return
+	_pa_wait = false
+	if not _pa_queue.is_empty():
+		_pa.stream = _pa_queue.pop_front()
+		_pa.play()
+		return
+	var next := _pa_next
+	_pa_next = []
+	if not next.is_empty() and Time.get_ticks_msec() / 1000.0 <= _pa_next_until:
+		pa_chain(next, _pa_next_priority)
+
+
+## Takes of a line in one voice's own recordings ("pbp" / "color" / "both" / "pa").
 func voice_take_count(line: String, voice: String) -> int:
 	return (_voice_takes.get(voice, {}).get(line, []) as Array).size()
 

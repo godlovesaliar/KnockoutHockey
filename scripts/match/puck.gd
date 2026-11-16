@@ -21,8 +21,8 @@ const MAX_SWEEPS := 4
 const VISUAL_THICK := 1.5         ## visual thickness scale (visual_scale widens it)
 const LOSE_DISTANCE := 0.45       ## carried puck this far from the blade = lost
 const RECEIVER_TIMEOUT := 2.5     ## seconds a pass stays "intended" for its receiver
-const PASS_HOMING := 4.5          ## rad/s a pass on the ice can curve toward its receiver...
-const PASS_HOMING_RANGE := 6.0    ## ...within this many meters of them
+const PASS_HOMING := 1.6          ## rad/s a pass on the ice can curve toward its receiver...
+const PASS_HOMING_RANGE := 3.0    ## ...within this many meters of them
 
 ## surface -> Vector2(restitution, tangential friction)
 const SURFACES := {
@@ -136,6 +136,7 @@ func deflect(by: Skater, rng: RandomNumberGenerator) -> void:
 	velocity = velocity.rotated(Vector3.UP, rng.randf_range(-0.6, 0.6)) * 0.5
 	velocity.y = 0.0
 	last_touch = by
+	intended_receiver = null
 	flight += 1
 	block_pickup(by, 0.2)
 	touched.emit(by)
@@ -148,6 +149,7 @@ func strip(from: Skater, push: Vector3, by: Skater = null) -> void:
 	_drop_carrier()
 	velocity += push
 	velocity.y = 0.0
+	intended_receiver = null
 	flight += 1
 	if by:
 		last_touch = by
@@ -308,6 +310,9 @@ func _sweep(motion: Vector3, delta: float) -> void:
 			if other is Skater:
 				last_touch = other
 				touched.emit(other)
+			# Anything else it hits (a skate, the boards, a post) ends the pass's "aim".
+			if other != intended_receiver:
+				intended_receiver = null
 			flight += 1
 			hit_surface.emit(surface, -vn, col.get_position())
 		var fraction := col.get_remainder().length() / length

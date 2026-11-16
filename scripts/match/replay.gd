@@ -11,12 +11,15 @@ extends Node
 ## Playing pauses the game tree, hides the game's HUD layers, swaps in a replay camera
 ## and writes the recorded poses back onto the same skeletons (each tap overrides its
 ## skeleton's pose; the skeleton's world transform and the stick are set directly). The
-## real puck's look is hidden and a copy follows the recorded puck. A red wipe covers the
+## real puck's look is hidden and a copy follows the recorded puck. The league stinger covers the
 ## cut in and out. Any accept / back / Start skips. Afterwards everything is put back
 ## exactly as it was and play continues.
 ##
 ## Cameras: "net" (goals: low, off the post of the net it went into, following the
-## puck) and "orbit" (hits and knockouts: circling the players involved, close).
+## puck) and "orbit" (hits and knockouts: circling the players involved, close). Each goal,
+## hit and knockout then gets ANOTHER LOOK, the end of it again, slower, from a second
+## angle: "high" (goals: up over the slot, looking back at the net) or "rail" (hits and
+## knockouts: low along the boards on a long lens).
 
 signal finished
 
@@ -25,7 +28,7 @@ static var recording := true
 
 const PUCK_HZ := 30.0
 const KEEP := 14.0
-const WIPE := 0.5                  ## s for the wipe to cross the screen
+const WIPE := Stinger.LEN         ## s for the league stinger to cross the screen
 const STOPPAGE_MAX_AGE := 45.0     ## a saved highlight older than this waits for the intermission
 
 var director: MatchDirector
@@ -53,6 +56,7 @@ var _overlay: Control
 var _layer: CanvasLayer
 var _input: MenuInput
 var _skip := false
+var _swapped := false              ## the "next" wipe has switched to the queued clip
 var _sfx_mode := Node.PROCESS_MODE_INHERIT
 
 
@@ -215,6 +219,9 @@ func play(clips: Array, done := Callable()) -> bool:
 	_queue.clear()
 	for c: Dictionary in clips:
 		_queue.append(c)
+		var again := _second_angle(c)
+		if not again.is_empty():
+			_queue.append(again)
 	_clip = _queue.pop_front()
 	_stage = "in"
 	_stage_t = 0.0
@@ -225,6 +232,24 @@ func play(clips: Array, done := Callable()) -> bool:
 	Sfx.process_mode = Node.PROCESS_MODE_ALWAYS
 	_layer.visible = true
 	return true
+
+
+## The second look at a highlight: its last stretch, slower, from another camera (empty
+## if it has none).
+func _second_angle(c: Dictionary) -> Dictionary:
+	if c.get("second", false) or not (c.kind in ["goal", "hit", "ko"]) or not c.has("tracks"):
+		return {}
+	var gs := get_node_or_null("/root/GameSettings")
+	if gs and gs.quick_presentation():
+		return {}   # (Quick presentation: one angle)
+	var a := c.duplicate()
+	a.second = true
+	a.erase("rail_x")
+	a.t0 = lerpf(float(c.t0), float(c.t1), 0.45 if c.kind == "goal" else 0.35)
+	a.speed = minf(float(c.speed), 0.6 if c.kind == "goal" else 0.45)
+	a.cam = "high" if c.kind == "goal" else "rail"
+	a.label = "ANOTHER LOOK  ·  " + str(c.label)
+	return a
 
 
 func _on_skip() -> void:
@@ -251,11 +276,12 @@ func _tick_play(dt: float) -> void:
 					_stage = "out"
 				else:
 					_stage = "next"
+					_swapped = false
 				_stage_t = 0.0
 		"next":
 			# Between two highlights: the wipe covers the switch.
-			if _stage_t >= WIPE * 0.5 and _clip.has("tracks") and not _clip.get("left", false):
-				_clip.left = true
+			if _stage_t >= WIPE * 0.5 and not _swapped and not _queue.is_empty():
+				_swapped = true
 				_clip = _queue.pop_front()
 				_t = _clip.t0
 				_look = _focus_point()
@@ -387,7 +413,7 @@ func _focus_point() -> Vector3:
 			var f := ReplayTap.sample(_clip.tracks[tap], _t)
 			if not f.is_empty():
 				pts.append(ReplayTap.get_xform(f, 1).origin)
-	if _clip.cam == "net" or pts.is_empty():
+	if _clip.cam in ["net", "high"] or pts.is_empty():
 		return _puck_at(_t) + Vector3.UP * 0.4
 	var m := Vector3.ZERO
 	for p in pts:
@@ -428,6 +454,19 @@ func _place_cam(snap: bool, dt := 0.0) -> void:
 		var out := signf(net.z) if absf(net.z) > 0.1 else 1.0
 		var side := -1.0 if _look.x > 0.0 else 1.0
 		pos = net + Vector3(side * 4.4, 2.2, out * 1.3)
+	elif _clip.cam == "high":
+		# Up over the high slot, looking back at the net the puck went into.
+		var net: Vector3 = _clip.net
+		var out := signf(net.z) if absf(net.z) > 0.1 else 1.0
+		pos = net + Vector3(clampf(_look.x * 0.4, -3.0, 3.0) + 1.5, 5.2, -out * (10.5 - elapsed * 0.25))
+	elif _clip.cam == "rail":
+		# Low on the near boards, sliding along with the hit on a long lens.
+		if not _clip.has("rail_x"):
+			_clip.rail_x = signf(_look.x) if absf(_look.x) > 0.5 else 1.0
+		var rx: float = _clip.rail_x
+		pos = Vector3(rx * (RinkSpec.HALF_W - 1.2), 1.15, _look.z + 4.0 - elapsed * 0.5)
+		var inside := RinkSpec.clamp_inside(pos.x, pos.z, 0.8)
+		pos = Vector3(inside.x, pos.y, inside.y)
 	else:
 		# Circling the players, starting on the ice side so the boards stay behind them.
 		var base := atan2(-_look.x, -_look.z)
@@ -437,6 +476,7 @@ func _place_cam(snap: bool, dt := 0.0) -> void:
 		var inside := RinkSpec.clamp_inside(pos.x, pos.z, 0.6)
 		pos = Vector3(inside.x, pos.y, inside.y)
 	_cam.look_at_from_position(pos, _look)
+	Cutscene.handheld(_cam, Time.get_ticks_msec() / 1000.0)   # an operator, not a locked-off camera
 	# The lens zooms in on far-off play (about 12 m of ice across the frame), out up close.
 	var want := clampf(rad_to_deg(2.0 * atan(6.0 / maxf(pos.distance_to(_look), 0.1))), 16.0, 52.0)
 	_cam.fov = want if snap else lerpf(_cam.fov, want, 1.0 - exp(-4.0 * dt))
@@ -475,15 +515,7 @@ func _draw_tag(ci: Control, w: float) -> void:
 	MenuStyle.draw_glyph(ci, Vector2(px - MenuStyle.glyph_width(gl, pad) - 10, 834), gl, pad, 34.0)
 
 
-## The stinger: a red slanted band sweeping across, wide enough to cover the screen at
-## its middle (where the cut happens), the game's name on it.
+## The stinger: the league's (see Stinger), covering the screen at its middle, where the
+## cut happens.
 func _draw_wipe(ci: Control, w: float, k: float) -> void:
-	var bw := w * 1.5
-	var cx := lerpf(-bw * 0.6, w + bw * 0.6, ease(k, -1.6))
-	var skew := 260.0
-	MenuStyle.draw_slant(ci, Rect2(cx - bw * 0.5 - 30, -10, bw + 60, 920), MenuStyle.INK, skew)
-	MenuStyle.draw_slant(ci, Rect2(cx - bw * 0.5, -10, bw, 920), MenuStyle.RED, skew)
-	MenuStyle.draw_slant(ci, Rect2(cx - bw * 0.5 + bw * 0.42, -10, bw * 0.06, 920), Color(1, 1, 1, 0.85), skew)
-	var title := "INSTANT REPLAY"
-	var tw := MenuStyle.text_width(title, 84)
-	MenuStyle.draw_bold(ci, Vector2(cx - tw * 0.5 + skew * 0.1, 480), title, 84, Color.WHITE, 16, MenuStyle.INK, 0.2, true)
+	Stinger.draw(ci, w, k)

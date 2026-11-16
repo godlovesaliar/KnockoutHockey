@@ -7,8 +7,11 @@ extends CanvasLayer
 ##     (in the team's color, with the time left) or a delayed offside / penalty.
 ##   - banners: a slanted bar that wipes in across the middle (GOAL, BIG HIT, period
 ##     calls), in the team's colors when it's a team's moment.
-##   - lower thirds: the goal card (scorer, assists) and the penalty card.
+##   - lower thirds: the goal card (scorer, assists), the penalty card, and stat cards
+##     (a player's night, a team-vs-team number, the power play) over dead time.
 ##   - flashes: a small tab under the banner spot for quick calls.
+##   - the period summary over the "going to break" shot: both teams, the score, shots,
+##     hits and the power play so far.
 ##   - hints, bottom left, only when they matter (faceoff timing, goalie with the puck,
 ##     how to pause during stoppages).
 ## Timing runs on real time, so slow motion doesn't drag the graphics.
@@ -26,6 +29,7 @@ var _canvas: Control
 var _banner := {}             ## text, team, until, start
 var _card := {}               ## kind ("goal" / "penalty"), team, title, line, sub, until, start
 var _flash := {}              ## text, until, start
+var _summary := {}            ## title, until, start
 var _now := 0.0               ## real seconds the HUD has been running (see _process)
 var _last_tick := 0.0
 
@@ -72,6 +76,23 @@ func injury_card(team: int, s: Skater, seconds: float) -> void:
 		"line": "INJURED  ·  OUT FOR THE GAME", "sub": "", "start": _now, "until": _now + seconds}
 
 
+## Lower third: a stat. `team` >= 0 dresses it in that team's colors and crest; -1 is the
+## league's (navy, KHL crest), for team-vs-team numbers. `tag` sits on top ("TONIGHT").
+func stat_card(team: int, title: String, line: String, tag: String, seconds: float) -> void:
+	_card = {"kind": "stat", "team": team, "title": title, "line": line, "tag": tag,
+		"sub": "", "start": _now, "until": _now + seconds}
+
+
+## The period summary (the "going to break" graphic) for `seconds`.
+func period_summary(title: String, seconds: float) -> void:
+	_summary = {"title": title, "start": _now, "until": _now + seconds}
+
+
+## True while no lower third is up (or one is on its way out).
+func card_free() -> bool:
+	return _card.is_empty() or _now > float(_card.until)
+
+
 func _process(_delta: float) -> void:
 	# The wall clock, so slow motion and load stalls don't drag the graphics; a long gap
 	# (the game was paused) only counts a moment, so a banner survives the pause menu.
@@ -98,8 +119,64 @@ func _draw() -> void:
 	_draw_bug()
 	_draw_banner()
 	_draw_card()
+	_draw_summary()
 	_draw_flash()
 	_draw_hints()
+
+
+# --- Period summary ----------------------------------------------------------------------
+
+const SUM_W := 860.0
+const SUM_ROW := 64.0
+
+## Bottom center: a red tag (END OF 1ST), a header of stat names, then a row per team
+## (away first): the team's plate and crest, its name, the stats, and the score on ink.
+func _draw_summary() -> void:
+	var k := _show(_summary)
+	if k <= 0.0:
+		return
+	var ci := _canvas
+	var cx := _canvas.size.x * 0.5
+	var x := cx - SUM_W * 0.5
+	var y := lerpf(940.0, 600.0, k)
+	var cols := ["SOG", "HITS", "PP"]
+	var col_x := [x + 470.0, x + 570.0, x + 670.0]
+	var h := 34.0 + SUM_ROW * 2.0
+	# Tag, shadow, header strip.
+	var title: String = _summary.title
+	var tw := MenuStyle.text_width(title, 26, 0.12) + 44
+	MenuStyle.draw_slant(ci, Rect2(x + 4, y - 38, tw, 38), MenuStyle.RED, 12)
+	ci.draw_string(MenuStyle.font(0.12), Vector2(x + 24, y - 10), title, HORIZONTAL_ALIGNMENT_LEFT, -1, 26, Color.WHITE)
+	ci.draw_rect(Rect2(x + 6, y + 7, SUM_W, h), Color(0, 0, 0, 0.35))
+	ci.draw_rect(Rect2(x, y, SUM_W, 34.0), MenuStyle.NAVY)
+	ci.draw_rect(Rect2(x, y + 31.0, SUM_W, 3.0), MenuStyle.RED)
+	for i in cols.size():
+		var c: String = cols[i]
+		ci.draw_string(MenuStyle.font(0.12), Vector2(col_x[i] - MenuStyle.text_width(c, 18, 0.12) * 0.5, y + 24), c, HORIZONTAL_ALIGNMENT_LEFT, -1, 18, MenuStyle.ICE)
+	var tl := "SCORE"
+	ci.draw_string(MenuStyle.font(0.12), Vector2(x + SUM_W - 70 - MenuStyle.text_width(tl, 18, 0.12) * 0.5, y + 24), tl, HORIZONTAL_ALIGNMENT_LEFT, -1, 18, MenuStyle.ICE)
+	var ry := y + 34.0
+	for t: int in [1, 0]:
+		var id: int = d.team_ids[t]
+		var col := MenuStyle.team_color(id)
+		ci.draw_rect(Rect2(x, ry, SUM_W, SUM_ROW), Color(0.03, 0.04, 0.09, 0.94))
+		ci.draw_rect(Rect2(x, ry, 400.0, SUM_ROW), col)
+		ci.draw_rect(Rect2(x, ry + SUM_ROW * 0.55, 400.0, SUM_ROW * 0.45), Color(0, 0, 0, 0.18))
+		var logo := MenuStyle.team_logo(id)
+		if logo:
+			ci.draw_texture_rect(logo, Rect2(x + 8, ry + 4, SUM_ROW - 8, SUM_ROW - 8), false)
+		MenuStyle.draw_bold(ci, Vector2(x + SUM_ROW + 12, ry + 44), str(Teams.team(id).name).to_upper(), 32, Color.WHITE, 6, MenuStyle.INK, 0.2, false)
+		var vals := [str(d.shots_on_goal(t)), str(d.stats.hits[t]), "%d/%d" % [d.stats.pp_goals[t], d.stats.penalties[1 - t]]]
+		for i in vals.size():
+			var v: String = vals[i]
+			ci.draw_string(MenuStyle.font(0.12), Vector2(col_x[i] - MenuStyle.text_width(v, 28, 0.12) * 0.5, ry + 43), v, HORIZONTAL_ALIGNMENT_LEFT, -1, 28, Color.WHITE)
+		var sr := Rect2(x + SUM_W - 140.0, ry, 140.0, SUM_ROW)
+		ci.draw_rect(sr, MenuStyle.INK)
+		var sc := str(d.score[t])
+		MenuStyle.draw_bold(ci, Vector2(sr.position.x + (140.0 - MenuStyle.text_width(sc, 44)) * 0.5, ry + 49), sc, 44, Color.WHITE, 0, MenuStyle.INK, 0.2, false)
+		if t == 1:
+			ci.draw_rect(Rect2(x, ry + SUM_ROW - 1, SUM_W, 2), Color(1, 1, 1, 0.12))
+		ry += SUM_ROW
 
 
 # --- Scorebug --------------------------------------------------------------------------
@@ -222,17 +299,18 @@ func _draw_card() -> void:
 		return
 	var ci := _canvas
 	var team: int = _card.team
-	var col := MenuStyle.team_color(d.team_ids[team])
+	var col := MenuStyle.team_color(d.team_ids[team]) if team >= 0 else MenuStyle.NAVY
 	var goal: bool = _card.kind == "goal"
 	var title: String = _card.title
 	var w := maxf(560.0, maxf(MenuStyle.text_width(title, 44) + 170, MenuStyle.text_width(_card.line, 20, 0.12) + 170))
 	var h := 104.0
 	var x := lerpf(-w - 60.0, 48.0, k)
 	var y := 690.0
-	# The tag: GOAL in red, PENALTY in amber, INJURY in white.
+	# The tag: GOAL in red, PENALTY in amber, INJURY in white, stats in ice blue.
 	var injury: bool = _card.kind == "injury"
-	var tag := "GOAL" if goal else ("INJURY" if injury else "PENALTY")
-	var tag_col := MenuStyle.RED if goal else (Color(0.92, 0.94, 0.97) if injury else Color(0.95, 0.66, 0.08))
+	var stat: bool = _card.kind == "stat"
+	var tag: String = _card.tag if stat else ("GOAL" if goal else ("INJURY" if injury else "PENALTY"))
+	var tag_col := MenuStyle.RED if goal else (Color(0.92, 0.94, 0.97) if injury else (Color(0.62, 0.82, 0.95) if stat else Color(0.95, 0.66, 0.08)))
 	var tagw := MenuStyle.text_width(tag, 24, 0.12) + 40
 	MenuStyle.draw_slant(ci, Rect2(x + 4, y - 34, tagw, 34), tag_col, 12)
 	ci.draw_string(MenuStyle.font(0.12), Vector2(x + 22, y - 9), tag, HORIZONTAL_ALIGNMENT_LEFT, -1, 24, Color.WHITE if goal else MenuStyle.INK)
@@ -241,7 +319,7 @@ func _draw_card() -> void:
 	ci.draw_rect(Rect2(x, y, w, h * 0.6), col)
 	ci.draw_rect(Rect2(x, y + h * 0.6, w, h * 0.4), Color(0.03, 0.04, 0.09, 0.94))
 	ci.draw_rect(Rect2(x, y + h * 0.6 - 3, w, 3), tag_col)
-	var logo := MenuStyle.team_logo(d.team_ids[team])
+	var logo: Texture2D = MenuStyle.team_logo(d.team_ids[team]) if team >= 0 else Stinger.logo()
 	if logo:
 		ci.draw_texture_rect(logo, Rect2(x + 16, y + 4, h - 8, h - 8), false)
 	var tx := x + 130.0

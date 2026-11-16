@@ -184,7 +184,9 @@ func _shoot(s: Skater, i: SkaterIntent, net: Net, quick: bool) -> void:
 	var side := -signf(gx) if absf(gx) > 0.1 else (1.0 if _rng.randf() < 0.5 else -1.0)
 	if team_ai.net_empty():
 		side = 0.0   # nobody home: straight at the middle
-	_shoot_aim = to_net.normalized() * 0.5 + Vector3(side * 0.85, 0, 0)
+	# Up the ice (toward the net) aims high, back aims low: mix it up.
+	var up := _rng.randf_range(-0.9, 0.45) * signf(to_net.z)
+	_shoot_aim = to_net.normalized() * 0.5 + Vector3(side * 0.85, 0, up)
 	i.move = _shoot_aim
 	i.shoot_down = true
 	i.shoot_held = true

@@ -54,12 +54,22 @@ func composition(strength: int) -> Vector2i:
 ## Rebuilds who's on the ice (at a faceoff). Forwards first, then defense. `extra`: more
 ## forwards on top (an extra attacker for a pulled goalie).
 func fill(strength: int, extra := 0) -> void:
+	set_on_ice(pick(strength, extra))
+
+
+## Who `fill` would put on the ice, without changing anything.
+func pick(strength: int, extra := 0) -> Array[Skater]:
 	var comp := composition(strength)
-	var pick: Array[Skater] = []
-	_take(pick, f_groups, cur_f, comp.x + extra)
-	_take(pick, d_groups, cur_d, comp.y)
+	var out: Array[Skater] = []
+	_take(out, f_groups, cur_f, comp.x + extra)
+	_take(out, d_groups, cur_d, comp.y)
+	return out
+
+
+## Exactly these on the ice; everyone else off it (see Skater.set_benched).
+func set_on_ice(list: Array[Skater]) -> void:
 	on_ice.clear()
-	on_ice.append_array(pick)
+	on_ice.append_array(list)
 	pending = {false: -1, true: -1}
 	for s in all_skaters():
 		s.set_benched(not (s in on_ice))

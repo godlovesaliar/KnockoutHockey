@@ -105,3 +105,592 @@ blowout_02,blowout,color,low,"[sighs] They're just looking to salvage some pride
 overtime_01,overtime,pbp,high,"[excited] We're going to overtime!"
 overtime_02,overtime,pbp,high,"[excited] Sudden death! Next goal wins!"
 shootout_01,shootout,pbp,high,"[excited] It comes down to a shootout!"
+centerice_01,faceoff,pbp,medium,"Back to center ice."
+centerice_02,faceoff,pbp,medium,"We'll reset at center ice."
+centerice_03,faceoff,pbp,low,"[calm] Teams line up at center once more."
+pass_01,play_by_play,pbp,low,"Moves it across."
+pass_02,play_by_play,pbp,low,"Nice little feed."
+pass_03,play_by_play,pbp,low,"Tape to tape."
+defenderup_01,play_by_play,pbp,medium,"The defenseman joins the rush!"
+defenderup_02,play_by_play,pbp,medium,"Blueliner carrying it in himself."
+defenderup_03,play_by_play,pbp,medium,"Defenseman jumps up into the play."
+deke_01,play_by_play,pbp,high,"[excited] Oh, what a move!"
+deke_02,play_by_play,pbp,high,"[excited] Dances around him!"
+deke_03,play_by_play,pbp,medium,"A lovely bit of stickhandling."
+breakaway_01,play_by_play,pbp,high,"[excited] He's in alone!"
+breakaway_02,play_by_play,pbp,high,"[excited] Breakaway!"
+breakaway_03,play_by_play,pbp,high,"[excited] Nobody between him and the goalie!"
+pokecheck_01,turnover,pbp,medium,"Poked away!"
+pokecheck_02,turnover,pbp,medium,"A good stick knocks it loose."
+pokecheck_03,turnover,pbp,medium,"Pokes it off his stick."
+checking_01,turnover,pbp,high,"[excited] They're really fighting for it!"
+checking_02,turnover,pbp,medium,"Back and forth it goes."
+checking_03,turnover,pbp,medium,"Nobody can hang on to it out there."
+onetimer_01,shot,pbp,high,"[excited] One-timer!"
+onetimer_02,shot,pbp,high,"[excited] Right off the pass!"
+onetimer_03,shot,pbp,high,"[excited] Hammers it first time!"
+check_01,hit,pbp,low,"Good check."
+check_02,hit,pbp,low,"Rubs him off the puck."
+check_03,hit,pbp,low,"Finishes his check."
+bighitenforcer_01,hit,color,high,"[shouting] That's what he's out there for!"
+bighitenforcer_02,hit,color,high,"[laughs] Oh, you do NOT skate into that man!"
+bighitenforcer_03,hit,color,high,"[shouting] He just ran him over like a freight train!"
+glass_break_01,hit,color,high,"[shouting] He put him right through the glass!"
+glass_break_02,hit,color,high,"[shouting] The glass is GONE! Somebody get a broom!"
+glass_break_03,hit,color,high,"[laughs] That's gonna cost somebody money!"
+injury_01,hit,pbp,low,"[calm] He's slow to get up... and he's done for the night."
+injury_02,hit,pbp,low,"[calm] The trainer's out, and he'll need help getting off."
+injury_03,hit,pbp,low,"[calm] That doesn't look good. He's heading down the tunnel."
+interference_01,penalty,pbp,medium,"Two minutes for interference."
+interference_02,penalty,pbp,medium,"Interference, and he's off to the box."
+interference_03,penalty,pbp,medium,"He's called for interference."
+bigpenalty_01,penalty,pbp,medium,"That's boarding, and he's headed to the box."
+bigpenalty_02,penalty,pbp,medium,"Hit from behind into the boards. That's a penalty."
+bigpenalty_03,penalty,pbp,medium,"Boarding is the call."
+goal_emptynet_01,goal,pbp,high,"[excited] Into the empty net!"
+goal_emptynet_02,goal,pbp,high,"[excited] Empty-netter! That should seal it!"
+goal_emptynet_03,goal,pbp,medium,"Nobody home, and he buries it."
+goalie_pulled_01,play_by_play,pbp,medium,"The goalie heads to the bench for an extra attacker."
+goalie_pulled_02,play_by_play,pbp,medium,"They've pulled the goalie!"
+goalie_pulled_03,play_by_play,pbp,medium,"Empty net now. They're going for it."
+crowdreactgood_01,idle,color,high,"[excited] Listen to this crowd!"
+crowdreactgood_02,idle,color,high,"[shouting] This building is ROCKING tonight!"
+crowdreactgood_03,idle,color,high,"[laughs] The fans are loving every second of this!"
+crowdreactbad_01,idle,color,medium,"[laughs] Oof, the home crowd is NOT happy."
+crowdreactbad_02,idle,color,medium,"They're letting 'em hear it tonight."
+crowdreactbad_03,idle,color,medium,"[sighs] You can hear the boos raining down."
+post_react_01,shot,color,high,"[shouting] DING! You can hear that one in the parking lot!"
+post_react_02,shot,color,high,"[excited] Oh, the iron! An inch from glory, Steve!"
+post_react_03,shot,color,medium,"Hit the post! The goalie owes somebody a steak dinner."
+miss_react_01,shot,color,medium,"[sighs] Oh, there was all kinds of room on that one."
+miss_react_02,shot,color,medium,"Wide! That one's going in the cheap seats."
+miss_react_03,shot,color,high,"[laughs] You gotta hit the net, folks. That's step one!"
+block_react_01,shot,color,high,"[excited] Now THAT is sacrifice! Lays right down in front of it!"
+block_react_02,shot,color,medium,"Ooh, that's gonna leave a mark tomorrow."
+block_react_03,shot,color,high,"[laughs] Took that one right on the shin pads. Love it!"
+turnover_react_01,turnover,color,high,"[excited] Stole their lunch money!"
+turnover_react_02,turnover,color,medium,"You can't be that careless with the puck. Not in this league."
+turnover_react_03,turnover,color,high,"[laughs] Ha! Just took it right off the stick. Thank you very much!"
+deke_react_01,play_by_play,color,high,"[shouting] Oh, sold that defender a ticket on that one!"
+deke_react_02,play_by_play,color,high,"[excited] Silky hands, Steve! Silky!"
+deke_react_03,play_by_play,color,medium,"[laughs] That defender's still looking for the puck."
+penalty_dispute_01,penalty,color,high,"[shouting] Oh, come ON! That was a clean play!"
+penalty_dispute_02,penalty,color,high,"[sighs] You've gotta be kidding me. They're calling THAT?"
+penalty_dispute_03,penalty,color,medium,"I've seen worse in a church league, Steve. Soft call."
+penalty_agree_01,penalty,color,medium,"Yeah, no argument there. That's a penalty all day long."
+penalty_agree_02,penalty,color,high,"[laughs] Good call! Go sit in the box and think about what you did!"
+penalty_agree_03,penalty,color,medium,"They knew it, too. Look, not even arguing."
+pk_react_01,penalty,color,high,"[excited] What a kill! Those penalty killers earned their paychecks right there!"
+pk_react_02,penalty,color,medium,"Big kill. That's the kind of thing that swings a game."
+pk_react_03,penalty,color,high,"[shouting] Back to full strength! Give those killers a standing ovation!"
+offsides_react_01,whistle,color,medium,"[sighs] Offside. Gotta wait on that, you're just too eager."
+offsides_react_02,whistle,color,medium,"Ah, a skate over the line. Kills all that momentum."
+offsides_react_03,whistle,color,low,"[laughs] Somebody was in a big hurry there."
+goalie_pulled_react_01,play_by_play,color,high,"[excited] Here we go! Six attackers, nothing to lose!"
+goalie_pulled_react_02,play_by_play,color,high,"Gutsy move, Steve. Love it. Go for broke!"
+goalie_pulled_react_03,play_by_play,color,medium,"Empty net at the other end. This is where hearts stop."
+injury_react_01,hit,color,low,"[calm] You never like to see that. Hope it's nothing serious."
+injury_react_02,hit,color,low,"[sighs] That's a tough one. That's a big loss for the bench."
+injury_react_03,hit,color,low,"[calm] Classy round of applause from the crowd. Good on them."
+period_recap_01,period_end,color,medium,"What a period, Steve. Both teams came to play."
+period_recap_02,period_end,color,medium,"That's the period. Somebody's coach is gonna have a few words in that locker room."
+period_recap_03,period_end,color,high,"[excited] Grab a hot dog, folks, because this one's just getting started!"
+final_wrap_01,final_horn,color,high,"[excited] What a hockey game! I need a nap, Steve!"
+final_wrap_02,final_horn,color,medium,"That's how you close it out. Textbook."
+final_wrap_03,final_horn,color,medium,"[laughs] Drive home safe, everybody. And don't drive like these guys skate!"
+fight_hype_01,fight,color,high,"[shouting] OH, here we go! The gloves are OFF!"
+fight_hype_02,fight,color,high,"[excited] Stand back, Steve, these two have been at it all night!"
+fight_hype_03,fight,color,high,"[laughs] Now we've got ourselves a hockey game!"
+fight_bigshot_01,fight,pbp,high,"[excited] Oh, a big right hand lands!"
+fight_bigshot_02,fight,pbp,high,"[excited] That one connected!"
+fight_bigshot_03,fight,pbp,medium,"A heavy blow there. Felt that from up here."
+fight_rocked_01,fight,color,high,"[shouting] OH! Rocked! The legs are going!"
+fight_rocked_02,fight,color,high,"[excited] Wobbling, Steve! That's trouble!"
+fight_rocked_03,fight,color,high,"[shouting] Somebody check the lights, because they just went out for a second!"
+fight_knockout_01,fight,pbp,high,"[shouting] DOWN GOES ONE! It's over!"
+fight_knockout_02,fight,pbp,high,"[excited] Knockout! And the linesmen rush in!"
+fight_knockout_03,fight,pbp,high,"[shouting] Dropped to the ice! That fight is done!"
+fight_ko_react_01,fight,color,high,"[shouting] GOOD NIGHT! Somebody call a cab!"
+fight_ko_react_02,fight,color,high,"[laughs] Oh, that one's gonna be felt next Tuesday!"
+fight_ko_react_03,fight,color,high,"[excited] That's a highlight reel, Steve! Play it again!"
+fight_decision_01,fight,pbp,medium,"The linesmen step in. A clear winner on that one."
+fight_decision_02,fight,pbp,medium,"And it's broken up. One fighter certainly got the better of it."
+fight_decision_03,fight,pbp,medium,"In come the linesmen, and that one goes to the scorecards."
+fight_draw_01,fight,pbp,medium,"The linesmen step in. Call that one even."
+fight_draw_02,fight,pbp,medium,"Broken up, and neither one gave an inch."
+fight_draw_03,fight,pbp,low,"[calm] A spirited bout, and honours even."
+fight_react_01,fight,color,high,"[excited] THAT is old-time hockey, Steve!"
+fight_react_02,fight,color,medium,"Well, that'll wake up the bench. Watch the energy now."
+fight_react_03,fight,color,high,"[laughs] Five minutes each. Worth every second!"
+ko_intro_01,knockout,pbp,high,"[excited] Welcome to Knockout Night! No pucks, no nets, just five bouts at center ice!"
+ko_intro_02,knockout,pbp,high,"[excited] It's fight night, folks! Five pairs, one winner!"
+ko_intro_03,knockout,pbp,medium,"Good evening, and welcome to a very different kind of hockey night."
+ko_bout_01,knockout,pbp,medium,"Here comes the next pair to center ice."
+ko_bout_02,knockout,pbp,medium,"Next up on the card, and these two look ready."
+ko_bout_03,knockout,pbp,high,"[excited] Another bout! Let's see what these two have got!"
+ko_suddendeath_01,knockout,pbp,high,"[excited] All square! It's sudden death!"
+ko_suddendeath_02,knockout,pbp,high,"[excited] We're level! One more bout settles it!"
+ko_suddendeath_03,knockout,pbp,high,"[shouting] Sudden death! Winner takes the night!"
+ko_series_win_01,knockout,pbp,high,"[excited] And that settles it! What a night of fights!"
+ko_series_win_02,knockout,pbp,high,"[excited] The card is complete, and we have our winners!"
+ko_series_win_03,knockout,pbp,medium,"That's the final bout, and the night belongs to them."
+ko_series_react_01,knockout,color,high,"[shouting] I haven't had this much fun since my playing days, Steve!"
+ko_series_react_02,knockout,color,high,"[laughs] Somebody get these folks some ice packs!"
+ko_series_react_03,knockout,color,high,"[excited] Best night of the season! Hands down! Gloves down!"
+hit_react_02,hit,color,high,"[shouting] OH! Did you see that? Still vibrating!"
+hit_react_03,hit,color,high,"[laughs] Somebody get the license plate on that truck!"
+hit_react_04,hit,color,medium,"Keep your head up out there. That's lesson number one."
+goal_react_03,goal_reaction,color,high,"[excited] What a finish! Absolutely beautiful!"
+goal_react_04,goal_reaction,color,high,"[shouting] Pick that one out of the net, goalie!"
+goal_react_05,goal_reaction,color,medium,"You can't leave a shooter alone like that. That's on the defense."
+goal_insurance_02,goal_context,color,high,"[excited] That's the dagger, Steve. That might be the dagger."
+goal_insurance_03,goal_context,color,medium,"Now that's some breathing room."
+save_react_02,save,color,high,"[shouting] Are you KIDDING me? How did that stay out?"
+save_react_03,save,color,high,"[excited] Robbery! Somebody call the police!"
+hot_streak_03,idle,color,high,"[excited] They're pouring it on now! The goalie's working overtime!"
+hot_streak_04,idle,color,medium,"Shot after shot after shot. Something's gotta give."
+blowout_03,blowout,color,medium,"[sighs] Well, at least the hot dogs are good tonight."
+close_game_03,close_game,color,high,"[excited] I can't sit down, Steve! I physically can't sit down!"
+idle_07,idle,color,medium,"You know, back in my day, we didn't have helmets. Or brains, apparently."
+idle_08,idle,color,medium,"[laughs] Steve, did you try the nachos? They are unbelievable tonight."
+idle_09,idle,color,medium,"This team's got speed to burn. They just gotta use it."
+idle_10,idle,color,medium,"I'll tell ya, the ice is fast tonight. Real fast."
+idle_11,idle,color,high,"[excited] Listen to this place! Gives me chills, Steve!"
+idle_12,idle,color,medium,"Somebody on that bench needs to step up. Just saying."
+pa_goal_whalers,pa,pa,high,[shouting] Whalers goal!
+pa_penalty_whalers,pa,pa,medium,Whalers penalty.
+pa_welcome_whalers,pa,pa,high,Ladies and gentlemen... welcome to Whalers hockey!
+pa_win_whalers,pa,pa,high,[shouting] Your Whalers win!
+pa_goal_geese,pa,pa,high,[shouting] Geese goal!
+pa_penalty_geese,pa,pa,medium,Geese penalty.
+pa_welcome_geese,pa,pa,high,Ladies and gentlemen... welcome to Geese hockey!
+pa_win_geese,pa,pa,high,[shouting] Your Geese win!
+pa_goal_quahogs,pa,pa,high,[shouting] Ko-hogs goal!
+pa_penalty_quahogs,pa,pa,medium,Ko-hogs penalty.
+pa_welcome_quahogs,pa,pa,high,Ladies and gentlemen... welcome to Ko-hogs hockey!
+pa_win_quahogs,pa,pa,high,[shouting] Your Ko-hogs win!
+pa_goal_lobsters,pa,pa,high,[shouting] Lobsters goal!
+pa_penalty_lobsters,pa,pa,medium,Lobsters penalty.
+pa_welcome_lobsters,pa,pa,high,Ladies and gentlemen... welcome to Lobsters hockey!
+pa_win_lobsters,pa,pa,high,[shouting] Your Lobsters win!
+pa_goal_monsters,pa,pa,high,[shouting] Lake Monsters goal!
+pa_penalty_monsters,pa,pa,medium,Lake Monsters penalty.
+pa_welcome_monsters,pa,pa,high,Ladies and gentlemen... welcome to Lake Monsters hockey!
+pa_win_monsters,pa,pa,high,[shouting] Your Lake Monsters win!
+pa_goal_trailblazers,pa,pa,high,[shouting] Trailblazers goal!
+pa_penalty_trailblazers,pa,pa,medium,Trailblazers penalty.
+pa_welcome_trailblazers,pa,pa,high,Ladies and gentlemen... welcome to Trailblazers hockey!
+pa_win_trailblazers,pa,pa,high,[shouting] Your Trailblazers win!
+pa_goal_mariners,pa,pa,high,[shouting] Mariners goal!
+pa_penalty_mariners,pa,pa,medium,Mariners penalty.
+pa_welcome_mariners,pa,pa,high,Ladies and gentlemen... welcome to Mariners hockey!
+pa_win_mariners,pa,pa,high,[shouting] Your Mariners win!
+pa_goal_granite,pa,pa,high,[shouting] Granite goal!
+pa_penalty_granite,pa,pa,medium,Granite penalty.
+pa_welcome_granite,pa,pa,high,Ladies and gentlemen... welcome to Granite hockey!
+pa_win_granite,pa,pa,high,[shouting] Your Granite wins!
+pa_goal_cranberries,pa,pa,high,[shouting] Cranberries goal!
+pa_penalty_cranberries,pa,pa,medium,Cranberries penalty.
+pa_welcome_cranberries,pa,pa,high,Ladies and gentlemen... welcome to Cranberries hockey!
+pa_win_cranberries,pa,pa,high,[shouting] Your Cranberries win!
+pa_goal_rats,pa,pa,high,[shouting] Rats goal!
+pa_penalty_rats,pa,pa,medium,Rats penalty.
+pa_welcome_rats,pa,pa,high,Ladies and gentlemen... welcome to Rats hockey!
+pa_win_rats,pa,pa,high,[shouting] Your Rats win!
+pa_goal_mitts,pa,pa,high,[shouting] Mitts goal!
+pa_penalty_mitts,pa,pa,medium,Mitts penalty.
+pa_welcome_mitts,pa,pa,high,Ladies and gentlemen... welcome to Mitts hockey!
+pa_win_mitts,pa,pa,high,[shouting] Your Mitts win!
+pa_goal_poutine,pa,pa,high,[shouting] Poutine goal!
+pa_penalty_poutine,pa,pa,medium,Poutine penalty.
+pa_welcome_poutine,pa,pa,high,Ladies and gentlemen... welcome to Poutine hockey!
+pa_win_poutine,pa,pa,high,[shouting] Your Poutine wins!
+pa_goal_geoducks,pa,pa,high,[shouting] Gooey-ducks goal!
+pa_penalty_geoducks,pa,pa,medium,Gooey-ducks penalty.
+pa_welcome_geoducks,pa,pa,high,Ladies and gentlemen... welcome to Gooey-ducks hockey!
+pa_win_geoducks,pa,pa,high,[shouting] Your Gooey-ducks win!
+pa_goal_grays,pa,pa,high,[shouting] Grays goal!
+pa_penalty_grays,pa,pa,medium,Grays penalty.
+pa_welcome_grays,pa,pa,high,Ladies and gentlemen... welcome to Grays hockey!
+pa_win_grays,pa,pa,high,[shouting] Your Grays win!
+pa_goal_curds,pa,pa,high,[shouting] Curds goal!
+pa_penalty_curds,pa,pa,medium,Curds penalty.
+pa_welcome_curds,pa,pa,high,Ladies and gentlemen... welcome to Curds hockey!
+pa_win_curds,pa,pa,high,[shouting] Your Curds win!
+pa_goal_gales,pa,pa,high,[shouting] Gales goal!
+pa_penalty_gales,pa,pa,medium,Gales penalty.
+pa_welcome_gales,pa,pa,high,Ladies and gentlemen... welcome to Gales hockey!
+pa_win_gales,pa,pa,high,[shouting] Your Gales win!
+pa_goal_sourdoughs,pa,pa,high,[shouting] Sourdoughs goal!
+pa_penalty_sourdoughs,pa,pa,medium,Sourdoughs penalty.
+pa_welcome_sourdoughs,pa,pa,high,Ladies and gentlemen... welcome to Sourdoughs hockey!
+pa_win_sourdoughs,pa,pa,high,[shouting] Your Sourdoughs win!
+pa_goal_moosejaws,pa,pa,high,[shouting] Moose Jaws goal!
+pa_penalty_moosejaws,pa,pa,medium,Moose Jaws penalty.
+pa_welcome_moosejaws,pa,pa,high,Ladies and gentlemen... welcome to Moose Jaws hockey!
+pa_win_moosejaws,pa,pa,high,[shouting] Your Moose Jaws win!
+pa_goal_twang,pa,pa,high,[shouting] Twang goal!
+pa_penalty_twang,pa,pa,medium,Twang penalty.
+pa_welcome_twang,pa,pa,high,Ladies and gentlemen... welcome to Twang hockey!
+pa_win_twang,pa,pa,high,[shouting] Your Twang wins!
+pa_goal_moonshiners,pa,pa,high,[shouting] Moonshiners goal!
+pa_penalty_moonshiners,pa,pa,medium,Moonshiners penalty.
+pa_welcome_moonshiners,pa,pa,high,Ladies and gentlemen... welcome to Moonshiners hockey!
+pa_win_moonshiners,pa,pa,high,[shouting] Your Moonshiners win!
+pa_goal_swampthings,pa,pa,high,[shouting] Swamp Things goal!
+pa_penalty_swampthings,pa,pa,medium,Swamp Things penalty.
+pa_welcome_swampthings,pa,pa,high,Ladies and gentlemen... welcome to Swamp Things hockey!
+pa_win_swampthings,pa,pa,high,[shouting] Your Swamp Things win!
+pa_goal_floridaman,pa,pa,high,[shouting] Florida Man goal!
+pa_penalty_floridaman,pa,pa,medium,Florida Man penalty.
+pa_welcome_floridaman,pa,pa,high,Ladies and gentlemen... welcome to Florida Man hockey!
+pa_win_floridaman,pa,pa,high,[shouting] Your Florida Man wins!
+pa_goal_armadillos,pa,pa,high,[shouting] Armadillos goal!
+pa_penalty_armadillos,pa,pa,medium,Armadillos penalty.
+pa_welcome_armadillos,pa,pa,high,Ladies and gentlemen... welcome to Armadillos hockey!
+pa_win_armadillos,pa,pa,high,[shouting] Your Armadillos win!
+pa_goal_lumberjacks,pa,pa,high,[shouting] Lumberjacks goal!
+pa_penalty_lumberjacks,pa,pa,medium,Lumberjacks penalty.
+pa_welcome_lumberjacks,pa,pa,high,Ladies and gentlemen... welcome to Lumberjacks hockey!
+pa_win_lumberjacks,pa,pa,high,[shouting] Your Lumberjacks win!
+pa_goal_otters,pa,pa,high,[shouting] Otters goal!
+pa_penalty_otters,pa,pa,medium,Otters penalty.
+pa_welcome_otters,pa,pa,high,Ladies and gentlemen... welcome to Otters hockey!
+pa_win_otters,pa,pa,high,[shouting] Your Otters win!
+pa_goal_stuntmen,pa,pa,high,[shouting] Stuntmen goal!
+pa_penalty_stuntmen,pa,pa,medium,Stuntmen penalty.
+pa_welcome_stuntmen,pa,pa,high,Ladies and gentlemen... welcome to Stuntmen hockey!
+pa_win_stuntmen,pa,pa,high,[shouting] Your Stuntmen win!
+pa_goal_gilamonsters,pa,pa,high,[shouting] HEELA Monsters goal!
+pa_penalty_gilamonsters,pa,pa,medium,HEELA Monsters penalty.
+pa_welcome_gilamonsters,pa,pa,high,Ladies and gentlemen... welcome to HEELA Monsters hockey!
+pa_win_gilamonsters,pa,pa,high,[shouting] Your HEELA Monsters win!
+pa_goal_spuds,pa,pa,high,[shouting] Spuds goal!
+pa_penalty_spuds,pa,pa,medium,Spuds penalty.
+pa_welcome_spuds,pa,pa,high,Ladies and gentlemen... welcome to Spuds hockey!
+pa_win_spuds,pa,pa,high,[shouting] Your Spuds win!
+pa_goal_seagulls,pa,pa,high,[shouting] Seagulls goal!
+pa_penalty_seagulls,pa,pa,medium,Seagulls penalty.
+pa_welcome_seagulls,pa,pa,high,Ladies and gentlemen... welcome to Seagulls hockey!
+pa_win_seagulls,pa,pa,high,[shouting] Your Seagulls win!
+pa_goal_geysers,pa,pa,high,[shouting] Geysers goal!
+pa_penalty_geysers,pa,pa,medium,Geysers penalty.
+pa_welcome_geysers,pa,pa,high,Ladies and gentlemen... welcome to Geysers hockey!
+pa_win_geysers,pa,pa,high,[shouting] Your Geysers win!
+pa_goal_chupacabras,pa,pa,high,[shouting] Chupacabras goal!
+pa_penalty_chupacabras,pa,pa,medium,Chupacabras penalty.
+pa_welcome_chupacabras,pa,pa,high,Ladies and gentlemen... welcome to Chupacabras hockey!
+pa_win_chupacabras,pa,pa,high,[shouting] Your Chupacabras win!
+pa_goal_sweettea,pa,pa,high,[shouting] Sweet Tea goal!
+pa_penalty_sweettea,pa,pa,medium,Sweet Tea penalty.
+pa_welcome_sweettea,pa,pa,high,Ladies and gentlemen... welcome to Sweet Tea hockey!
+pa_win_sweettea,pa,pa,high,[shouting] Your Sweet Tea wins!
+pa_goal_deepdish,pa,pa,high,[shouting] Deep Dish goal!
+pa_penalty_deepdish,pa,pa,medium,Deep Dish penalty.
+pa_welcome_deepdish,pa,pa,high,Ladies and gentlemen... welcome to Deep Dish hockey!
+pa_win_deepdish,pa,pa,high,[shouting] Your Deep Dish wins!
+pa_goal_luchadores,pa,pa,high,[shouting] Luchadores goal!
+pa_penalty_luchadores,pa,pa,medium,Luchadores penalty.
+pa_welcome_luchadores,pa,pa,high,Ladies and gentlemen... welcome to Luchadores hockey!
+pa_win_luchadores,pa,pa,high,[shouting] Your Luchadores win!
+pa_goal_northdakote,pa,pa,high,[shouting] North Da-koat goal!
+pa_penalty_northdakote,pa,pa,medium,North Da-koat penalty.
+pa_welcome_northdakote,pa,pa,high,Ladies and gentlemen... welcome to North Da-koat hockey!
+pa_win_northdakote,pa,pa,high,[shouting] Your North Da-koat win!
+pa_goal_jawns,pa,pa,high,[shouting] Jawns goal!
+pa_penalty_jawns,pa,pa,medium,Jawns penalty.
+pa_welcome_jawns,pa,pa,high,Ladies and gentlemen... welcome to Jawns hockey!
+pa_win_jawns,pa,pa,high,[shouting] Your Jawns win!
+pa_goal_campers,pa,pa,high,[shouting] Campers goal!
+pa_penalty_campers,pa,pa,medium,Campers penalty.
+pa_welcome_campers,pa,pa,high,Ladies and gentlemen... welcome to Campers hockey!
+pa_win_campers,pa,pa,high,[shouting] Your Campers win!
+pa_goal_mountaingoats,pa,pa,high,[shouting] Goats goal!
+pa_penalty_mountaingoats,pa,pa,medium,Goats penalty.
+pa_welcome_mountaingoats,pa,pa,high,Ladies and gentlemen... welcome to Goats hockey!
+pa_win_mountaingoats,pa,pa,high,[shouting] Your Goats win!
+pa_goal_axolotls,pa,pa,high,[shouting] Axolotls goal!
+pa_penalty_axolotls,pa,pa,medium,Axolotls penalty.
+pa_welcome_axolotls,pa,pa,high,Ladies and gentlemen... welcome to Axolotls hockey!
+pa_win_axolotls,pa,pa,high,[shouting] Your Axolotls win!
+pa_n00_big,pa,pa,high,[shouting] Number double zero!
+pa_n00_flat,pa,pa,medium,Number double zero.
+pa_n0_big,pa,pa,high,[shouting] Number zero!
+pa_n0_flat,pa,pa,medium,Number zero.
+pa_n1_big,pa,pa,high,[shouting] Number one!
+pa_n1_flat,pa,pa,medium,Number one.
+pa_n2_big,pa,pa,high,[shouting] Number two!
+pa_n2_flat,pa,pa,medium,Number two.
+pa_n3_big,pa,pa,high,[shouting] Number three!
+pa_n3_flat,pa,pa,medium,Number three.
+pa_n4_big,pa,pa,high,[shouting] Number four!
+pa_n4_flat,pa,pa,medium,Number four.
+pa_n5_big,pa,pa,high,[shouting] Number five!
+pa_n5_flat,pa,pa,medium,Number five.
+pa_n6_big,pa,pa,high,[shouting] Number six!
+pa_n6_flat,pa,pa,medium,Number six.
+pa_n7_big,pa,pa,high,[shouting] Number seven!
+pa_n7_flat,pa,pa,medium,Number seven.
+pa_n8_big,pa,pa,high,[shouting] Number eight!
+pa_n8_flat,pa,pa,medium,Number eight.
+pa_n9_big,pa,pa,high,[shouting] Number nine!
+pa_n9_flat,pa,pa,medium,Number nine.
+pa_n10_big,pa,pa,high,[shouting] Number ten!
+pa_n10_flat,pa,pa,medium,Number ten.
+pa_n11_big,pa,pa,high,[shouting] Number eleven!
+pa_n11_flat,pa,pa,medium,Number eleven.
+pa_n12_big,pa,pa,high,[shouting] Number twelve!
+pa_n12_flat,pa,pa,medium,Number twelve.
+pa_n13_big,pa,pa,high,[shouting] Number thirteen!
+pa_n13_flat,pa,pa,medium,Number thirteen.
+pa_n14_big,pa,pa,high,[shouting] Number fourteen!
+pa_n14_flat,pa,pa,medium,Number fourteen.
+pa_n15_big,pa,pa,high,[shouting] Number fifteen!
+pa_n15_flat,pa,pa,medium,Number fifteen.
+pa_n16_big,pa,pa,high,[shouting] Number sixteen!
+pa_n16_flat,pa,pa,medium,Number sixteen.
+pa_n17_big,pa,pa,high,[shouting] Number seventeen!
+pa_n17_flat,pa,pa,medium,Number seventeen.
+pa_n18_big,pa,pa,high,[shouting] Number eighteen!
+pa_n18_flat,pa,pa,medium,Number eighteen.
+pa_n19_big,pa,pa,high,[shouting] Number nineteen!
+pa_n19_flat,pa,pa,medium,Number nineteen.
+pa_n20_big,pa,pa,high,[shouting] Number twenty!
+pa_n20_flat,pa,pa,medium,Number twenty.
+pa_n21_big,pa,pa,high,[shouting] Number twenty-one!
+pa_n21_flat,pa,pa,medium,Number twenty-one.
+pa_n22_big,pa,pa,high,[shouting] Number twenty-two!
+pa_n22_flat,pa,pa,medium,Number twenty-two.
+pa_n23_big,pa,pa,high,[shouting] Number twenty-three!
+pa_n23_flat,pa,pa,medium,Number twenty-three.
+pa_n24_big,pa,pa,high,[shouting] Number twenty-four!
+pa_n24_flat,pa,pa,medium,Number twenty-four.
+pa_n25_big,pa,pa,high,[shouting] Number twenty-five!
+pa_n25_flat,pa,pa,medium,Number twenty-five.
+pa_n26_big,pa,pa,high,[shouting] Number twenty-six!
+pa_n26_flat,pa,pa,medium,Number twenty-six.
+pa_n27_big,pa,pa,high,[shouting] Number twenty-seven!
+pa_n27_flat,pa,pa,medium,Number twenty-seven.
+pa_n28_big,pa,pa,high,[shouting] Number twenty-eight!
+pa_n28_flat,pa,pa,medium,Number twenty-eight.
+pa_n29_big,pa,pa,high,[shouting] Number twenty-nine!
+pa_n29_flat,pa,pa,medium,Number twenty-nine.
+pa_n30_big,pa,pa,high,[shouting] Number thirty!
+pa_n30_flat,pa,pa,medium,Number thirty.
+pa_n31_big,pa,pa,high,[shouting] Number thirty-one!
+pa_n31_flat,pa,pa,medium,Number thirty-one.
+pa_n32_big,pa,pa,high,[shouting] Number thirty-two!
+pa_n32_flat,pa,pa,medium,Number thirty-two.
+pa_n33_big,pa,pa,high,[shouting] Number thirty-three!
+pa_n33_flat,pa,pa,medium,Number thirty-three.
+pa_n34_big,pa,pa,high,[shouting] Number thirty-four!
+pa_n34_flat,pa,pa,medium,Number thirty-four.
+pa_n35_big,pa,pa,high,[shouting] Number thirty-five!
+pa_n35_flat,pa,pa,medium,Number thirty-five.
+pa_n36_big,pa,pa,high,[shouting] Number thirty-six!
+pa_n36_flat,pa,pa,medium,Number thirty-six.
+pa_n37_big,pa,pa,high,[shouting] Number thirty-seven!
+pa_n37_flat,pa,pa,medium,Number thirty-seven.
+pa_n38_big,pa,pa,high,[shouting] Number thirty-eight!
+pa_n38_flat,pa,pa,medium,Number thirty-eight.
+pa_n39_big,pa,pa,high,[shouting] Number thirty-nine!
+pa_n39_flat,pa,pa,medium,Number thirty-nine.
+pa_n40_big,pa,pa,high,[shouting] Number forty!
+pa_n40_flat,pa,pa,medium,Number forty.
+pa_n41_big,pa,pa,high,[shouting] Number forty-one!
+pa_n41_flat,pa,pa,medium,Number forty-one.
+pa_n42_big,pa,pa,high,[shouting] Number forty-two!
+pa_n42_flat,pa,pa,medium,Number forty-two.
+pa_n43_big,pa,pa,high,[shouting] Number forty-three!
+pa_n43_flat,pa,pa,medium,Number forty-three.
+pa_n44_big,pa,pa,high,[shouting] Number forty-four!
+pa_n44_flat,pa,pa,medium,Number forty-four.
+pa_n45_big,pa,pa,high,[shouting] Number forty-five!
+pa_n45_flat,pa,pa,medium,Number forty-five.
+pa_n46_big,pa,pa,high,[shouting] Number forty-six!
+pa_n46_flat,pa,pa,medium,Number forty-six.
+pa_n47_big,pa,pa,high,[shouting] Number forty-seven!
+pa_n47_flat,pa,pa,medium,Number forty-seven.
+pa_n48_big,pa,pa,high,[shouting] Number forty-eight!
+pa_n48_flat,pa,pa,medium,Number forty-eight.
+pa_n49_big,pa,pa,high,[shouting] Number forty-nine!
+pa_n49_flat,pa,pa,medium,Number forty-nine.
+pa_n50_big,pa,pa,high,[shouting] Number fifty!
+pa_n50_flat,pa,pa,medium,Number fifty.
+pa_n51_big,pa,pa,high,[shouting] Number fifty-one!
+pa_n51_flat,pa,pa,medium,Number fifty-one.
+pa_n52_big,pa,pa,high,[shouting] Number fifty-two!
+pa_n52_flat,pa,pa,medium,Number fifty-two.
+pa_n53_big,pa,pa,high,[shouting] Number fifty-three!
+pa_n53_flat,pa,pa,medium,Number fifty-three.
+pa_n54_big,pa,pa,high,[shouting] Number fifty-four!
+pa_n54_flat,pa,pa,medium,Number fifty-four.
+pa_n55_big,pa,pa,high,[shouting] Number fifty-five!
+pa_n55_flat,pa,pa,medium,Number fifty-five.
+pa_n56_big,pa,pa,high,[shouting] Number fifty-six!
+pa_n56_flat,pa,pa,medium,Number fifty-six.
+pa_n57_big,pa,pa,high,[shouting] Number fifty-seven!
+pa_n57_flat,pa,pa,medium,Number fifty-seven.
+pa_n58_big,pa,pa,high,[shouting] Number fifty-eight!
+pa_n58_flat,pa,pa,medium,Number fifty-eight.
+pa_n59_big,pa,pa,high,[shouting] Number fifty-nine!
+pa_n59_flat,pa,pa,medium,Number fifty-nine.
+pa_n60_big,pa,pa,high,[shouting] Number sixty!
+pa_n60_flat,pa,pa,medium,Number sixty.
+pa_n61_big,pa,pa,high,[shouting] Number sixty-one!
+pa_n61_flat,pa,pa,medium,Number sixty-one.
+pa_n62_big,pa,pa,high,[shouting] Number sixty-two!
+pa_n62_flat,pa,pa,medium,Number sixty-two.
+pa_n63_big,pa,pa,high,[shouting] Number sixty-three!
+pa_n63_flat,pa,pa,medium,Number sixty-three.
+pa_n64_big,pa,pa,high,[shouting] Number sixty-four!
+pa_n64_flat,pa,pa,medium,Number sixty-four.
+pa_n65_big,pa,pa,high,[shouting] Number sixty-five!
+pa_n65_flat,pa,pa,medium,Number sixty-five.
+pa_n66_big,pa,pa,high,[shouting] Number sixty-six!
+pa_n66_flat,pa,pa,medium,Number sixty-six.
+pa_n67_big,pa,pa,high,[shouting] Number sixty-seven!
+pa_n67_flat,pa,pa,medium,Number sixty-seven.
+pa_n68_big,pa,pa,high,[shouting] Number sixty-eight!
+pa_n68_flat,pa,pa,medium,Number sixty-eight.
+pa_n69_big,pa,pa,high,[shouting] Number sixty-nine!
+pa_n69_flat,pa,pa,medium,Number sixty-nine.
+pa_n70_big,pa,pa,high,[shouting] Number seventy!
+pa_n70_flat,pa,pa,medium,Number seventy.
+pa_n71_big,pa,pa,high,[shouting] Number seventy-one!
+pa_n71_flat,pa,pa,medium,Number seventy-one.
+pa_n72_big,pa,pa,high,[shouting] Number seventy-two!
+pa_n72_flat,pa,pa,medium,Number seventy-two.
+pa_n73_big,pa,pa,high,[shouting] Number seventy-three!
+pa_n73_flat,pa,pa,medium,Number seventy-three.
+pa_n74_big,pa,pa,high,[shouting] Number seventy-four!
+pa_n74_flat,pa,pa,medium,Number seventy-four.
+pa_n75_big,pa,pa,high,[shouting] Number seventy-five!
+pa_n75_flat,pa,pa,medium,Number seventy-five.
+pa_n76_big,pa,pa,high,[shouting] Number seventy-six!
+pa_n76_flat,pa,pa,medium,Number seventy-six.
+pa_n77_big,pa,pa,high,[shouting] Number seventy-seven!
+pa_n77_flat,pa,pa,medium,Number seventy-seven.
+pa_n78_big,pa,pa,high,[shouting] Number seventy-eight!
+pa_n78_flat,pa,pa,medium,Number seventy-eight.
+pa_n79_big,pa,pa,high,[shouting] Number seventy-nine!
+pa_n79_flat,pa,pa,medium,Number seventy-nine.
+pa_n80_big,pa,pa,high,[shouting] Number eighty!
+pa_n80_flat,pa,pa,medium,Number eighty.
+pa_n81_big,pa,pa,high,[shouting] Number eighty-one!
+pa_n81_flat,pa,pa,medium,Number eighty-one.
+pa_n82_big,pa,pa,high,[shouting] Number eighty-two!
+pa_n82_flat,pa,pa,medium,Number eighty-two.
+pa_n83_big,pa,pa,high,[shouting] Number eighty-three!
+pa_n83_flat,pa,pa,medium,Number eighty-three.
+pa_n84_big,pa,pa,high,[shouting] Number eighty-four!
+pa_n84_flat,pa,pa,medium,Number eighty-four.
+pa_n85_big,pa,pa,high,[shouting] Number eighty-five!
+pa_n85_flat,pa,pa,medium,Number eighty-five.
+pa_n86_big,pa,pa,high,[shouting] Number eighty-six!
+pa_n86_flat,pa,pa,medium,Number eighty-six.
+pa_n87_big,pa,pa,high,[shouting] Number eighty-seven!
+pa_n87_flat,pa,pa,medium,Number eighty-seven.
+pa_n88_big,pa,pa,high,[shouting] Number eighty-eight!
+pa_n88_flat,pa,pa,medium,Number eighty-eight.
+pa_n89_big,pa,pa,high,[shouting] Number eighty-nine!
+pa_n89_flat,pa,pa,medium,Number eighty-nine.
+pa_n90_big,pa,pa,high,[shouting] Number ninety!
+pa_n90_flat,pa,pa,medium,Number ninety.
+pa_n91_big,pa,pa,high,[shouting] Number ninety-one!
+pa_n91_flat,pa,pa,medium,Number ninety-one.
+pa_n92_big,pa,pa,high,[shouting] Number ninety-two!
+pa_n92_flat,pa,pa,medium,Number ninety-two.
+pa_n93_big,pa,pa,high,[shouting] Number ninety-three!
+pa_n93_flat,pa,pa,medium,Number ninety-three.
+pa_n94_big,pa,pa,high,[shouting] Number ninety-four!
+pa_n94_flat,pa,pa,medium,Number ninety-four.
+pa_n95_big,pa,pa,high,[shouting] Number ninety-five!
+pa_n95_flat,pa,pa,medium,Number ninety-five.
+pa_n96_big,pa,pa,high,[shouting] Number ninety-six!
+pa_n96_flat,pa,pa,medium,Number ninety-six.
+pa_n97_big,pa,pa,high,[shouting] Number ninety-seven!
+pa_n97_flat,pa,pa,medium,Number ninety-seven.
+pa_n98_big,pa,pa,high,[shouting] Number ninety-eight!
+pa_n98_flat,pa,pa,medium,Number ninety-eight.
+pa_n99_big,pa,pa,high,[shouting] Number ninety-nine!
+pa_n99_flat,pa,pa,medium,Number ninety-nine.
+pa_goal_visitors_01,pa,pa,low,"Visitors' goal, scored by..."
+pa_goal_visitors_02,pa,pa,low,Goal for the visitors... scored by...
+pa_scored_by_01,pa,pa,high,Scored by...
+pa_scored_by_02,pa,pa,high,[excited] Scored by...
+pa_assist_01,pa,pa,medium,Assisted by...
+pa_assist_02,pa,pa,medium,With the assist going to...
+pa_and_01,pa,pa,medium,And
+pa_and_02,pa,pa,medium,and
+pa_pen_tripping_01,pa,pa,medium,"Two minutes, for tripping."
+pa_pen_tripping_02,pa,pa,medium,Two minutes for tripping.
+pa_pen_interference_01,pa,pa,medium,"Two minutes, for interference."
+pa_pen_interference_02,pa,pa,medium,Two minutes for interference.
+pa_pen_boarding_01,pa,pa,medium,"Two minutes, for boarding."
+pa_pen_boarding_02,pa,pa,medium,Two minutes for boarding.
+pa_pen_fighting_01,pa,pa,medium,"Five minutes each, for fighting."
+pa_pen_fighting_02,pa,pa,medium,"Both players, five minutes for fighting."
+pa_full_strength_01,pa,pa,medium,The penalty has expired. Both teams are at full strength.
+pa_full_strength_02,pa,pa,medium,Both teams are back at full strength.
+pa_last_minute_01,pa,pa,medium,Last minute of play in the period.
+pa_last_minute_02,pa,pa,medium,"Ladies and gentlemen, last minute of play in the period."
+pa_end_first_01,pa,pa,medium,That is the end of the first period.
+pa_end_second_01,pa,pa,medium,That is the end of the second period.
+pa_end_third_01,pa,pa,medium,That is the end of regulation.
+pa_overtime_01,pa,pa,high,[excited] Ladies and gentlemen... we are going to overtime!
+pa_overtime_02,pa,pa,high,"Free hockey, folks! We're going to overtime!"
+pa_shootout_01,pa,pa,high,[excited] Ladies and gentlemen... this one is going to a shootout!
+pa_hattrick_01,pa,pa,high,[shouting] Hat trick! Hat trick! Let those hats fly!
+pa_hattrick_02,pa,pa,high,"[excited] Ladies and gentlemen, that is a hat trick!"
+pa_glass_01,pa,pa,low,"Ladies and gentlemen, please bear with us while the glass is replaced."
+pa_glass_02,pa,pa,low,There will be a short delay while the arena crew repairs the glass.
+pa_noise_01,pa,pa,high,[shouting] Make some noise!
+pa_noise_02,pa,pa,high,[shouting] Let me hear you!
+pa_noise_03,pa,pa,high,"[shouting] Get loud, everybody!"
+pa_noise_04,pa,pa,high,"[shouting] Come on, louder!"
+pa_intermission_01,pa,pa,medium,"There will now be a fifteen minute intermission. Grab a snack, and we'll see you back here for the next period."
+pa_intermission_02,pa,pa,medium,"We're at intermission, folks. Stick around for the chuck-a-puck at center ice."
+pa_thanks_01,pa,pa,medium,"Thank you for coming out tonight, folks. Please drive home safely."
+pa_thanks_02,pa,pa,medium,"That's all for tonight. Get home safe, and we'll see you next time."
+pa_thanks_03,pa,pa,medium,"Thanks for coming, everybody. Please watch your step on the way out."
+pa_ambient_01,pa,pa,medium,Tonight's fifty-fifty jackpot is now over four thousand dollars! Get your tickets from any seller in the concourse.
+pa_ambient_02,pa,pa,medium,"Fans, tonight's winning fifty-fifty number is... four, seven, two, two, nine, one. Please claim your prize at guest services."
+pa_ambient_03,pa,pa,medium,Chuck-a-puck pucks are now on sale in the main concourse. All proceeds go to youth hockey.
+pa_ambient_04,pa,pa,medium,"Happy birthday to Gary, celebrating his seventy-fifth tonight in section two-oh-four!"
+pa_ambient_05,pa,pa,medium,Tonight's game is brought to you by Pete's Tire Barn. Pete's: we'll get you rolling.
+pa_ambient_06,pa,pa,medium,Tonight is Bark in the Park night! A big welcome to all our four-legged fans.
+pa_ambient_07,pa,pa,medium,"Tonight's attendance: eleven thousand, four hundred and twelve. Thank you for coming out!"
+pa_ambient_08,pa,pa,medium,It's dollar hot dog night! Limit six per customer. We mean it this time.
+pa_ambient_09,pa,pa,medium,"Please welcome the Saint Agnes peewee squad, joining us here tonight!"
+pa_ambient_10,pa,pa,medium,"Keep your eyes on the video board, the kiss cam is coming up at the next stoppage!"
+pa_ambient_11,pa,pa,medium,"Congratulations to Mark and Jennifer, who just got engaged in section one-twelve! She said yes!"
+pa_ambient_12,pa,pa,medium,Fans are reminded that throwing objects onto the ice is strictly prohibited. That includes octopus.
+pa_ambient_13,pa,pa,medium,Stay in your seats after the game for the postgame skate with the team!
+pa_ambient_14,pa,pa,medium,Tonight's three stars will be announced following the game.
+pa_ambient_15,pa,pa,medium,The Zamboni will be resurfacing the ice during intermission. Please do not feed the Zamboni.
+pa_ambient_16,pa,pa,medium,The T-shirt toss is coming up! Get those hands up!
+pa_ambient_17,pa,pa,medium,Fans are reminded that this is a smoke-free facility.
+pa_ambient_18,pa,pa,medium,"Fan of the game tonight goes to the gentleman in section one-oh-eight with the light-up hat. Sir, we see you."
+pa_ambient_19,pa,pa,medium,"Would the owner of a blue pickup truck, license plate starting with K, L, Y, please return to your vehicle. Your lights are on."
+pa_ambient_20,pa,pa,medium,Would the owner of a silver minivan parked in the Zamboni lane please move it immediately. The Zamboni would like to get by.
+pa_ambient_21,pa,pa,medium,A set of car keys has been found at section two-twelve. They have a little rubber duck on them. Please see guest services.
+pa_ambient_22,pa,pa,medium,"Attention fans: a small dog has been found in the restroom on the upper concourse. He seems very happy. If he's yours, please see guest services."
+pa_ambient_23,pa,pa,medium,"Would the parents of Tyler, age six, please come to guest services. Tyler is fine. Tyler has had three cotton candies."
+pa_ambient_24,pa,pa,medium,A pair of false teeth has been turned in at the lost and found. We would really like to return them.
+pa_ambient_25,pa,pa,medium,Would the owner of a red sedan with a canoe on the roof please return to your vehicle. The canoe is leaving.
+pa_ambient_26,pa,pa,medium,"A wallet has been found near the pretzel stand. If you can describe the photos inside, it's yours."
+pa_ambient_27,pa,pa,medium,"Fans, the north concourse restrooms are temporarily closed. Please use the facilities on the south side. Sorry about that."
+pa_ambient_28,pa,pa,medium,"Would Doctor Patel please report to section one-oh-three. Doctor Patel, to section one-oh-three."
+pa_ambient_29,pa,pa,medium,To whoever left a full plate of nachos at the top of section two-twenty: they're gone now. We're sorry.
+pa_ambient_30,pa,pa,medium,"The lost and found now has one mitten, two umbrellas, and a very confused goat. Please come and claim the goat."
+pa_ambient_31,pa,pa,medium,Would the gentleman who lost his toupee in section one-fifteen please see guest services. No questions asked.
+pa_ambient_32,pa,pa,medium,Attention: the Zamboni driver's lunch has gone missing from the break room. It was a tuna sandwich. He is very upset.
+pa_ambient_33,pa,pa,medium,"Fans, please do not attempt to start the wave during a power play. Thank you."
+pa_ambient_34,pa,pa,medium,Would the owner of a white hatchback in lot C please return to your vehicle. Your car alarm has been going for forty minutes.
+pa_ambient_35,pa,pa,medium,"A reminder that the parking lot gates close one hour after the game. That means you, Dave."
+pa_ambient_36,pa,pa,medium,"Update: Tyler has been reunited with his parents. Tyler, please put down the cotton candy."
+pa_ambient_37,pa,pa,medium,To the fan who brought the cowbell: we hear you. Everyone hears you.
+pa_ambient_38,pa,pa,medium,"Congratulations to section one-oh-six, tonight's loudest section! Free popcorn is on the way."
+pa_ambient_39,pa,pa,medium,Attention: a hamster has been found in the press box. We have no idea how. Please see guest services.
+pa_ambient_40,pa,pa,medium,Would the owner of a green station wagon in lot B please return to your vehicle. A raccoon is in it. He looks comfortable.

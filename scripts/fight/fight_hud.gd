@@ -45,7 +45,8 @@ var _prompt_at := 0     ## ms when the prompt opened (its pop-in runs on real ti
 var _show_fight := false
 var _banner := {}       ## text, start, until (in _now seconds)
 var _flash := {}
-var _now := 0.0         ## real seconds the HUD has run
+var _tape := {}         ## the tale-of-the-tape card: start, until (show_tape)
+var _now := 0.0        ## real seconds the HUD has run
 var _last_tick := 0.0
 var _fight_t := 0.0
 var _hurt: TextureRect   ## red edges when the human takes a clean one
@@ -183,6 +184,16 @@ func show_prompt(on: bool) -> void:
 	_prompt_at = Time.get_ticks_msec()
 
 
+func prompt_showing() -> bool:
+	return _prompt.visible
+
+
+## The tale of the tape: both fighters side by side (size, fighting, strength) while
+## they jaw before the gloves come off, for `seconds` (real time).
+func show_tape(seconds: float) -> void:
+	_tape = {"start": _now, "until": _now + seconds}
+
+
 func prompt_left(share: float) -> void:
 	_prompt_share = clampf(share, 0.0, 1.0)
 	_prompt_art.queue_redraw()
@@ -267,8 +278,89 @@ func _draw() -> void:
 		for k in 2:
 			_draw_panel(k, cw)
 		_draw_controls(cw)
+	_draw_tape()
 	_draw_banner()
 	_draw_flash()
+
+
+# --- Tale of the tape --------------------------------------------------------------------
+
+## A navy card low in the frame: each fighter on a chip in their team color with their
+## style tag, then their numbers in rows, the better of each pair brighter; VS between.
+func _draw_tape() -> void:
+	var k := _show(_tape)
+	if k <= 0.0:
+		return
+	var cw := _canvas.size.x
+	var pw := 900.0
+	var ph := 214.0
+	var r := Rect2(cw * 0.5 - pw * 0.5 + (1.0 - k) * 70.0, 640.0, pw, ph)
+	var a := k
+	MenuStyle.draw_slant(_canvas, Rect2(r.position + Vector2(8, 10), r.size), Color(0, 0, 0, 0.4 * a), 30)
+	MenuStyle.draw_slant(_canvas, r.grow(4), Color(MenuStyle.INK, a), 30)
+	MenuStyle.draw_slant(_canvas, r, Color(MenuStyle.NAVY, 0.95 * a), 30)
+	var tag := "TALE OF THE TAPE"
+	var tw := MenuStyle.text_width(tag, 16, 0.12) + 34.0
+	var tp := Vector2(cw * 0.5 - tw * 0.5, r.position.y - 14.0)
+	MenuStyle.draw_slant(_canvas, Rect2(tp, Vector2(tw, 26)), Color(MenuStyle.RED, a), 10)
+	_canvas.draw_string(MenuStyle.font(0.12), tp + Vector2(17, 19), tag, HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color(1, 1, 1, a))
+	var rows := [["HEIGHT", _height(fight.a.s), _height(fight.b.s), _size(fight.a.s).x, _size(fight.b.s).x],
+		["WEIGHT", _weight(fight.a.s), _weight(fight.b.s), _size(fight.a.s).y, _size(fight.b.s).y],
+		["FIGHTING", str(fight.a.s.stats.fighting), str(fight.b.s.stats.fighting), fight.a.s.stats.fighting, fight.b.s.stats.fighting],
+		["STRENGTH", str(fight.a.s.stats.strength), str(fight.b.s.stats.strength), fight.a.s.stats.strength, fight.b.s.stats.strength]]
+	var chip_w := 330.0
+	var f2 := MenuStyle.font(0.12)
+	for i in 2:
+		var f: Fight.Fighter = fight.a if i == 0 else fight.b
+		var id: int = fight.director.team_ids[f.s.team]
+		var cx := r.position.x + 30.0 if i == 0 else r.end.x - 30.0 - chip_w - 22.0
+		var y := r.position.y + 24.0
+		var cr := Rect2(cx, y, chip_w, 46)
+		MenuStyle.draw_slant(_canvas, cr.grow(3), Color(MenuStyle.INK, a), 12)
+		MenuStyle.draw_slant(_canvas, cr, Color(MenuStyle.team_color(id), a), 12)
+		var logo := MenuStyle.team_logo(id)
+		if logo:
+			_canvas.draw_texture_rect(logo, Rect2(cx + 16, y + 7, 32, 32), false, Color(1, 1, 1, a))
+		var nm := MenuStyle.player_name(f.s)
+		var fs := 26 if MenuStyle.text_width(nm, 26) < chip_w - 80 else 20
+		MenuStyle.draw_bold(_canvas, Vector2(cx + 58, y + 33), nm, fs, Color(1, 1, 1, a), 5, Color(MenuStyle.INK, a), 0.2, false)
+		var sname: String = Fight.STYLE_NAMES[f.style]
+		var scol: Color = Fight.STYLE_COLORS[f.style]
+		var sw := MenuStyle.text_width(sname, 14, 0.12) + 24.0
+		var sp := Vector2(cx + chip_w - sw - 4.0, y - 12.0)
+		MenuStyle.draw_slant(_canvas, Rect2(sp - Vector2(2, 2), Vector2(sw + 4, 24)), Color(MenuStyle.INK, a), 8)
+		MenuStyle.draw_slant(_canvas, Rect2(sp, Vector2(sw, 20)), Color(scol.darkened(0.25), a), 8)
+		_canvas.draw_string(f2, sp + Vector2(12, 15), sname, HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(1, 1, 1, a))
+	MenuStyle.draw_bold(_canvas, Vector2(cw * 0.5 - 22.0, r.position.y + 58), "VS", 30,
+			Color(MenuStyle.RED.lightened(0.2), a), 5, Color(MenuStyle.INK, a), 0.2, false)
+	# The numbers: label in the middle, each side's value toward its fighter.
+	for j in rows.size():
+		var row: Array = rows[j]
+		var y := r.position.y + 106.0 + j * 26.0
+		var lw := MenuStyle.text_width(row[0], 15, 0.12)
+		_canvas.draw_string(f2, Vector2(cw * 0.5 - lw * 0.5, y), row[0], HORIZONTAL_ALIGNMENT_LEFT, -1, 15, Color(0.7, 0.75, 0.85, a))
+		for i in 2:
+			var v: String = row[1 + i]
+			var better: bool = float(row[3 + i]) > float(row[4 - i])
+			var col := Color(1, 1, 1, a) if better else Color(0.78, 0.8, 0.86, 0.85 * a)
+			var vw := MenuStyle.text_width(v, 21)
+			var x := cw * 0.5 - 150.0 - vw if i == 0 else cw * 0.5 + 150.0
+			MenuStyle.draw_bold(_canvas, Vector2(x, y + 2), v, 21, col, 0, MenuStyle.INK, 0.2, false)
+
+
+## Height (m) and weight (kg), the body type's average where the roster leaves them out.
+func _size(s: Skater) -> Vector2:
+	var avg: Array = BodyBuild.AVERAGE.get(s.body_type, BodyBuild.AVERAGE["male"])
+	return Vector2(s.height_m if s.height_m > 0.0 else avg[0], s.weight_kg if s.weight_kg > 0.0 else avg[1])
+
+
+func _height(s: Skater) -> String:
+	var inches := roundi(_size(s).x / 0.0254)
+	return "%d'%d\"" % [inches / 12, inches % 12]
+
+
+func _weight(s: Skater) -> String:
+	return "%d LBS" % roundi(_size(s).y * 2.20462)
 
 
 # --- Header ------------------------------------------------------------------------------

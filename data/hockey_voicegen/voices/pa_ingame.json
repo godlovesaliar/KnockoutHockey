@@ -1,0 +1,7 @@
+{
+  "name": "PA Announcer (in-game)",
+  "intensity": 0.9,
+  "pace": 0.55,
+  "temp": 0.4,
+  "notes": "The PA reference run through the game's PA bus (highpass 150, lowpass 9k, 180 ms echo, light room), so Studio duets match how he sounds in the arena. For booth duets with Bobby; solo PA lines still use pa_announcer."
+}

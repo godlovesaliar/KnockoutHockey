@@ -62,6 +62,7 @@ static func default_options() -> Dictionary:
 		"max_fps": 0,            ## 0 = no cap
 		"graphics": "quality",   ## "quality" or "performance" (see performance())
 		"blood": true,           ## fights: blood sprays and drops once a fighter is under half health
+		"presentation": "full",  ## "full" (the TV extras) or "quick" (see quick_presentation())
 	}
 
 
@@ -148,6 +149,13 @@ func apply_video() -> void:
 ## Performance graphics: cheaper rendering for slower PCs. Besides apply_video, the menus'
 ## arena (MenuArena: no volumetric fog or depth of field), the crowd (Arena: the simple
 ## fan everywhere) and the sun (sun_shadow_mode) read this when they're built.
+## Quick presentation: the TV extras that take time are cut (the dead-time cutaway and a
+## shorter skate to the faceoff, the "going to break" shot, the second replay angle).
+## Stingers and stat cards stay: they cost no time.
+func quick_presentation() -> bool:
+	return str(options.get("presentation", "full")) == "quick"
+
+
 func performance() -> bool:
 	return str(options.get("graphics", "quality")) == "performance"
 

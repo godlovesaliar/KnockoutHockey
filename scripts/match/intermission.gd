@@ -320,5 +320,13 @@ func _continue() -> void:
 	if _done:
 		return
 	_done = true
+	# The league stinger covers the cut back to the rink (or to the menu).
+	if d and d.show_hud:
+		Stinger.play(get_tree().root, _close)
+	else:
+		_close()
+
+
+func _close() -> void:
 	continued.emit()
 	queue_free()

@@ -1,0 +1,41 @@
+call,spoken
+# How Bobby says each team in the intro (Tonight: a matchup between <spoken>... and <spoken>.). call = the team's call in scripts/core/teams.gd. Respell freely for pronunciation.,
+whalers,the New Bedford Whalers
+geese,the Minnesota Geese
+quahogs,the Rhode Island Ko-hogs
+lobsters,the Maine Lobsters
+monsters,the Burlington Lake Monsters
+trailblazers,the Adirondack Trailblazers
+mariners,the Mystic Mariners
+granite,the New Hampshire Granite
+cranberries,the Cape Cod Cranberries
+rats,the New York Rats
+mitts,the Michigan Mitts
+poutine,the Quebec Poutine
+geoducks,the Tacoma Gooey-ducks
+grays,the Roswell Grays
+curds,the Wisconsin Curds
+gales,the Lake Superior Gales
+sourdoughs,the Anchorage Sourdoughs
+moosejaws,the Manitoba Moose Jaws
+twang,the Nashville Twang
+moonshiners,the Kentucky Moonshiners
+swampthings,the Okefenokee Swamp Things
+floridaman,Florida Man
+armadillos,the Texas Armadillos
+lumberjacks,the Portland Lumberjacks
+otters,the Monterey Otters
+stuntmen,the Hollywood Stuntmen
+gilamonsters,the Mojave HEE-la Monsters
+spuds,the Boise Spuds
+seagulls,the Seattle Seagulls
+geysers,the Yellowstone Geysers
+chupacabras,the Baja Chupacabras
+sweettea,the Carolina Sweet Tea
+deepdish,the Chicago Deep Dish
+luchadores,the Mexico City Luchadores
+northdakote,NORTH da-COOOOOAT
+jawns,the Philadelphia Jawns
+campers,the Pine Barrens Campers
+mountaingoats,the Rocky Mountain Goats
+axolotls,the Sochimilco Axolotls

@@ -44,6 +44,8 @@ const VIDEO := [
 		"hint": "Caps the frame rate (with VSync off) to keep the PC cooler and quieter."},
 	{"key": "blood", "label": "BLOOD", "values": [true, false], "names": ["On", "Off"],
 		"hint": "Fights: a hurt fighter bleeds on the big shots. Off: spit only."},
+	{"key": "presentation", "label": "PRESENTATION", "values": ["full", "quick"], "names": ["Full", "Quick"],
+		"hint": "Quick: shorter stoppages: no cutaways, no going-to-break shot, one replay angle."},
 ]
 
 const ROW_POS := Vector2(80, 178)

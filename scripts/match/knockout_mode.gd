@@ -182,6 +182,13 @@ func _show_card() -> void:
 	step = Step.CARD
 	_t = 0.0
 	_pair_now = _pair()
+	# Steve over the tale of the tape (after anything still playing, like the team intro).
+	if bout == 0:
+		Sfx.announce_after("ko_intro", 0.4, 3, 4.0)
+	elif bout >= BOUTS:
+		Sfx.announce_after("ko_suddendeath", 0.4, 3, 2.0)
+	elif randf() < 0.7:
+		Sfx.announce_after("ko_bout", 0.4, 2, 2.0)
 
 
 func _start_bout() -> void:
@@ -248,6 +255,8 @@ func _final() -> void:
 	_t = 0.0
 	var w := 0 if score[0] > score[1] else 1
 	Sfx.crowd_react("goal_cheer" if Sfx.has("goal_cheer") else "cheer", -2.0, 3)
+	Sfx.announce_after("ko_series_win", 0.3, 4, 2.0)
+	Sfx.announce_after("ko_series_react", 2.8, 2)
 	director._bench_react(w, "cheer", 1.0)
 	series_over.emit(w)
 

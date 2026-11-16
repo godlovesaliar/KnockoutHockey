@@ -51,6 +51,33 @@ var _travel := 0.0      ## 0 in the crease .. 1 skating somewhere (see CARRY_GLO
 var _swing := 0.0       ## the arms' swing with the stride (-1..1), eased
 var _was_traveling := false
 
+## Saves. A save is an action played over the stance: the goalie starts moving as soon as
+## the shot is read (Goalie.read_eta under SAVE_LEAD), so the glove, blocker or pad gets
+## there with the puck rather than after it, then holds the save and recovers. Kinds, from
+## where the puck crosses (sideways from the goalie, height):
+##   "butterfly"  low and close: drop to the knees
+##   "pad"        low and wider: drop, the near pad kicked out along the ice
+##   "stack"      low and far: laid out on the side across the ice, arm reaching
+##   "reach"      up and close: glove or blocker snaps out to it, body leaning in
+##   "dive"       up and far: a sideways dive, the near hand stretched to the puck
+const SAVE_LEAD := 0.3
+const SAVE_TIMES := {   ## kind -> [hold, recover] seconds after the impact
+	"butterfly": [0.4, 0.4], "pad": [0.45, 0.5], "stack": [0.7, 0.7],
+	"reach": [0.3, 0.35], "dive": [0.55, 0.65],
+}
+var _act_on := false
+var _act_t := 0.0        ## s since the save started
+var _act_hit := 0.2      ## s from its start to the impact
+var _act_spot := Vector3.ZERO   ## where the puck meets the goalie (world)
+var _act_from := Vector3.ZERO   ## where the goalie stood when the save started (it slides over too)
+var _act_kind := "reach"
+var _act_side := 1.0     ## +1 glove side (the goalie's left), -1 blocker side
+var _act_catch := false
+var _act_w := 0.0        ## the save's weight over the stance this frame
+var _seen_saves := 0
+var _counter := Vector3.ZERO   ## world: holds the body back from the goalie's slide during a save
+var _hold_w := 0.0       ## holding a caught puck: the glove drawn in to the chest
+
 
 func build(sk: Skater) -> void:
 	goalie = sk as Goalie
@@ -175,9 +202,10 @@ func _state_clips() -> void:
 func _pose(delta: float) -> void:
 	var k := _ease(14.0, delta)
 	_yaw = lerp_angle(_yaw, _heading_yaw(), k)
-	var low_save := goalie.save_anim > 0.0 and goalie.save_point.y < 0.5
-	var want_drop := 1.0 if (goalie.butterfly or low_save) else 0.0
-	_drop = lerpf(_drop, want_drop, _ease(18.0, delta))
+	_tick_save(delta)
+	var low_act := _act_on and _act_kind in ["butterfly", "pad", "stack"] and _act_w > 0.15
+	var want_drop := 1.0 if (goalie.butterfly or low_act) else 0.0
+	_drop = lerpf(_drop, want_drop, _ease(22.0 if want_drop > _drop else 10.0, delta))
 	var spd := goalie.flat_speed()
 	var traveling := _is_traveling()
 	_travel = lerpf(_travel, 1.0 if traveling else 0.0, _ease(4.0, delta))
@@ -210,31 +238,186 @@ func _pose(delta: float) -> void:
 	rig.knee_pole[0] = Vector3(lerpf(0.25, 0.12, tr) - 0.55 * _drop, -0.6 * _drop, 1.0)
 	rig.knee_pole[1] = Vector3(-lerpf(0.25, 0.12, tr) + 0.55 * _drop, -0.6 * _drop, 1.0)
 
-	# Glove / blocker: ready position, reaching toward the last save.
+	# Glove / blocker: ready position; a save sends one of them to the puck (below).
 	rig.arm_mode = SkaterRig.Arms.FREE
-	var a := goalie.save_anim
-	var reach := Vector3.ZERO
-	if a > 0.0 and goalie.save_point.y >= 0.5:
-		# save_point.x is in the net frame (+x = goalie's left); in model space left is -x.
-		reach = Vector3(-goalie.save_point.x * 0.8, goalie.save_point.y - 0.95, -0.15) * a
-	var glove_reach := reach if goalie.save_point.x > 0.0 else Vector3.ZERO
-	var blocker_reach := reach if goalie.save_point.x <= 0.0 else Vector3.ZERO
 	var y_drop := -0.3 * _drop
 	# The arms swing against the legs: the glove (left) comes forward with the right foot.
 	# (Rig: the left foot is ahead at cos(stride) = 1; model space has -Z ahead.)
 	_swing = lerpf(_swing, cos(_stride) * sa, _ease(12.0, delta))
 	var ready_glove := Vector3(-0.42, 1.0 + y_drop, -0.42)
 	var carry_glove := CARRY_GLOVE + Vector3(0.0, absf(_swing) * 0.08, _swing * 0.32)
-	var glove_p := ready_glove.lerp(carry_glove * Vector3(1, hs, 1), tr) + glove_reach
-	var mt := model.global_transform
-	rig.hand_world[0] = mt * glove_p
-	rig.hand_world[1] = mt * (_blocker_ready() + blocker_reach)
-	_blocker_k = a if blocker_reach != Vector3.ZERO else 0.0
+	var glove_p := ready_glove.lerp(carry_glove * Vector3(1, hs, 1), tr)
+	# Holding a caught puck: the glove comes in against the chest.
+	var holding := goalie.g == Goalie.G.HOLD and goalie.has_puck() and goalie.last_catch
+	_hold_w = lerpf(_hold_w, 1.0 if holding and _act_w < 0.3 else 0.0, _ease(6.0, delta))
+	glove_p = glove_p.lerp(Vector3(-0.1, 1.05, -0.3) * Vector3(1, hs, 1), _hold_w)
 	# Elbows out for the ready stance; in at the sides, hanging back, when traveling.
 	rig.elbow_pole[0] = Vector3(0.7, -0.6, -0.4).lerp(Vector3(0.3, -0.8, -0.6), tr)
 	rig.elbow_pole[1] = Vector3(-0.7, -0.7, -0.3).lerp(Vector3(-0.35, -0.8, -0.5), tr)
-	model.rotation = Vector3(0.0, _yaw, 0.0)
+	_place_model(_save_pose())
+	var mt := model.global_transform
+	rig.hand_world[0] = mt * glove_p
+	rig.hand_world[1] = mt * _blocker_ready()
+	_blocker_k = 0.0
+	if _act_on and _act_w > 0.0:
+		var lead := 0 if _act_side > 0.0 else 1
+		var target := _act_spot
+		if _act_catch and _act_t > _act_hit:
+			# A caught puck: the glove snaps shut and flashes it, up and a touch back.
+			var u := clampf((_act_t - _act_hit) / 0.25, 0.0, 1.0)
+			target += Vector3.UP * 0.1 * u * hs - goalie.heading * 0.08 * u
+		var reach_w := _act_w * (0.7 if _act_kind == "pad" else 1.0)
+		if _act_kind == "butterfly":
+			reach_w *= 0.5
+		rig.hand_world[lead] = rig.hand_world[lead].lerp(target, reach_w)
+		if lead == 1 and _act_kind in ["reach", "pad", "butterfly"]:
+			_blocker_k = reach_w   # the blade stays down, the shaft swings out with the hand
+		# The reaching elbow lifts out of the way.
+		var sx := 1.0 if lead == 0 else -1.0
+		rig.elbow_pole[lead] = rig.elbow_pole[lead].lerp(Vector3(sx * 0.6, -0.2, -0.8), _act_w)
 	_face(traveling)
+
+
+## Starts, steers and ends the save action (see SAVE_LEAD).
+func _tick_save(delta: float) -> void:
+	if goalie.net == null or goalie.walking():
+		_act_on = false
+		_act_w = 0.0
+		return
+	if goalie.save_count != _seen_saves:
+		var first := _seen_saves == 0 and goalie.save_count > 1   # (joined mid-game: ignore old saves)
+		_seen_saves = goalie.save_count
+		if not first:
+			_act_catch = goalie.last_catch
+			if _act_on and _act_t <= _act_hit + 0.08:
+				_act_spot = goalie.save_spot   # the read was right: land there, now
+				_act_hit = minf(_act_hit, _act_t + 0.04)
+			else:
+				_begin_save(goalie.save_spot, 0.07)   # a pure reflex: no read, snap to it
+	elif not _act_on and goalie.read_eta < SAVE_LEAD:
+		_begin_save(goalie.read_spot, goalie.read_eta)
+		_act_catch = false
+	if not _act_on:
+		_act_w = lerpf(_act_w, 0.0, _ease(10.0, delta))
+		return
+	_act_t += delta
+	if _act_t < _act_hit and goalie.read_eta < INF:
+		# Still in the air: follow the read (a tip changes it), arriving with the puck.
+		_act_spot = goalie.read_spot
+		_act_hit = _act_t + goalie.read_eta
+		_choose_kind()
+	var times: Array = SAVE_TIMES[_act_kind]
+	var hold: float = times[0] + (0.25 if _act_catch else 0.0)
+	var rec: float = times[1]
+	if _act_t < _act_hit:
+		var u := clampf(_act_t / maxf(_act_hit, 0.05), 0.0, 1.0)
+		_act_w = 1.0 - (1.0 - u) * (1.0 - u)   # fast out of the stance, settling in
+	elif _act_t < _act_hit + hold:
+		_act_w = 1.0
+	else:
+		_act_w = 1.0 - smoothstep(0.0, rec, _act_t - _act_hit - hold)
+		if _act_t > _act_hit + hold + rec:
+			_act_on = false
+			_act_w = 0.0
+
+
+func _begin_save(spot: Vector3, eta: float) -> void:
+	_act_on = true
+	_act_t = 0.0
+	_act_hit = maxf(eta, 0.05)
+	_act_spot = spot
+	_act_from = goalie.global_position
+	_choose_kind()
+
+
+## Sideways (+ = the goalie's left, the glove side) and height of the save spot, from
+## where the goalie stood when the save started (`now`: from where it is now; the
+## goalie slides across as it reads the shot).
+func _save_offset(now := false) -> Vector2:
+	var right := goalie.net.global_basis.x
+	var from := goalie.global_position if now else _act_from
+	return Vector2((_act_spot - from).dot(right), _act_spot.y)
+
+
+func _choose_kind() -> void:
+	var o := _save_offset()
+	_act_side = 1.0 if o.x > 0.0 else -1.0
+	var ax := absf(o.x) / hs
+	var h := o.y / hs
+	if h < 0.42:
+		_act_kind = "butterfly" if ax < 0.42 else ("pad" if ax < 0.95 else "stack")
+	else:
+		_act_kind = "reach" if ax < 0.7 and h < 1.45 else "dive"
+
+
+## The save's whole-body part: [roll (rad, + = toward the glove side), sideways shift (m,
+## toward the save), lift (m)], with the stance's legs, sway and twist set on the rig.
+func _save_pose() -> Vector3:
+	if not _act_on and _act_w <= 0.001:
+		_counter = Vector3.ZERO
+		return Vector3.ZERO
+	var w := _act_w
+	var o := _save_offset()
+	var ax := absf(o.x)
+	# The goalie slides across as it reads the shot; during the save the body stays where it
+	# started and the save itself (the lunge, dive or pad) covers that ground instead.
+	var nx := goalie.net.global_basis.x
+	_counter = nx * (_act_from - goalie.global_position).dot(nx) * w
+	var sd := _act_side
+	var lead := 0 if sd > 0.0 else 1
+	var far := 1 - lead
+	var roll := 0.0
+	var shift := 0.0
+	var lift := 0.0
+	match _act_kind:
+		"reach":
+			shift = clampf(ax - 0.55 * hs, 0.0, 0.15) * w   # the arm does the reaching
+			roll = sd * clampf((ax / hs - 0.35) * 0.6, 0.0, 0.2) * w
+			rig.sway += sd * 0.22 * w
+			rig.twist += sd * 0.12 * w
+			if o.y > 1.0:   # the big glove: up on the toes, stretched tall
+				rig.hips_drop -= 0.06 * w
+		"pad":
+			# Drop, the near pad kicked out flat along the ice toward the post.
+			var ext := clampf(ax - 0.3 * hs, 0.0, 0.6 * hs)
+			rig.foot_offset[lead] = rig.foot_offset[lead].lerp(Vector3(sd * (0.25 + ext * 0.9), 0.0, 0.05), w)
+			rig.knee_pole[lead] = rig.knee_pole[lead].lerp(Vector3(sd * 0.3, 0.9, 0.4), w)
+			shift = clampf(ax - 0.3 * hs, 0.0, 0.4) * w
+			roll = sd * 0.15 * w
+			rig.sway += sd * 0.12 * w
+		"dive", "stack":
+			# Push off the far leg and launch sideways, the body tipping over toward the
+			# save; "stack" lays right out along the ice, "dive" stays up off it.
+			var flat := _act_kind == "stack"
+			var r := 1.2 if flat else clampf((ax / hs - 0.35) * 1.2, 0.5, 0.95)
+			roll = sd * r * w
+			shift = clampf(ax - 0.55 * hs, 0.0, 0.7 * hs) * w
+			rig.lean -= 0.25 * w   # stretched out long, not folded over
+			lift = (0.0 if flat else 0.1 * hs * smoothstep(0.7, 1.3, o.y / hs)) * w
+			rig.hips_drop += 0.06 * w
+			# The push leg trails in close behind the body, knee bent, rather than kicking up
+			# (the roll already lifts it off the ice).
+			rig.foot_offset[far] = rig.foot_offset[far].lerp(Vector3(sd * 0.12, 0.0, -0.12), w)
+			rig.knee_pole[far] = rig.knee_pole[far].lerp(Vector3(sd * 0.3, -0.3, 1.0), w)
+			rig.sway += sd * 0.28 * w
+			rig.twist += sd * 0.1 * w
+			rig.breath = 0.0
+	return Vector3(roll, shift, lift)
+
+
+## The model's pose: the heading, plus a save's roll about the near skate's edge (so that
+## pad stays on the ice as the body tips over), slide sideways and lift.
+func _place_model(save: Vector3) -> void:
+	var yb := Basis(Vector3.UP, _yaw)
+	if save == Vector3.ZERO and _counter == Vector3.ZERO:
+		model.transform = Transform3D(yb, Vector3.ZERO)
+		return
+	# Model space: -Z ahead, the goalie's left (glove side) at -X; roll + tips the head that way.
+	var sd := _act_side
+	var pivot := Vector3(-sd * rig.stance * hs, 0.0, 0.0)
+	var lb := Basis(Vector3.BACK, save.x)
+	var origin := pivot - lb * pivot + Vector3(-sd * save.y, save.z, 0.0)
+	model.transform = Transform3D(yb * lb, yb * origin + _counter)
 
 
 ## Skating out of the bench or back to it (scripted walks), or anywhere well out of the crease.

@@ -33,13 +33,10 @@ INTRO_SPLIT_TO_END = 1.2   # ...and this long before the end (seconds)
 # The split goes before "and": "...between the <team> / and the <team>." Keyed by the
 # file name without "intro_" (a second take, intro_<team>2, has its own key):
 INTRO_SPLIT_AT = {
-    "armadillos": 2.83,   # the search lands between "and" and "the"
-    "jawns": 2.9,         # the search lands after "and the"; 2.81 kept the tail of "Jawns"
-    "deepdish": 2.88,     # the search lands after "and the"
-    "luchadores": 3.2,    # the search lands after "and"
-    "mountaingoats": 2.9,   # (take 1) the search lands after "and"
-    "mountaingoats2": 2.92,  # (take 2, keyed by file name) the same
-    "northdakote": 3.34,  # the search lands inside the away half ("between North Dakote" has no "the")
+    # The old recordings needed hand-set splits (armadillos 2.83, jawns 2.9, deepdish 2.88,
+    # luchadores 3.2, mountaingoats 2.9 / mountaingoats2 2.92, northdakote 3.34). The
+    # Chatterbox intros (data/hockey_voicegen) put a "..." pause between the halves, so
+    # the search should find it; add a team here only if one cuts wrong.
 }
 
 # name: [(source, start s, length s, peak dB), ...]

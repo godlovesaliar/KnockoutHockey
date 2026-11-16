@@ -1,0 +1,38 @@
+id,text,intensity,pace,takes
+# Optional per-row tweaks. The script itself lives in data/hockey_announcer_lines.csv.,,,,
+# id = a file_name from that CSV. Fill only the cells you want to change; blank keeps the default.,,,,
+# text: respell for pronunciation (the game CSV keeps the real spelling). intensity 0.3 calm / 0.5 normal / 0.8 hyped / 1.2 screaming. pace: drop to ~0.3 when intensity is high.,,,,
+# example:,,,,
+# goal_01,,1.1,0.3,6
+intro_gilamonsters,Tonight: a matchup between the Mojave HEELA Monsters... and the Mojave HEELA Monsters. | Tonight: a matchup between the Mojave HEELA monsters... and the Mojave HEELA monsters. | Tonight: a matchup between the Mojave Heela monsters... and the Mojave Heela monsters.,,,6
+intro_northdakote,Tonight: a matchup between NORTH DakOAAAAT!... and NORTH DakOAAAAAAT! | Tonight: a matchup between NORTH Dakoat!... and NORTH Dakoat! | Tonight: a matchup between NORTH DAKOAAAAAT!... and NORTH DAKOAAAAAAAT!,1.0,0.3,6
+pa_goal_armadillos,,,,4
+pa_goal_chupacabras,,,,4
+pa_goal_curds,,,,4
+pa_goal_geese,,,,4
+pa_goal_grays,,,,4
+pa_goal_otters,,,,4
+pa_goal_twang,,,,4
+pa_n11_big,,,,4
+pa_n15_big,,,,4
+pa_n26_big,,,,4
+pa_n32_big,,,,4
+pa_n34_big,,,,4
+pa_n36_big,,,,4
+pa_n38_big,,,,4
+pa_n41_big,,,,4
+pa_n44_big,,,,4
+pa_n48_big,,,,4
+pa_n64_big,,,,4
+pa_n80_big,,,,4
+pa_n80_flat,,,,4
+pa_n8_big,,,,4
+pa_win_geysers,,,,4
+pa_win_mariners,,,,4
+pa_win_otters,,,,4
+pa_and_01,,,,5
+pa_and_02,,,,5
+pa_goal_northdakote,North D'coat goal!,,,
+pa_penalty_northdakote,North D'coat penalty.,,,
+pa_welcome_northdakote,Ladies and gentlemen... welcome to North D'coat hockey!,,,
+pa_win_northdakote,Your North D'coat win!,,,

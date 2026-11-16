@@ -1,0 +1,196 @@
+"""
+common.py - paths and helpers shared by voicegen.py and picker.py.
+
+The game is the source of truth: data/hockey_announcer_lines.csv holds the script, and
+tools/announcer_check.gd (run through Godot) says which line each row belongs to and
+who voices it. voicegen.py refreshes that into todo.json before every run.
+"""
+
+import csv
+import json
+import os
+import re
+import shutil
+import subprocess
+from pathlib import Path
+
+ROOT = Path(__file__).parent
+PROJECT = ROOT.parent.parent                     # the Godot project
+GAME_CSV = PROJECT / "data" / "hockey_announcer_lines.csv"
+SOUND = PROJECT / "assets" / "sound"
+ANNOUNCER = SOUND / "announcer"
+INTRO_DIR = SOUND / "intro"          # team intros, cut into halves by tools/cut_sounds.py
+CUT_SOUNDS = PROJECT / "tools" / "cut_sounds.py"
+TODO_JSON = ROOT / "todo.json"
+OVERRIDES_CSV = ROOT / "lines.csv"
+INTROS_CSV = ROOT / "intros.csv"
+# Every team intro is one Bobby line naming the team twice; cut_sounds.py splits it at
+# the pause into "...between the X" (home half) and "and the X." (away half).
+INTRO_TEXT = "Tonight: a matchup between {team}... and {team}."
+INTRO_VOICE = "color"
+VOICES_DIR = ROOT / "voices"
+TAKES_DIR = ROOT / "takes"
+LOG_CSV = TAKES_DIR / "_log.csv"
+KEPT_CSV = ROOT / "kept.csv"
+REDO_FILE = ROOT / "redo_list.txt"
+RETIRED_DIR = ROOT / "retired"
+
+# Godot console exe (not on PATH). Set the GODOT environment variable to override.
+GODOT = os.environ.get("GODOT", r"E:\Godot\Godot_v4.7.2-stable_win64_console.exe")
+
+SOLO_VOICES = ("pbp", "color", "pa")   # "both" (duets) are made in the Studio's Conversation tab
+# The game's voice id -> its reference clip in voices/ (when the names differ).
+VOICE_FILES = {"pa": "pa_announcer"}
+AUDIO_EXT = (".mp3", ".ogg", ".wav")
+
+# Exported keepers are matched to the old clips: mono, 44.1 kHz, 128 kbps mp3, and
+# loudness (LUFS) per voice. Steve sat around -18, Bobby (louder) around -14.
+LOUDNESS = {"pbp": -18.0, "color": -14.0, "both": -16.0, "pa": -16.0}   # old duets sat -15 to -18
+
+
+def run_godot_check():
+    """Ask the game for the current line list. Returns an error string, or None."""
+    if not Path(GODOT).exists():
+        return f"Godot not found at {GODOT} (set GODOT)"
+    try:
+        r = subprocess.run(
+            [GODOT, "--headless", "--path", str(PROJECT), "-s", "res://tools/announcer_check.gd",
+             "--", f"json={TODO_JSON}"],
+            capture_output=True, text=True, timeout=300)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return str(e)
+    if r.returncode != 0 or not TODO_JSON.exists():
+        return (r.stderr or r.stdout)[-500:]
+    return None
+
+
+def load_todo():
+    if not TODO_JSON.exists():
+        raise SystemExit("No todo.json yet - run voicegen.py once with Godot available.")
+    return json.loads(TODO_JSON.read_text(encoding="utf-8"))
+
+
+def take_base(name):
+    """faceoff_01 -> faceoff (what the game strips before matching a line)."""
+    return re.sub(r"\d+$", "", name).rstrip("_") or name
+
+
+def csv_names():
+    names = set()
+    if GAME_CSV.exists():
+        with open(GAME_CSV, newline="", encoding="utf-8-sig") as f:
+            for row in csv.DictReader(f):
+                names.add((row.get("file_name") or "").strip().lower())
+    return names
+
+
+def game_files():
+    """Every announcer clip name (no extension, lower case) the game would load."""
+    names = set()
+    for d in [ANNOUNCER] + [ANNOUNCER / v for v in SOLO_VOICES + ("both",)]:
+        if d.exists():
+            for f in d.iterdir():
+                if f.suffix.lower() in AUDIO_EXT:
+                    names.add(f.stem.lower())
+    return names
+
+
+def load_intros():
+    """intros.csv -> [(call, spoken name)]."""
+    out = []
+    if INTROS_CSV.exists():
+        with open(INTROS_CSV, newline="", encoding="utf-8-sig") as f:
+            for row in csv.DictReader(f):
+                call = (row.get("call") or "").strip()
+                spoken = (row.get("spoken") or "").strip()
+                if call and spoken and not call.startswith("#"):
+                    out.append((call, spoken))
+    return out
+
+
+def is_team_intro(line):
+    return line.startswith("team_intro_")
+
+
+def keeper_dest(file_id, line, voice):
+    """Where a new keeper goes in the game. Team intros: assets/sound/intro/intro_<call>.mp3,
+    then intro_<call>2.mp3 ... (cut_sounds.py takes those as more takes of the team).
+    Announcer rows: assets/sound/announcer/<voice>/<name>.mp3 (see free_name)."""
+    if is_team_intro(line):
+        taken = {f.stem.lower() for f in INTRO_DIR.glob("*") if f.suffix.lower() in AUDIO_EXT}
+        for n in range(1, 100):
+            stem = file_id if n == 1 else f"{file_id}{n}"
+            if stem.lower() not in taken:
+                return INTRO_DIR / f"{stem}.mp3"
+        raise RuntimeError(f"no free name for {file_id}")
+    return ANNOUNCER / voice / f"{free_name(file_id)}.mp3"
+
+
+def duet_dest(name):
+    """announcer/both/<name>.mp3, then <name>2, <name>3 ... (more takes of the same line)."""
+    both = ANNOUNCER / "both"
+    taken = {f.stem.lower() for f in both.glob("*") if f.suffix.lower() in AUDIO_EXT} \
+        if both.exists() else set()
+    for n in range(1, 100):
+        stem = name if n == 1 else f"{name}{n}"
+        if stem.lower() not in taken:
+            return both / f"{stem}.mp3"
+    raise RuntimeError(f"no free name for {name}")
+
+
+def duet_lines():
+    """Names of the game's duet lines (from todo.json), plus team banter already on disk."""
+    names = []
+    if TODO_JSON.exists():
+        names = [k for k, v in json.loads(TODO_JSON.read_text(encoding="utf-8"))["lines"].items()
+                 if v["voice"] == "both"]
+    both = ANNOUNCER / "both"
+    if both.exists():
+        for f in both.glob("banter_*"):
+            base = re.sub(r"\d+$", "", f.stem)
+            if f.suffix.lower() in AUDIO_EXT and base not in names:
+                names.append(base)
+    return sorted(names)
+
+
+def free_name(file_id):
+    """The game file name for a new keeper of this CSV row: the row's own name if it's
+    free, otherwise <base>_NN with the first number no clip or CSV row uses."""
+    taken = game_files()
+    if file_id.lower() not in taken:
+        return file_id
+    reserved = taken | csv_names()
+    base = take_base(file_id)
+    for n in range(1, 100):
+        cand = f"{base}_{n:02d}"
+        if cand.lower() not in reserved:
+            return cand
+    raise RuntimeError(f"no free name for {file_id}")
+
+
+def ffmpeg():
+    return shutil.which("ffmpeg")
+
+
+def export_mp3(src, dest, voice):
+    """Trim silence at both ends, match the old clips' loudness, write a game mp3."""
+    trim = ("silenceremove=start_periods=1:start_threshold=-45dB:start_silence=0.05,"
+            "areverse,silenceremove=start_periods=1:start_threshold=-45dB:start_silence=0.15,areverse")
+    loud = f"loudnorm=I={LOUDNESS.get(voice, -16.0)}:TP=-1.0:LRA=11"
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    subprocess.run([ffmpeg(), "-v", "error", "-y", "-i", str(src), "-af", f"{trim},{loud}",
+                    "-ac", "1", "-ar", "44100", "-b:a", "128k", str(dest)], check=True)
+
+
+def read_kept():
+    if not KEPT_CSV.exists():
+        return []
+    with open(KEPT_CSV, newline="", encoding="utf-8") as f:
+        return list(csv.DictReader(f))
+
+
+def write_kept(rows):
+    with open(KEPT_CSV, "w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=["take", "id", "line", "voice", "game_file"])
+        w.writeheader()
+        w.writerows(rows)

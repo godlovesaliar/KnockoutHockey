@@ -82,6 +82,7 @@ var top_back_up := -0.39
 var top_back_ahead := 0.82
 var bottom_back_up := 0.8
 var bottom_back_ahead := -1.02
+var top_rock := 0.05            ## m the top hand rocks fore-aft and side to side with the stride
 var free_arm := 0.0             ## 0..1: the bottom hand lets go of the stick and swings with the stride
 ## Fights: 0..1 curls the fingers into fists (the clips carry no finger tracks).
 var fist := 0.0
@@ -344,7 +345,7 @@ func _process_modification_with_delta(_delta: float) -> void:
 			# out, beside the hip on the off side (not across the belly: the shaft has to
 			# cross the body so the forearms come down onto it, not along it).
 			var reach: float = (_len[side + "Upper"] + _len[side + "Fore"]) * top_reach
-			var rock := Vector3(sin(stride_phase) * 0.05, 0.0, cos(stride_phase) * 0.05) * stride_amt
+			var rock := Vector3(sin(stride_phase), 0.0, cos(stride_phase)) * top_rock * stride_amt
 			var dir := Vector3(stick_side * (top_out - _top_lift * top_lift_across), -top_drop + _top_lift * top_lift_up, top_ahead - _top_lift * 0.1).normalized()
 			target = shoulder + dir * reach + rock
 		if arm_mode == Arms.STICK and k == 1:

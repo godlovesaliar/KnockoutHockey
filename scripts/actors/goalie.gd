@@ -21,6 +21,15 @@ var g := G.POSITION
 var save_point := Vector2.ZERO    ## (x offset from goalie, height) of the last save, for the visual
 var save_anim := 0.0              ## 1 right after a save, decays to 0
 var butterfly := false
+## For the visual's saves. While reading a shot (reacted, puck on its way): where it will
+## cross the goalie's plane (world) and in how many seconds (INF = no shot being read).
+## Each save made bumps save_count, with the puck's spot then (world) and whether it was
+## caught in the glove.
+var read_spot := Vector3.ZERO
+var read_eta := INF
+var save_count := 0
+var save_spot := Vector3.ZERO
+var last_catch := false
 
 var _tracked_flight := -1
 var _resolved_flight := -1
@@ -31,6 +40,7 @@ var _frozen_sent := false
 
 func _ready() -> void:
 	super()
+	add_to_group("goalies")
 	collision_layer = 1 << 6      # goalies: skaters bump them, the puck doesn't (saves are resolved in code)
 	collision_mask = 1 | (1 << 1) | (1 << 3)
 	set_meta("surface", "body")
@@ -57,6 +67,7 @@ func puck_anchor() -> Vector3:
 
 func _physics_process(delta: float) -> void:
 	intent.clear()
+	read_eta = INF
 	if brain and g == G.HOLD:
 		brain.update(self, intent, delta)
 	save_anim = maxf(0.0, save_anim - delta * 2.2)
@@ -131,6 +142,7 @@ func _move_goalie(delta: float) -> void:
 	if puck.carrier == null and not puck.dead and puck.speed() < 4.0 and puck.can_pick(self) 			and pl0.z > -0.2 and pl0.z < 2.6 and absf(pl0.x) < 2.2:
 		target = Vector3(pl0.x, 0.0, pl0.z) - Vector3(0, 0, 0.45)
 
+	read_eta = INF
 	if g == G.REACT and _react_left <= 0.0:
 		var pl := _local(puck.global_position)
 		var vl := _local_vel(puck.velocity)
@@ -138,6 +150,10 @@ func _move_goalie(delta: float) -> void:
 			var t := maxf(0.0, (pl.z - gl.z) / -vl.z)
 			target = Vector3(clampf(pl.x + vl.x * t, -1.4, 1.4), 0.0, gl.z)
 			speed = PlayerStats.lerp_stat(stats.positioning, 5.0, 8.0)
+			if puck.carrier == null and not puck.dead and pl.z > gl.z:
+				var cy := pl.y + vl.y * t - (0.0 if puck.on_ice else 0.5 * Puck.GRAVITY * t * t)
+				read_spot = net.to_global(Vector3(pl.x + vl.x * t, clampf(cy, 0.03, RinkSpec.NET_HEIGHT + 0.3), gl.z + 0.1))
+				read_eta = t
 	# Never behind the goal line: from there the net is in the way. A puck sitting on the
 	# line or just in the net is still in reach (`_try_cover`) from out front.
 	target.z = maxf(target.z, 0.3)
@@ -200,11 +216,14 @@ func _make_save(px: float, py: float, plane: float, dx: float, glove_side: bool)
 	var spd := puck.speed()
 	save_point = Vector2(dx, py)
 	save_anim = 1.0
+	save_count += 1
+	save_spot = net.to_global(Vector3(px, clampf(py, 0.03, RinkSpec.NET_HEIGHT), plane + 0.1))
 	var y := clampf(py, puck.rest_y, RinkSpec.NET_HEIGHT)
 	puck.global_position = net.to_global(Vector3(px, y, plane + 0.1))
 	var catch := py > 0.55 and glove_side and spd < 42.0 \
 			and _rng.randf() < PlayerStats.lerp_stat(stats.glove, 0.35, 0.7)
 	var cover := py < 0.3 and spd < 18.0 and _rng.randf() < 0.5
+	last_catch = catch
 	if catch or cover:
 		puck.velocity = Vector3.ZERO
 		puck.attach(self)

@@ -1,6 +1,6 @@
 extends Node
 ## Plays full AI-vs-AI games headlessly and checks the game loop holds together. Run:
-##   godot --headless --fixed-fps 120 --path . res://scenes/tests/MatchSoak.tscn [-- games=3 period=45]
+##   godot --headless --fixed-fps 120 --path . res://scenes/tests/MatchSoak.tscn [-- games=3 period=45 linger=20]
 ## Exits 0 on pass, 1 on failure.
 
 const MATCH_SCENE := preload("res://scenes/match/Match.tscn")
@@ -90,6 +90,11 @@ func _play(n: int, period: float, totals: Dictionary) -> void:
 			longest_carry = maxi(longest_carry, carried_ticks)
 		else:
 			carried_ticks = 0
+	# linger=N: keep the game running N s past the horn (postgame audio, the PA's sign-off).
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("linger="):
+			for i in int(float(a.trim_prefix("linger=")) * 120):
+				await get_tree().physics_frame
 	var st: Dictionary = m.stats
 	print("Game %d (%dv%d): %s %d – %d %s  (%s)  SOG %d–%d  hits %d (big %d)  pen %d–%d (PPG %d–%d)  offside %d  icing %d  changes %d–%d  sim %.0fs" % [
 		n, m.format, m.format, m.team_name(0), m.score[0], m.score[1], m.team_name(1), m.period_name(m.period),

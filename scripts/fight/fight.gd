@@ -3,7 +3,9 @@ extends Node
 ## The fight mini-game (DESIGN §5.2). The director creates one when a team drops the
 ## gloves; it runs while the match is in Phase.FIGHT and reports the result.
 ##
-## Stages: PROMPT (a human on the team that took the hit decides: A yes / B no) ->
+## Stages: [LEAD_IN, a match's fights: the pair skate together and jaw while the rest
+## gather round, with the prompt over it for a human ->]
+## PROMPT (a human on the team that took the hit decides: A yes / B no) ->
 ## SQUARE_UP (sticks and gloves drop, helmets come off, the others form a ring, the
 ## camera cuts in) ->
 ## FIGHT -> OVER (knockdown or decision, then the director sends both to the box).
@@ -54,9 +56,13 @@ signal finished(winner: Skater, loser: Skater)   ## winner null = draw (loser nu
 signal declined
 signal knockout(winner: Skater, loser: Skater)   ## the moment one goes down (for the replay)
 
-enum Stage { PROMPT, SQUARE_UP, FIGHT, OVER }
+enum Stage { PROMPT, SQUARE_UP, FIGHT, OVER, LEAD_IN }
 
 const PROMPT_TIME := 3.0
+const LEAD_CUT := 0.9         ## lead-in: s on the game camera before the cut to the pair
+const LEAD_MAX := 3.2         ## ...s at most skating together before the jaw starts anyway
+const JAW_TIME := 1.7         ## ...s jawing (gestures, a shove) before the gloves come off
+const PROMPT_DELAY := 0.5     ## ...s in before "drop the gloves?" comes up
 const SQUARE_TIME := 1.6
 const HELMET_AT := [0.3, 0.4]   ## square-up s each fighter starts taking the helmet off (after the stick drops)
 const GEAR_FALL := 0.35          ## s for the stick and gloves to hit the ice
@@ -348,7 +354,12 @@ var b: Fighter
 var center := Vector3.ZERO
 var axis := Vector3.RIGHT
 var prompt_brain: HumanBrain   ## the human who decides (null = no prompt)
+var lead_in := false           ## set before setup: start with the LEAD_IN stage (matches)
+var _jaw_t := -1.0             ## lead-in: _t the jaw began (-1: still skating together)
+var _answer := ""              ## lead-in: the prompt's answer ("" none yet, "yes")
+var _shoved := false
 var winner: Skater
+var _bigshot_said := -100.0   ## when Steve last called a big punch (s)
 var loser: Skater
 var _t := 0.0
 var _time_left := TIME_LIMIT
@@ -356,6 +367,7 @@ var _rng := RandomNumberGenerator.new()
 var _cam: Camera3D
 var _cam_side := Vector3.BACK
 var _cam_fresh := true
+var _look_h := 1.25   ## how high on the pair the camera looks (lower through the lead-in)
 var _shake := 0.0
 var _hitstop_until := 0
 var _props: Array[Node3D] = []
@@ -409,7 +421,9 @@ func setup(d: MatchDirector, fa: Skater, fb: Skater, prompt: HumanBrain) -> void
 	_hud = FightHud.new()
 	add_child(_hud)
 	_hud.setup(self)
-	if prompt_brain:
+	if lead_in:
+		_begin_lead_in()
+	elif prompt_brain:
 		stage = Stage.PROMPT
 		_hud.show_prompt(true)
 	else:
@@ -502,6 +516,10 @@ func _physics_process(delta: float) -> void:
 	match stage:
 		Stage.PROMPT:
 			_update_prompt(delta)
+		Stage.LEAD_IN:
+			_update_lead_in(delta)
+			if not is_inside_tree() or is_queued_for_deletion():
+				return   # (declined)
 		Stage.SQUARE_UP:
 			_move(delta)
 			for k in 2:
@@ -544,27 +562,19 @@ func _update_prompt(_delta: float) -> void:
 		queue_free()
 
 
-func _begin_square_up() -> void:
-	stage = Stage.SQUARE_UP
-	_t = 0.0
-	# Square up across the rink at the fight spot; the camera watches from center ice.
+## Where the pair square up: across the rink at the fight spot, the camera on the center
+## ice side of them.
+func _square_geometry() -> void:
 	_cam_side = Vector3.FORWARD if center.z > 0.0 else Vector3.BACK
 	_axis_base = 0.0
 	axis = Vector3.RIGHT
 	a.x = -START_GAP * 0.5
 	b.x = START_GAP * 0.5
-	for f: Fighter in [a, b]:
-		var s: Skater = f.s
-		if s.has_puck():
-			s.puck.strip(s, Vector3.ZERO)
-		s.frozen = true
-		s.place(_spot(f), axis * f.toward())
-		s.visual.snap()
-		var held := s.visual.held_gear()
-		s.visual.set_fight_mode(true)
-		s.visual.yaw_offset = STANCE_YAW
-		_drop_gear(s, held)
-	# Everyone else gathers round, leaving the camera's side open.
+
+
+## The ring: everyone else on the ice around the pair, leaving the camera's side open.
+func _ring_spots() -> Dictionary:
+	var out := {}
 	var others: Array[Skater] = []
 	for t in 2:
 		for s in director.lineup(t).on_ice:
@@ -572,16 +582,142 @@ func _begin_square_up() -> void:
 				others.append(s)
 	var cam_ang := atan2(_cam_side.z, _cam_side.x)
 	for k in others.size():
-		var s := others[k]
 		var ang := cam_ang + deg_to_rad(55.0) + deg_to_rad(250.0) * (k + 0.5) / others.size()
 		var p := center + Vector3(cos(ang), 0, sin(ang)) * RING_RADIUS
 		var p2 := RinkSpec.clamp_inside(p.x, p.z, 1.0)
-		s.frozen = true
-		s.place(Vector3(p2.x, 0, p2.y), (center - Vector3(p2.x, 0, p2.y)).normalized())
-		s.visual.snap()
+		out[others[k]] = Vector3(p2.x, 0, p2.y)
+	return out
+
+
+## A match's fight doesn't start cold: the two skate to where they'll square up and the
+## rest gather round (RegroupBrain autopilots), the game camera holds a beat and then cuts
+## to the pair, they jaw and shove (_update_lead_in), and only then do the gloves come off.
+## A human on the team that took the hit gets the prompt over it.
+func _begin_lead_in() -> void:
+	stage = Stage.LEAD_IN
+	_t = 0.0
+	_square_geometry()
+	for f: Fighter in [a, b]:
+		var s := f.s
+		if s.has_puck():
+			s.puck.strip(s, Vector3.ZERO)
+		s.frozen = false
+		s.autopilot = RegroupBrain.new(_spot(f), axis * f.toward())
+	var ring := _ring_spots()
+	for s: Skater in ring:
+		var p: Vector3 = ring[s]
+		s.frozen = false
+		s.autopilot = RegroupBrain.new(p, (center - p).normalized())
 		_ring.append(s)
-	_make_camera()
+	Sfx.crowd_react("cheer", -9.0, 1)
+
+
+func _update_lead_in(_delta: float) -> void:
+	if _cam == null and _t >= LEAD_CUT:
+		_make_camera()
+		_cam_fresh = true
+	# The human decides while it builds.
+	if prompt_brain and _answer == "" and _t >= PROMPT_DELAY:
+		if not _hud.prompt_showing():
+			_hud.show_prompt(true)
+		var i := SkaterIntent.new()
+		prompt_brain.update(null, i, 0.0)
+		var left := 1.0 - (_t - PROMPT_DELAY) / PROMPT_TIME
+		_hud.prompt_left(left)
+		if i.pass_down:
+			_answer = "yes"
+			_hud.show_prompt(false)
+		elif i.check_down or left <= 0.0:
+			_hud.show_prompt(false)
+			_cleanup()
+			declined.emit()
+			queue_free()
+			return
+	var near := true
+	for f: Fighter in [a, b]:
+		var rb := f.s.autopilot as RegroupBrain
+		if rb and not rb.settled(f.s, true):
+			near = false
+	if _jaw_t < 0.0:
+		if (near and _t >= LEAD_CUT + 0.3) or _t >= LEAD_MAX:
+			_begin_jaw()
+		return
+	var jt := _t - _jaw_t
+	if not _shoved and jt >= 0.45:
+		_shoved = true
+		_shove()
+	if jt >= JAW_TIME and (prompt_brain == null or _answer == "yes"):
+		_begin_square_up()
+
+
+## The angrier of the two.
+func _hothead() -> Fighter:
+	return a if a.s.stats.aggression >= b.s.stats.aggression else b
+
+
+## Face to face: the angrier one gestures and shoves, the other mouths off back. The
+## matchup card comes up (unless the prompt already shows the pair).
+func _begin_jaw() -> void:
+	_jaw_t = _t
+	var hot := _hothead()
+	hot.s.visual.play_clip("angry_gesture", Vector3(0.0, 0.7, 1.0), JAW_TIME, 1.1, 0.25)
+	hot.other.s.visual.play_clip("taunt", Vector3(0.0, 0.6, 1.0), JAW_TIME, 1.0, 0.25, 0.3)
+	if prompt_brain == null:
+		_hud.show_tape(JAW_TIME - 0.2)   # (gone before GLOVES OFF wipes in)
+	Sfx.crowd_react("cheer", -5.0, 1)
+
+
+## The angrier one shoves the other back a step (the autopilot skates them back in).
+func _shove() -> void:
+	var hot := _hothead()
+	var away := hot.other.s.global_position - hot.s.global_position
+	away.y = 0.0
+	if away.length() < 0.05:
+		away = axis * hot.toward()
+	hot.other.s.velocity += away.normalized() * lerpf(2.0, 3.2, hot.s.stats.strength / 100.0)
+	_voice(hot, "shout", -6.0, true)
+
+
+func _begin_square_up() -> void:
+	stage = Stage.SQUARE_UP
+	_t = 0.0
+	var led := lead_in
+	if not led:
+		_square_geometry()
+	for f: Fighter in [a, b]:
+		var s: Skater = f.s
+		if s.has_puck():
+			s.puck.strip(s, Vector3.ZERO)
+		if led:
+			# Already face to face: keep how far apart they are along the axis (only the
+			# sideways drift is taken out), and step in from there.
+			s.autopilot = null
+			f.x = clampf((s.global_position - center).dot(axis), -GAP_MAX * 0.5, GAP_MAX * 0.5)
+			if f.x * f.side < GAP * 0.4:
+				f.x = f.side * GAP * 0.5
+			s.visual.stop_clip(0.15)
+		s.frozen = true
+		s.place(_spot(f), axis * f.toward())
+		s.visual.snap()
+		var held := s.visual.held_gear()
+		s.visual.set_fight_mode(true)
+		s.visual.yaw_offset = STANCE_YAW
+		_drop_gear(s, held)
+	# Everyone else gathers round, leaving the camera's side open. (After a lead-in
+	# they're skating there already.)
+	if not led:
+		var ring := _ring_spots()
+		for s: Skater in ring:
+			var p: Vector3 = ring[s]
+			s.frozen = true
+			s.place(p, (center - p).normalized())
+			s.visual.snap()
+			_ring.append(s)
+	if _cam == null:
+		_make_camera()
 	Sfx.announce("fighting", 3)
+	if _rng.randf() < 0.85:
+		Sfx.announce_after("fight_hype", 1.6, 1)   # Bobby, once Steve's call is done
 	Sfx.crowd_react("cheer", -2.0, 2)
 	_hud.banner("GLOVES OFF!")
 
@@ -1103,6 +1239,10 @@ func _land(f: Fighter, move: String) -> void:
 		var cry := 1.0 if heavy else (HURT_JAB if move == "jab" or move == "body_jab" else HURT_CHANCE)
 		if _rng.randf() < cry:
 			_voice(o, "hurt", -3.0, heavy)
+		# Steve calls the odd big shot (not every one: the booth would never stop).
+		if heavy and _rng.randf() < 0.5 and Time.get_ticks_msec() / 1000.0 - _bigshot_said > 5.0:
+			if Sfx.announce("fight_bigshot", 2):
+				_bigshot_said = Time.get_ticks_msec() / 1000.0
 		o.vx -= o.toward() * (1.1 if heavy else 0.45)
 		_shake = maxf(_shake, 0.09 if heavy else 0.035)
 		if heavy:
@@ -1181,6 +1321,7 @@ func _rock(f: Fighter, o: Fighter) -> void:
 	_shake = maxf(_shake, 0.12)
 	_hitstop(110)
 	Sfx.crowd_react("cheer", -3.0, 2)
+	Sfx.announce_after("fight_rocked", 0.2, 2, 1.0)
 
 
 func _unrock(f: Fighter) -> void:
@@ -1210,6 +1351,9 @@ func _knockdown(w: Fighter, l: Fighter, move := "") -> void:
 	_hitstop(140)
 	_shake = 0.14
 	_over(w.s, l.s, "%s DROPS %s!" % [_name(w.s), _name(l.s)])
+	Sfx.announce("fight_knockout", 4)
+	if _rng.randf() < 0.8:
+		Sfx.announce_after("fight_ko_react", 1.8, 2)
 	knockout.emit(w.s, l.s)
 
 
@@ -1244,6 +1388,7 @@ func _decision() -> void:
 			f.act = "down"
 			f.s.visual.play_clip("dizzy_idle", FULL, OVER_TIME, 1.0, 0.2)
 		_over(null, null, "THE LINESMEN STEP IN — A DRAW")
+		Sfx.announce("fight_draw", 3)
 		return
 	var w := a if da > db else b
 	var l := w.other
@@ -1252,6 +1397,7 @@ func _decision() -> void:
 	w.s.visual.play_clip("fist_pump", FULL, OVER_TIME, 1.0, 0.2)
 	l.s.visual.play_clip("dizzy_idle", FULL, OVER_TIME, 1.0, 0.2)
 	_over(w.s, l.s, "LINESMEN IN — %s TAKES IT ON POINTS" % _name(w.s))
+	Sfx.announce("fight_decision", 3)
 
 
 func _over(w: Skater, l: Skater, text: String) -> void:
@@ -1701,16 +1847,26 @@ func _update_camera(delta: float) -> void:
 	if perp.dot(_cam_side) < 0.0:
 		perp = -perp
 	var mid := _mid()
+	var sep := separation()
+	if stage == Stage.LEAD_IN:
+		# Still skating together: frame the pair where they are.
+		mid = (a.s.global_position + b.s.global_position) * 0.5
+		sep = minf(a.s.global_position.distance_to(b.s.global_position), 8.0)
 	mid.y = 0.0
-	var dist := 3.6 + maxf(0.0, separation() - GAP) * 0.8
+	var dist := 3.6 + maxf(0.0, sep - GAP) * 0.8
 	var shake := Vector3.ZERO
 	if _shake > 0.0:
 		shake = Vector3(_rng.randf_range(-1, 1), _rng.randf_range(-1, 1), _rng.randf_range(-1, 1)) * _shake
 		_shake = maxf(0.0, _shake - delta * 0.6)
 	var want := mid + perp * dist + Vector3.UP * 1.5
 	var from := want if _cam_fresh else _cam.global_position.lerp(want, 1.0 - exp(-4.0 * delta))
+	# Through the lead-in the camera tips down a little so the pair sit higher in the
+	# frame, clear of the tale-of-the-tape card; it eases back up as they square up.
+	var look_h := 0.7 if stage == Stage.LEAD_IN else 1.25
+	_look_h = look_h if _cam_fresh else lerpf(_look_h, look_h, 1.0 - exp(-2.5 * delta))
 	_cam_fresh = false
-	_cam.look_at_from_position(from + shake, mid + Vector3.UP * 1.25 + shake * 0.5)
+	_cam.look_at_from_position(from + shake, mid + Vector3.UP * _look_h + shake * 0.5)
+	Cutscene.handheld(_cam, Time.get_ticks_msec() / 1000.0, 0.7)
 
 
 # --- Cleanup -------------------------------------------------------------------------
@@ -1727,9 +1883,11 @@ func _cleanup() -> void:
 			f.s.visual.hold_breath = 0.0
 			f.s.visual.rig.bow = 0.0
 			f.s.frozen = false
+			f.s.autopilot = null
 	for s in _ring:
 		if is_instance_valid(s):
 			s.frozen = false
+			s.autopilot = null
 	for p in _props:
 		p.queue_free()
 	if _cam:

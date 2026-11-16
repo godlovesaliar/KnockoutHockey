@@ -42,7 +42,8 @@ const FIGHT_TENSION := 1.0
 const FORCED_TENSION := 1.25     ## an aggressive hitter starts it without asking from here
 const FIGHT_GAP := 200.0         ## seconds of live play between fights, at least
 const FIGHT_MAJOR := 300.0       ## 5:00 offsetting majors
-const FIGHT_COOLDOWN := 60.0     ## sitting out instead, when penalties are off
+const FIGHT_AFTER_HIT := 0.9     ## s after the hit that set it off before a fight starts (it plays out first)
+const FIGHT_COOLDOWN := 60.0    ## sitting out instead, when penalties are off
 const MOMENTUM_TIME := 75.0
 const INTRO_MIN := 3.5            ## the matchup screen shows at least this long...
 const INTRO_MAX := 20.0           ## ...and at most this long (the intro line normally ends it)
@@ -102,6 +103,17 @@ var teams: Array[Dictionary] = []    ## {lineup: Lineup, goalie: Goalie, ai: Tea
 var rules: MatchRules
 var shootout := {}
 var _intermission: Intermission
+var _stinger: Stinger          ## the league stinger covering a cut, while it plays
+var _audio: MatchAudio
+var _bug: BroadcastBug         ## the league's on-screen bug, top right (monogram / belt)
+var _break_for := -1           ## the period whose "going to break" shot has run
+var _stat_at := -100.0         ## real seconds when the last stat lower third went up
+var _stat_count := 0           ## stoppage stat cards so far (every third is a team number)
+var _last_save: Goalie         ## the goalie who made the last save (the booth's "what a save")
+var _stat_seen := {}
+var _stat_log := false
+var _cutaways: Array[String] = []   ## the last dead-time cutaway kinds (no repeats)
+var _cut_force := ""            ## always this cutaway (`-- cutaway=<kind>`, layout checks)         ## print each stat card (`-- statlog`)           ## team-stat key -> _stat_count when it was last shown
 var _intro_stage: Node3D
 var _pause: PauseMenu
 var _fight: Fight
@@ -122,8 +134,12 @@ var _pull_wait := [0.0, 0.0]     ## s before the computer may pull its goalie ag
 var _extra_out: Array = [null, null]   ## the extra attacker heading off so the goalie can return
 var _extra_time := [0.0, 0.0]
 var last_goal_empty_net := false   ## the last goal went into an empty net (MatchAudio)
+var last_assists: Array[Skater] = []   ## who assisted on the last goal (the PA calls them)
+var last_fighters: Array[Skater] = []  ## the last fight's two players (the PA calls their majors)
+var last_fight_majors := false
 var _last_victim: Array = [null, null]
 var _since_fight := 999.0
+var _since_hit := 999.0       ## s since the last check landed (a fight waits FIGHT_AFTER_HIT)
 var _fight_spot := Vector3.ZERO
 var _cmd_cam := false         ## `-- cam=…` picked the angle (it wins over the settings)
 var _debug_fight := ""        ## `-- fight` / `fight=prompt`: start a fight at the first chance (testing)
@@ -136,6 +152,7 @@ var _phase_time := 0.0
 var _stoppage_len := 0.0
 var _next_dot := Vector2.ZERO
 var _fo := {}
+var _regroup := {}            ## skating to the faceoff (in STOPPAGE): dot, plan, t, off, cut; empty = not yet
 var _last_in_play := Vector3.ZERO
 var _rng := RandomNumberGenerator.new()
 var _hud: MatchHud
@@ -145,6 +162,9 @@ var _ref_brain: RefBrain
 var _pen_cut: Cutscene        ## the penalty call playing (null = none)
 var _opener: Cutscene         ## the period opener playing (null = none)
 const PENALTY_CALL := 1.5     ## s on the referee's call before the offender heads off
+const REGROUP_MIN := 1.2      ## s the skate to a faceoff takes at least (the camera's moment)...
+const REGROUP_MAX := 7.5     ## ...and at most: anyone still on the way is placed then
+const REGROUP_MAX_QUICK := 3.5   ## the same with Quick presentation
 
 
 func _ready() -> void:
@@ -189,6 +209,11 @@ func _ready() -> void:
 	var audio := MatchAudio.new()
 	add_child(audio)
 	audio.setup(self)
+	_audio = audio
+	audio.said.connect(_on_booth_line)
+	var pa := MatchPA.new()
+	add_child(pa)
+	pa.setup(self)
 	rink.goal_scored.connect(_on_goal)
 	puck.left_play.connect(_on_left_play)
 	puck.touched.connect(_on_puck_touched)
@@ -198,6 +223,9 @@ func _ready() -> void:
 		_hud = MatchHud.new()
 		add_child(_hud)
 		_hud.setup(self)
+		_bug = BroadcastBug.new()
+		add_child(_bug)
+		_bug.setup(knockout)
 	if knockout:
 		knockout_mode = KnockoutMode.new()
 		add_child(knockout_mode)
@@ -288,8 +316,12 @@ func _parse_cmdline() -> void:
 		var v := str(args["look"]).split_floats(",")
 		if v.size() == 6:
 			_debug_look.call_deferred(Vector3(v[0], v[1], v[2]), Vector3(v[3], v[4], v[5]))
+	if args.has("passtest"):   # a few seconds in: P1's skater gets the puck (pass marker checks); passtest=aim: in the slot
+		_pass_demo.call_deferred(args["passtest"] == "aim")
 	if args.has("goaltest"):   # a few seconds into live play: a home goal (celebration, replay)
 		_goal_demo.call_deferred()
+	if args.has("regrouptest"):   # a few seconds into live play: an icing, then the skate to an end-zone faceoff
+		_regroup_demo.call_deferred()
 	if args.has("penaltytest"):   # a few seconds in: a delayed penalty, then the whistle and the call
 		_penalty_demo.call_deferred()
 	if args.has("replaytest"):   # after a few seconds of AI play: a goal-cam replay, then an orbit replay
@@ -300,13 +332,30 @@ func _parse_cmdline() -> void:
 		_debug_doors.call_deferred()
 	if args.has("hudtest"):   # fire the TV graphics on a timer (layout checks): banner + goal card, flash, penalty card
 		_hud_demo.call_deferred()
+	if args.has("presentation"):   # this run only (not saved): presentation=quick / full
+		var gs := get_node_or_null("/root/GameSettings")
+		if gs:
+			gs.options["presentation"] = str(args["presentation"])
+	if args.has("cutaway"):
+		_cut_force = str(args["cutaway"])
+	if args.has("statlog"):
+		_stat_log = true
+	if args.has("stinger"):   # a still of the league stinger at progress stinger=<0..1> (layout checks)
+		var st := Stinger.play(self)
+		st._t = float(args["stinger"]) * Stinger.LEN
+		st.set_process(false)
+		st.ready.connect(func() -> void: st._canvas.queue_redraw())
 	if args.has("shot"):
-		_screenshot.call_deferred(str(args["shot"]), float(args.get("wait", "3.0")), int(args.get("shots", "1")), float(args.get("every", "0.5")))
+		_screenshot.call_deferred(str(args["shot"]), float(args.get("wait", "3.0")), int(args.get("shots", "1")), float(args.get("every", "0.5")),
+				str(args.get("waitfor", "")))
 
 
-## `shots` > 1: a burst, `every` seconds apart, saved as <path>_<n>.png.
-func _screenshot(path: String, wait: float, shots := 1, every := 0.5) -> void:
+## `shots` > 1: a burst, `every` seconds apart, saved as <path>_<n>.png. `waitfor`: a
+## phase name (e.g. "fight"); `wait` counts from when the match first reaches it.
+func _screenshot(path: String, wait: float, shots := 1, every := 0.5, waitfor := "") -> void:
 	await get_tree().process_frame   # the first frame's delta is the whole load time
+	while waitfor != "" and String(Phase.keys()[phase]).to_lower() != waitfor.to_lower():
+		await get_tree().process_frame
 	await get_tree().create_timer(wait, true, false, true).timeout
 	for n in shots:
 		await RenderingServer.frame_post_draw
@@ -540,13 +589,18 @@ func _physics_process(delta: float) -> void:
 		referee.signal_arm = "up" if rules.has_delayed_penalty() else ""
 	if puck.in_play and RinkSpec.sdf(puck.global_position.x, puck.global_position.z) < 0.0:
 		_last_in_play = puck.global_position
+	if _bug:
+		_bug.shown = phase != Phase.INTRO and _intermission == null
 	match phase:
 		Phase.FIGHT:
-			pass   # the Fight node runs itself
+			# The Fight node runs itself. The scorebug stays up through the lead-in and
+			# gives way to the fight's own overlay when the gloves come off.
+			if _hud and _hud.visible and is_instance_valid(_fight) and _fight.stage != Fight.Stage.LEAD_IN:
+				_hud.visible = false
 		Phase.INTRO:
 			# The intro line ends the matchup screen (a silent booth gets INTRO_MIN).
 			if _phase_time > INTRO_MAX or (_phase_time > INTRO_MIN and not Sfx.announcing()):
-				_end_intro()
+				_close_intro()
 		Phase.PREGAME:
 			if _phase_time > 1.2 and _opener == null:
 				_start_faceoff(Vector2.ZERO)
@@ -564,13 +618,17 @@ func _physics_process(delta: float) -> void:
 			if phase == Phase.LIVE and clock <= 0.0:
 				_end_period()
 		Phase.STOPPAGE:
-			if _phase_time > _stoppage_len:
-				_start_faceoff(_next_dot)
+			# The whistle's moment (banner, celebration, penalty call...), then everyone
+			# skates to the faceoff, which starts once they're all in position.
+			if not _regroup.is_empty():
+				_tick_regroup()
+			elif _phase_time > _stoppage_len and not _cutscene_running() and not (replay and replay.busy()):
+				_begin_regroup(_next_dot)
 		Phase.PERIOD_END:
 			# The stats screen opens once the horn and banner have had their moment;
 			# the next period starts when it's clicked through (Intermission).
-			if _phase_time > INTERMISSION_AFTER and _intermission == null:
-				_open_intermission(false)
+			if _phase_time > INTERMISSION_AFTER and _intermission == null and _stinger == null and _break_for != period:
+				_going_to_break(false)
 		Phase.SHOOTOUT:
 			_tick_shootout(delta)
 		Phase.FINAL:
@@ -584,7 +642,7 @@ func _unhandled_input(event: InputEvent) -> void:
 		if skip:
 			get_viewport().set_input_as_handled()
 			Sfx.stop_voice()
-			_end_intro()
+			_close_intro()
 			return
 	if event is InputEventKey and event.pressed and not event.echo:
 		match event.physical_keycode:
@@ -622,6 +680,7 @@ func whistle(reason: StringName, dot: Vector2, text: String) -> void:
 
 ## `team`: whose moment it is (the banner wears their colors), -1 for neither.
 func _stoppage(seconds: float, dot: Vector2, text := "", team := -1) -> void:
+	_regroup = {}
 	puck.dead = true
 	rink.disarm_nets()
 	_stoppage_len = seconds
@@ -732,7 +791,7 @@ func _finish(text := "", team := -1) -> void:
 ## Esc / Start: the pause menu (not over the matchup intro or a stats screen, which use
 ## those buttons to continue).
 func _open_pause() -> void:
-	if _pause != null or phase == Phase.INTRO or _intermission != null:
+	if _pause != null or phase == Phase.INTRO or _intermission != null or _stinger != null:
 		return
 	_pause = PauseMenu.new()
 	_pause.camera_host = self
@@ -770,7 +829,8 @@ func _tick_fight_state(delta: float) -> void:
 				_fight.b.health = 4.0   # one good punch from going down (tests the knockout replay)
 			_debug_fight = ""
 			return
-	if not fighting or _fight != null or _since_fight < FIGHT_GAP:
+	_since_hit += delta
+	if not fighting or _fight != null or _since_fight < FIGHT_GAP or _since_hit < FIGHT_AFTER_HIT:
 		return
 	for t in 2:
 		if tension[t] >= FIGHT_TENSION:
@@ -822,11 +882,9 @@ func _start_fight(a: Skater, b: Skater, prompt: HumanBrain) -> void:
 	if puck.carrier:
 		puck.strip(puck.carrier, Vector3.ZERO)
 	rink.disarm_nets()
-	for t in 2:
-		for s in lineup(t).on_ice:
-			s.frozen = true
 	_fight_spot = (a.global_position + b.global_position) * 0.5
 	_fight = Fight.new()
+	_fight.lead_in = true   # they skate together and jaw first (the Fight moves everyone)
 	add_child(_fight)
 	_fight.finished.connect(_on_fight_over)
 	_fight_ko = false
@@ -837,8 +895,6 @@ func _start_fight(a: Skater, b: Skater, prompt: HumanBrain) -> void:
 					{"play_now": true, "speed": 0.45, "cam": "orbit"}))
 	_fight.declined.connect(_on_fight_declined)
 	_fight.setup(self, a, b, prompt)
-	if _hud:
-		_hud.visible = false   # the fight has its own overlay
 
 
 func _on_fight_declined() -> void:
@@ -852,6 +908,7 @@ func _on_fight_declined() -> void:
 
 func _on_fight_over(winner: Skater, loser: Skater) -> void:
 	var fighters: Array[Skater] = [_fight.a.s, _fight.b.s]
+	last_fighters = fighters
 	_fight = null
 	if _hud:
 		_hud.visible = true
@@ -878,6 +935,7 @@ func _on_fight_over(winner: Skater, loser: Skater) -> void:
 			continue
 		_send_to_box(s.team, s, FIGHT_MAJOR if penalties else FIGHT_COOLDOWN, false)
 		_reassign_control(s.team, s)
+	last_fight_majors = penalties
 	var text := "FIGHTING — 5:00 MAJORS" if penalties else "BOTH FIGHTERS SIT"
 	_stoppage(2.0, nearest_dot(_fight_spot), text)
 	if loser and _hud:
@@ -940,6 +998,64 @@ func _start_intro() -> void:
 	c.make_current()
 	if _hud:
 		_hud.visible = false
+
+
+## "Going to break": a slow high wide shot of the arena from over one end with the period
+## summary up, then the league stinger into the stats screen (or the final stats).
+## Skippable; with no HUD (tests) straight to the stats.
+const BREAK_LEN := 5.0
+
+func _going_to_break(final: bool) -> void:
+	_break_for = period
+	if not show_hud or _hud == null:
+		_open_intermission(final)
+		return
+	if _quick():
+		_sting(_open_intermission.bind(final))
+		return
+	var sz := 1.0 if randf() < 0.5 else -1.0
+	var sx := 1.0 if randf() < 0.5 else -1.0
+	var cs := Cutscene.new()
+	cs.name = "GoingToBreak"
+	cs.shots.append({"len": BREAK_LEN + 2.0, "fov": 50.0, "frame": func(t: float) -> Array:
+		# Over the end boards, high, drifting across and rising as it pulls back.
+		var u := t / BREAK_LEN
+		var pos := Vector3(sx * lerpf(-7.0, 7.0, u), 12.0 + u * 2.0, sz * (RinkSpec.HALF_L + 1.6))
+		return [pos, Vector3(sx * lerpf(-2.0, 2.0, u), 0.0, sz * (6.0 - u * 3.0))]})
+	# The stinger sweeps in over the shot itself, so the cut back to the game camera is
+	# never seen: under it the shot ends and the stats open.
+	var to_stats := func() -> void:
+		if is_instance_valid(cs):
+			cs.stop()
+		if _intermission == null:
+			_open_intermission(final)
+	cs.on_skip = func() -> void:
+		if _stinger == null and _intermission == null:
+			_sting(to_stats)
+	add_child(cs)
+	cs.play()
+	get_tree().create_timer(BREAK_LEN - Stinger.LEN * 0.5, false).timeout.connect(func() -> void:
+		if is_instance_valid(cs) and _stinger == null and _intermission == null:
+			_sting(to_stats))
+	var title := "FINAL" if final else "END OF %s" % period_name(period)
+	if final and period > periods:
+		title = "FINAL/" + period_name(period)
+	_hud.period_summary(title, BREAK_LEN - 0.4)
+
+
+## The matchup screen gives way to the rink under the league stinger.
+func _close_intro() -> void:
+	if phase == Phase.INTRO and _stinger == null:
+		_sting(_end_intro)
+
+
+## Plays the league stinger and runs `on_cover` under it (at once with no HUD: tests).
+func _sting(on_cover: Callable) -> void:
+	if not show_hud:
+		on_cover.call()
+		return
+	_stinger = Stinger.play(self, on_cover)
+	_stinger.tree_exited.connect(func() -> void: _stinger = null)
 
 
 func _end_intro() -> void:
@@ -1008,6 +1124,47 @@ func _goal_demo() -> void:
 		await get_tree().process_frame
 	puck.last_touch = lineup(0).on_ice[0]
 	_on_goal(rink.attacked_net(0).index)
+
+
+## A few seconds into live play: an icing, so the next faceoff is in an end zone and
+## everyone skates the length of the ice to it (the regroup).
+func _regroup_demo() -> void:
+	await get_tree().process_frame
+	while phase != Phase.LIVE:
+		await get_tree().process_frame
+	await get_tree().create_timer(3.0, false).timeout
+	if phase == Phase.LIVE:
+		var net := rink.defended_net(0).global_position
+		whistle(&"icing", nearest_dot(net, true), "ICING")
+
+
+func _pass_demo(in_slot := false) -> void:
+	await _wait_live(1.0)
+	var c := control(0)
+	var net := rink.attacked_net(0).global_position
+	var toward := signf(net.z)
+	var slot := Vector3(net.x + 2.0, 0.0, net.z - toward * 11.0)
+	if in_slot:
+		# Camera behind and above the shooter, looking at the net.
+		_debug_look(slot + Vector3(0, 6.0, -toward * 7.0), net + Vector3(0, 0.6, 0))
+	# Keeps handing P1's skater the puck for a while (no pad in a test run); in the
+	# slot, holds them there with the stick pushed up-left (top left corner).
+	for i in 400:
+		var s := c.controlled_skater() if c else null
+		if s and in_slot:
+			s.global_position = slot
+			s.velocity = Vector3.ZERO
+			s.heading = Vector3(0, 0, toward)
+			s._aim_dir = Vector3(-1, 0, toward).normalized()
+			s._aim_age = 0.0
+		if s and not s.has_puck() and s.can_act():
+			puck.place(s.reception_point())
+			puck.attach(s)
+		if in_slot and i == 90:
+			for arg in OS.get_cmdline_user_args():
+				if arg.begins_with("aimshot="):
+					get_viewport().get_texture().get_image().save_png(arg.substr(8))
+		await get_tree().physics_frame
 
 
 func _penalty_demo() -> void:
@@ -1087,8 +1244,8 @@ func _open_final() -> void:
 	await get_tree().create_timer(4.0, false).timeout   # (waits out any replay)
 	while replay and replay.busy():
 		await replay.finished
-	if is_inside_tree() and phase == Phase.FINAL and _intermission == null:
-		_open_intermission(true)
+	if is_inside_tree() and phase == Phase.FINAL and _intermission == null and _stinger == null and _break_for != period:
+		_going_to_break(true)
 
 
 func period_name(p: int) -> String:
@@ -1510,9 +1667,17 @@ func _bench_react(t: int, kind: String, chance := 1.0) -> void:
 		var k := kind
 		if s.in_box_spot and kind == "cheer":
 			k = "cheer" if randf() < 0.5 else "sulk"   # happy, but still in the box
-		get_tree().create_timer(randf_range(0.0, 0.5), false).timeout.connect(func() -> void:
-			if is_instance_valid(s) and s.benched and not s.walking():
-				s.visual.bench_react(k))
+		# A method, not a lambda: a lambda capturing only `s` still fires after the match is
+		# freed (quit or next game within the delay) and errors on the freed skater.
+		get_tree().create_timer(randf_range(0.0, 0.5), false).timeout.connect(_bench_react_one.bind(s, k))
+
+
+func _bench_react_one(who, kind: String) -> void:   # untyped: a freed skater would fail a typed arg
+	if not is_instance_valid(who):
+		return
+	var s: Skater = who
+	if s.benched and not s.walking() and s.visual:
+		s.visual.bench_react(kind)
 
 
 ## End of a period or the game: up to two saved highlights nobody has seen yet.
@@ -1994,7 +2159,10 @@ func _faceoff_spots(t: int, dot: Vector2) -> Dictionary:
 	var d := Vector3(dot.x, 0, dot.y)
 	var wx := -signf(dot.x) if absf(dot.x) > 0.5 else 1.0
 	var f := [d + og * 0.9, d + og * 2.4 + Vector3(wx * 3.6, 0, 0), d + og * 2.4 - Vector3(wx * 3.6, 0, 0)]
-	var dd := [d + og * 8.0 + Vector3(wx * 3.0 - dot.x * 0.5, 0, 0), d + og * 8.0 + Vector3(-wx * 3.0 - dot.x * 0.5, 0, 0)]
+	# The defense hang back, but in their own end stay in front of the goal line.
+	var room := absf(og.z * RinkSpec.GOAL_LINE_Z - d.z) - 1.5
+	var back := clampf(room, 3.5, 8.0)
+	var dd := [d + og * back + Vector3(wx * 3.0 - dot.x * 0.5, 0, 0), d + og * back + Vector3(-wx * 3.0 - dot.x * 0.5, 0, 0)]
 	return {"f": f.map(_clamp_spot), "d": dd.map(_clamp_spot)}
 
 
@@ -2003,30 +2171,32 @@ func _clamp_spot(p: Vector3) -> Vector3:
 	return Vector3(c.x, 0, c.y)
 
 
-func _place_for_faceoff(dot: Vector2) -> void:
-	puck.place(Vector3(dot.x, 0, dot.y))
-	puck.dead = true
-	rules.reset()
+## Who lines up where for a faceoff at `dot`, per team: {keep (a pulled goalie stays on
+## the bench), on (the skaters, forwards first), at (Skater -> [spot, facing])}. `fresh`:
+## tired lines give way to rested ones first (Lineup.choose_fresh).
+func _faceoff_plan(dot: Vector2, fresh := true) -> Array:
+	var plan := []
 	for t in teams.size():
 		var lu := lineup(t)
 		# A pulled goalie stays on the bench for a faceoff outside their own zone.
 		var keep: bool = pulled[t] and _keep_pulled(t, dot)
-		if not keep:
-			pulled[t] = false
-		_extra_out[t] = null
-		lu.choose_fresh()
-		lu.fill(strength(t), 1 if keep else 0)
-		# Anyone off the ice who isn't on their way somewhere stands at their spot.
-		for s in lu.all_skaters():
-			if s.benched and not s.walking():
-				s.repark()
+		if fresh:
+			lu.choose_fresh()
+		var on := lu.pick(strength(t), 1 if keep else 0)
 		var spots := _faceoff_spots(t, dot)
 		var face := -own_goal_dir(t)
+		var taker: Skater = null
+		for s in on:
+			if not s.is_defense:
+				taker = s
+				break
+		if taker == null and not on.is_empty():
+			taker = on[0]
+		var at := {}
 		var fi := 0
 		var di := 0
 		var xi := 0
-		var taker := faceoff_taker(t)
-		for s in lu.on_ice:
+		for s in on:
 			var p: Vector3
 			if s.is_defense and di < 2:
 				p = spots.d[di]
@@ -2041,7 +2211,43 @@ func _place_for_faceoff(dot: Vector2) -> void:
 			var f := face
 			if s == taker:
 				f = (Vector3(dot.x, 0, dot.y) - p).normalized()
-			s.place(p, f)
+			at[s] = [p, f]
+		plan.append({"keep": keep, "on": on, "at": at})
+	return plan
+
+
+## Everyone straight onto their faceoff spots (`plan`: _faceoff_plan; empty = make one).
+func _place_for_faceoff(dot: Vector2, plan := []) -> void:
+	if plan.is_empty():
+		plan = _faceoff_plan(dot)
+	puck.place(Vector3(dot.x, 0, dot.y))
+	puck.dead = true
+	puck.visible = not knockout
+	rules.reset()
+	for t in teams.size():
+		var lu := lineup(t)
+		var keep: bool = plan[t].keep
+		if not keep:
+			pulled[t] = false
+		_extra_out[t] = null
+		# Skated into position already (_begin_regroup): stay put rather than hop the
+		# last few centimeters. (Not the center: they take the draw right on the dot.)
+		var stay := {}
+		for s: Skater in plan[t].on:
+			var rb := s.autopilot as RegroupBrain
+			if rb and rb.settled(s) and rb.spot.distance_to(plan[t].at[s][0]) < 0.1 \
+					and not s.benched and not s.walking() and s != plan[t].on[0]:
+				stay[s] = true
+		for s in lu.all_skaters():
+			s.autopilot = null
+		lu.set_on_ice(plan[t].on)
+		# Anyone off the ice who isn't on their way somewhere stands at their spot.
+		for s in lu.all_skaters():
+			if s.benched and not s.walking():
+				s.repark()
+		for s in lu.on_ice:
+			var a: Array = plan[t].at[s]
+			s.place(s.global_position if stay.has(s) else a[0], a[1])
 			s.frozen = true
 		var g: Goalie = teams[t].goalie
 		g.net = rink.defended_net(t)
@@ -2062,8 +2268,395 @@ func faceoff_taker(t: int) -> Skater:
 	return lu.on_ice[0] if not lu.on_ice.is_empty() else null
 
 
-func _start_faceoff(dot: Vector2) -> void:
-	_place_for_faceoff(dot)
+## True while a cutscene (penalty call, goal celebration, glass repair...) has the camera.
+func _cutscene_running() -> bool:
+	for c in get_children():
+		if c is Cutscene and not c.is_queued_for_deletion() and c != _regroup.get("cut"):
+			return true
+	return false
+
+
+## After the whistle's moment: instead of everyone appearing on their spots, they skate
+## there. Lines changing go off through the bench doors and the fresh ones come on through
+## them; a pulled goalie heads back in (or off, if staying pulled). The referee waits by
+## the dot with the puck. The faceoff starts once everyone's in position (_tick_regroup).
+func _begin_regroup(dot: Vector2) -> void:
+	var plan := _faceoff_plan(dot)
+	var off: Array[Skater] = []
+	_regroup = {"dot": dot, "plan": plan, "t0": _phase_time, "off": off}
+	var d3 := Vector3(dot.x, 0, dot.y)
+	puck.place(d3)
+	puck.visible = false   # (in the referee's hand)
+	if _ref_brain and _pen_cut == null:
+		var side := -signf(dot.x) if absf(dot.x) > 0.5 else 1.0
+		_ref_brain.hold = d3 + Vector3(side * 1.8, 0, 0)
+		_ref_brain.face_at = d3
+	for t in teams.size():
+		var lu := lineup(t)
+		var p: Dictionary = plan[t]
+		var gate: Vector3 = rink.bench_gate(t)
+		# Coming off: to the bench gate, then through the door (_skate_off).
+		for s in lu.on_ice:
+			if s in p.on or s.benched or s.walking():
+				continue
+			s.changing = false
+			s.frozen = false
+			s.autopilot = RegroupBrain.new(gate)
+			off.append(s)
+		# Staying on, or coming on through the bench doors: to their spots.
+		var door_i := 0
+		for s: Skater in p.on:
+			var a: Array = p.at[s]
+			s.changing = false
+			s.frozen = false
+			s.autopilot = RegroupBrain.new(a[0], a[1])
+			if s.benched and not s.walking() and not s.in_box_spot:
+				var door := rink.bench_door_id(t, door_i % 2)
+				door_i += 1
+				var from: Vector3 = s.bench_spot if s.bench_spot != Vector3.INF else rink.door_point(door, 0.8)
+				s.set_benched(false)
+				s.global_position = from
+				_walk_through(s, door, [rink.door_point(door, 0.7)], [rink.door_point(door, -1.2)],
+						Vector3(-RinkSpec.BENCH_SIDE, 0, 0))
+		_regroup_goalie(t, p.keep)
+	if _hud and show_hud:
+		if _quick():
+			_stoppage_stat(null)   # (the game camera stays on the play; a team number)
+		else:
+			_regroup_cut(d3, plan)
+
+
+## Quick presentation (GameSettings): fewer of the TV extras that take time.
+func _quick() -> bool:
+	var gs := get_node_or_null("/root/GameSettings")
+	return gs != null and gs.quick_presentation()
+
+
+## The TV's dead time while they skate to the faceoff: a cutaway (see `_dead_time_shot`),
+## then a low look at the circle as the lines settle in, held until the faceoff (cut back
+## to the game camera). Skipping places everyone at once.
+func _regroup_cut(d3: Vector3, plan: Array) -> void:
+	var subj: Skater = puck.last_touch
+	if subj == null or not is_instance_valid(subj) or subj is Goalie or subj.benched or subj.autopilot == null:
+		subj = null
+		for t in plan.size():
+			if not (plan[t].on as Array).is_empty() and (subj == null or t == human_team()):
+				subj = plan[t].on[0]
+	var cs := Cutscene.new()
+	cs.name = "Regroup"
+	var cut := _dead_time_shot(subj, d3, plan)
+	cs.shots.append(cut.shot)
+	# Behind one team's defense, whichever way has more room.
+	var og := Vector3.BACK if absf(d3.z + 9.0) < absf(d3.z - 9.0) else Vector3.FORWARD
+	cs.shots.append({"len": 999.0, "fov": 46.0, "frame": func(t: float) -> Array:
+		var back := 10.0 - minf(t, 5.0) * 0.35
+		var pos := d3 + og * back + Vector3(1.2, 3.4, 0.0)
+		var c := RinkSpec.clamp_inside(pos.x, pos.z, 0.6)
+		return [Vector3(c.x, pos.y, c.y), d3 + og * 1.2 + Vector3.UP * 0.4]})
+	cs.on_skip = func() -> void:
+		if phase == Phase.STOPPAGE and not _regroup.is_empty():
+			_finish_regroup()
+	_regroup.cut = cs
+	add_child(cs)
+	cs.play()
+	_stoppage_stat(cut.card, cut.tag)
+
+
+## Dead-time cutaways, so a game's dozens of stoppages don't all look alike. Each is a
+## 2.3 s shot; the last two kinds used are skipped. Returns {shot, card (the player the
+## stat card is about, or null for a team number), tag}.
+##   player     a long lens on a skater gliding back (whoever last had the puck)
+##   goalie     in front of the crease nearest the faceoff, on the goalie
+##   bench      along a bench from the ice: the players sitting, the next line going over
+##   crowd      up into the stands from the ice, panning along the rows
+##   jumbotron  up at the scoreboard over center ice (the score, the clock)
+func _dead_time_shot(subj: Skater, d3: Vector3, plan: Array) -> Dictionary:
+	var kinds := {"player": 4.0 if subj else 0.0, "goalie": 2.0, "bench": 2.0, "crowd": 1.5, "jumbotron": 1.0}
+	var g: Goalie = null
+	for t in 2:
+		var gg: Goalie = teams[t].goalie
+		if not pulled[t] and is_instance_valid(gg) and (g == null or gg.global_position.distance_to(d3) < g.global_position.distance_to(d3)):
+			g = gg
+	if g == null or g.global_position.distance_to(d3) > 22.0:
+		kinds.goalie = 0.0
+	for k in _cutaways:
+		kinds[k] = 0.0
+	var total := 0.0
+	for k in kinds:
+		total += float(kinds[k])
+	var kind := "player" if subj else "bench"
+	var roll := randf() * total
+	for k in kinds:
+		roll -= float(kinds[k])
+		if roll <= 0.0 and float(kinds[k]) > 0.0:
+			kind = k
+			break
+	if _cut_force != "":
+		kind = _cut_force
+		if (kind == "player" and subj == null) or (kind == "goalie" and g == null):
+			kind = "bench"
+	_cutaways.append(kind)
+	if _cutaways.size() > 2:
+		_cutaways.pop_front()
+	match kind:
+		"player":
+			var dir := {"v": subj.heading}
+			return {"card": subj, "tag": "TONIGHT", "shot": {"len": 2.3, "fov": 34.0, "frame": func(_t: float) -> Array:
+				# In front of them as they glide, looking back; steady once they slow down.
+				var p := subj.global_position
+				var hv := Vector3(subj.velocity.x, 0.0, subj.velocity.z)
+				if hv.length() > 1.5:
+					dir.v = (dir.v as Vector3).lerp(hv.normalized(), 0.08).normalized()
+				var fwd: Vector3 = dir.v
+				var pos := p + fwd * 7.0 + fwd.cross(Vector3.UP) * 1.8 + Vector3.UP * 1.5
+				var c := RinkSpec.clamp_inside(pos.x, pos.z, 0.5)
+				return [Vector3(c.x, pos.y, c.y), p + Vector3.UP * 1.15]}}
+		"goalie":
+			var out := g.net.global_basis.z if g.net else Vector3.ZERO
+			out.y = 0.0
+			out = out.normalized() if out.length() > 0.1 else Vector3(0, 0, -signf(g.global_position.z))
+			var side := out.cross(Vector3.UP) * (1.0 if randf() < 0.5 else -1.0)
+			return {"card": g, "tag": "IN NET TONIGHT", "shot": {"len": 2.3, "fov": 30.0, "frame": func(t: float) -> Array:
+				var p := g.global_position
+				var pos := p + out * (6.5 - t * 0.25) + side * 1.6 + Vector3.UP * 1.1
+				return [pos, p + Vector3.UP * 1.0]}}
+		"bench":
+			var bt := human_team() if human_team() >= 0 else randi() % 2
+			for t in plan.size():
+				if not (plan[t].on as Array).is_empty() and randf() < 0.6:
+					bt = t
+			var a := rink.bench_spot(bt, 0)
+			var b := rink.bench_spot(bt, rink.bench_seats(bt) - 1)
+			var inward := Vector3(-RinkSpec.BENCH_SIDE, 0.0, 0.0)
+			var along := (b - a).normalized()
+			return {"card": null, "tag": "", "shot": {"len": 2.3, "fov": 38.0, "frame": func(t: float) -> Array:
+				# From the ice past one end of the bench, looking down the row; a slow slide.
+				var pos := a - along * 2.2 + inward * (2.6 + t * 0.15) + Vector3.UP * 1.25
+				return [pos, a.lerp(b, 0.55) + Vector3.UP * 1.0]}}
+		"crowd":
+			var sx := RinkSpec.BOX_SIDE if randf() < 0.5 else RinkSpec.BENCH_SIDE
+			var z0 := randf_range(-12.0, 12.0)
+			var dz := 1.0 if randf() < 0.5 else -1.0
+			return {"card": null, "tag": "", "shot": {"len": 2.3, "fov": 36.0, "frame": func(t: float) -> Array:
+				var pos := Vector3(sx * (RinkSpec.HALF_W - 3.0), 1.0, z0 + dz * t * 0.4)
+				return [pos, Vector3(sx * (RinkSpec.HALF_W + 9.0), 5.5, z0 + dz * (2.0 + t * 1.1))]}}
+		_:
+			# From deep in one end, up at the scoreboard's end screen over center ice; a slow push.
+			var sz := 1.0 if randf() < 0.5 else -1.0
+			var from := Vector3(randf_range(-4.0, 4.0), 1.4, sz * (RinkSpec.HALF_L - 5.0))
+			# (The lit picture sits in the upper part of the board's face.)
+			var at := Vector3(0.0, Arena.BOARD_Y + Arena.BOARD_SIZE.y * 0.82, sz * Arena.BOARD_SIZE.z * 0.5)
+			return {"card": null, "tag": "", "shot": {"len": 2.3, "fov": 24.0, "frame": func(t: float) -> Array:
+				return [from - Vector3(0.0, 0.0, sz * t * 0.5), at]}}
+
+
+# --- Stat lower thirds ------------------------------------------------------------------
+
+const STAT_LEN := 3.4          ## s a stat card stays up
+const STAT_GAP := 8.0          ## s between stat cards at least
+
+## One stat card per stoppage, over the regroup's dead time: the player the camera is on
+## (their night so far), or, every third stoppage, a team-vs-team number.
+func _stoppage_stat(subj: Skater, tag := "TONIGHT") -> void:
+	if _hud == null or not show_hud:
+		return
+	await get_tree().create_timer(0.5, false).timeout
+	if phase != Phase.STOPPAGE or _regroup.is_empty() or not _stat_ready():
+		return
+	_stat_count += 1
+	var has := subj != null and is_instance_valid(subj)
+	if has and (_stat_count % 3 != 0 or subj is Goalie):
+		_player_stat(subj, tag)
+	elif not _team_stat() and has:
+		_player_stat(subj, tag)
+
+
+func _stat_ready() -> bool:
+	return _hud != null and _hud.card_free() and Time.get_ticks_msec() / 1000.0 - _stat_at > STAT_GAP
+
+
+func _put_stat(team: int, title: String, line: String, tag: String) -> void:
+	_stat_at = Time.get_ticks_msec() / 1000.0
+	_hud.stat_card(team, title, line, tag, STAT_LEN)
+	if _stat_log:
+		print("[stat] %s  %s  |  %s  |  %s" % [Phase.keys()[phase], tag, title, line])
+
+
+## A player's game so far; with nothing on the sheet yet, who they are.
+func _player_stat(s: Skater, tag: String) -> void:
+	var line := box.line_text(s)
+	if line == "—":
+		var inches := roundi(_body(s).x / 0.0254)
+		line = "%s  ·  %d'%d\"  ·  %d LBS" % [s.position_name if not s is Goalie else "G", inches / 12, inches % 12, roundi(_body(s).y * 2.20462)]
+	_put_stat(s.team, MenuStyle.player_name(s), line, tag)
+
+
+func _body(s: Skater) -> Vector2:
+	var avg: Array = BodyBuild.AVERAGE.get(s.body_type, BodyBuild.AVERAGE["male"])
+	return Vector2(s.height_m if s.height_m > 0.0 else avg[0], s.weight_kg if s.weight_kg > 0.0 else avg[1])
+
+
+func _abbr(t: int) -> String:
+	return str(Teams.team(team_ids[t]).abbr)
+
+
+## "NBW  7  –  3  MIN" (away first, like the scorebug).
+func _versus(a_home: Variant, a_away: Variant) -> String:
+	return "%s  %s   –   %s  %s" % [_abbr(1), str(a_away), str(a_home), _abbr(0)]
+
+
+func _pp_text(t: int) -> String:
+	return "%d/%d" % [stats.pp_goals[t], stats.penalties[1 - t]]
+
+
+## A team-vs-team number, the one shown longest ago that has something in it.
+func _team_stat() -> bool:
+	var options := []
+	if shots_on_goal(0) + shots_on_goal(1) > 0:
+		options.append(["shots", "SHOTS ON GOAL", _versus(shots_on_goal(0), shots_on_goal(1))])
+	if stats.hits[0] + stats.hits[1] > 0:
+		options.append(["hits", "HITS", _versus(stats.hits[0], stats.hits[1])])
+	if stats.faceoffs[0] + stats.faceoffs[1] > 1:
+		options.append(["faceoffs", "FACEOFFS WON", _versus(stats.faceoffs[0], stats.faceoffs[1])])
+	if stats.penalties[0] + stats.penalties[1] > 0:
+		options.append(["pp", "POWER PLAY", _versus(_pp_text(0), _pp_text(1))])
+	if options.is_empty():
+		return false
+	options.sort_custom(func(a: Array, b: Array) -> bool: return int(_stat_seen.get(a[0], -1)) < int(_stat_seen.get(b[0], -1)))
+	var o: Array = options[0]
+	_stat_seen[o[0]] = _stat_count
+	_put_stat(-1, o[1], o[2], "GAME STATS")
+	return true
+
+
+## A card to go with what the booth just said.
+func _on_booth_line(line: String) -> void:
+	if _hud == null or not show_hud or phase in [Phase.INTRO, Phase.FIGHT, Phase.SHOOTOUT, Phase.FINAL]:
+		return
+	if (replay and replay.busy()) or not _stat_ready():
+		return
+	match line:
+		"powerplay":
+			for t in 2:
+				if strength(t) > strength(1 - t) and lineup(1 - t).box_count() > 0:
+					_put_stat(t, team_name(t), "PP %s TONIGHT  ·  %d SHOTS" % [_pp_text(t), shots_on_goal(t)], "POWER PLAY")
+		"pk_success":
+			var t := _audio.pk_team
+			if t >= 0:
+				var killed: int = stats.penalties[t] - stats.pp_goals[1 - t]
+				_put_stat(t, team_name(t), "PENALTY KILL  %d/%d TONIGHT" % [killed, stats.penalties[t]], "KILLED OFF")
+		"hot_streak":
+			var t := _audio.streak_team
+			if t >= 0:
+				_put_stat(t, team_name(t), "%d SHOTS IN A ROW  ·  ON GOAL  %d – %d" % [MatchAudio.STREAK_SHOTS, shots_on_goal(t), shots_on_goal(1 - t)], "ON THE ATTACK")
+		"close_game", "banter_close", "blowout", "banter_blowout":
+			_put_stat(-1, "SHOTS %d – %d" % [shots_on_goal(1), shots_on_goal(0)],
+					"%s  ·  HITS %d – %d  ·  FACEOFFS %d – %d" % [_abbr(1) + " – " + _abbr(0), stats.hits[1], stats.hits[0], stats.faceoffs[1], stats.faceoffs[0]], "GAME STATS")
+		"save_react":
+			var g := _last_save
+			if g and is_instance_valid(g):
+				_put_stat(g.team, MenuStyle.player_name(g), box.line_text(g), "IN NET TONIGHT")
+
+
+## The goalie for the coming faceoff: back into the net from the bench, or, staying
+## pulled, off to it now.
+func _regroup_goalie(t: int, keep: bool) -> void:
+	var g: Goalie = teams[t].goalie
+	var net := rink.defended_net(t)
+	g.net = net
+	if pulled[t] and not keep:
+		pulled[t] = false
+		var crease := net.global_position + net.global_basis.z * 0.7
+		crease.y = 0.0
+		if g.benched and not g.walking():
+			var door := _goalie_door(t)
+			g.set_benched(false)
+			if g.bench_spot != Vector3.INF:
+				g.global_position = g.bench_spot
+			_walk_through(g, door, [rink.door_point(door, 0.7)], [rink.door_point(door, -0.8), crease],
+					net.global_basis.z, Callable(), PULL_SPEED)
+		elif not g.benched:
+			g.walk([crease], PULL_SPEED, net.global_basis.z)
+	elif keep and not g.benched and not g.walking():
+		var door := _goalie_door(t)
+		_walk_through(g, door, [rink.door_point(door, -0.8)], [rink.door_point(door, 0.6)], Vector3(-RinkSpec.BENCH_SIDE, 0, 0),
+				func() -> void:
+					if is_instance_valid(g) and pulled[t] and not g.benched:
+						g.set_benched(true), PULL_SPEED)
+
+
+func _tick_regroup() -> void:
+	var r := _regroup
+	var off: Array[Skater] = r.off
+	for s in off.duplicate():
+		var rb: RegroupBrain = null
+		if is_instance_valid(s):
+			rb = s.autopilot as RegroupBrain
+		if rb == null:
+			off.erase(s)
+		elif rb.distance(s) < 2.2:
+			off.erase(s)
+			_skate_off(s)
+	var gt: float = _phase_time - r.t0
+	if gt < REGROUP_MIN or (gt < (REGROUP_MAX_QUICK if _quick() else REGROUP_MAX) and not _regroup_ready()):
+		return
+	_finish_regroup()
+
+
+## Everyone in position for the faceoff (or off the ice, going off).
+func _regroup_ready() -> bool:
+	if not (_regroup.off as Array).is_empty():
+		return false
+	for t in teams.size():
+		var on: Array = _regroup.plan[t].on
+		for s: Skater in on:
+			if s.benched or s.walking():
+				return false   # (still coming through the door)
+			var rb := s.autopilot as RegroupBrain
+			if rb and not rb.settled(s, s == on[0]):
+				return false
+		if teams[t].goalie.walking():
+			return false
+	return true
+
+
+## Into position for the faceoff: anyone still on the way is placed, and the puck drops.
+func _finish_regroup() -> void:
+	var r := _regroup
+	var cut: Cutscene = r.get("cut")
+	if is_instance_valid(cut):
+		cut.stop()
+	if OS.get_cmdline_user_args().has("regrouplog"):
+		var late := []
+		for t in teams.size():
+			for s: Skater in r.plan[t].on:
+				var rb := s.autopilot as RegroupBrain
+				if s.benched or s.walking() or (rb and not rb.settled(s, s == r.plan[t].on[0])):
+					late.append("#%d %.1fm" % [s.number, rb.distance(s) if rb else -1.0])
+		print("[regroup] %.1fs at %s, %d going off, late: %s" % [_phase_time - r.t0, r.dot, (r.off as Array).size(), late])
+	_start_faceoff(r.dot, _faceoff_plan(r.dot, false))
+
+
+## A skater going off for the change reached the bench gate: through the door and sit.
+func _skate_off(s: Skater) -> void:
+	var t := s.team
+	var from := s.global_position
+	s.autopilot = null
+	lineup(t).on_ice.erase(s)
+	_reassign_control(t, s)
+	s.set_benched(true)
+	var d0 := rink.bench_door_id(t, 0)
+	var d1 := rink.bench_door_id(t, 1)
+	var near := d0 if from.distance_to(rink.door_point(d0, 0.0)) < from.distance_to(rink.door_point(d1, 0.0)) else d1
+	var seat: Vector3 = s.bench_spot if s.bench_spot != Vector3.INF else rink.door_point(near, 1.2)
+	s.global_position = from
+	_walk_through(s, near, [rink.door_point(near, -0.7)], [rink.door_point(near, 0.7), seat],
+			Vector3(-RinkSpec.BENCH_SIDE, 0, 0))
+
+
+func _start_faceoff(dot: Vector2, plan := []) -> void:
+	_regroup = {}
+	_place_for_faceoff(dot, plan)
 	rink.rearm_nets()
 	_set_phase(Phase.FACEOFF)
 	var drop_at := 0.9 + _rng.randf_range(0.0, 0.4)
@@ -2109,6 +2702,9 @@ func _resolve_faceoff() -> void:
 		winner = 0 if p[0] < p[1] else 1
 	stats.faceoffs[winner] += 1
 	faceoff_won.emit(winner)
+	if _ref_brain and _pen_cut == null:
+		_ref_brain.hold = Vector3.INF   # (waiting by the dot: _begin_regroup)
+		_ref_brain.face_at = Vector3.INF
 	for s in on_ice_all():
 		s.frozen = false
 	var dot: Vector2 = _fo.dot
@@ -2266,6 +2862,7 @@ func _on_goal(net_index: int) -> void:
 		beaten = null   # no goal against: nobody was in there
 	var pp := strength(scoring) > strength(other) and lineup(other).box_count() > 0
 	var assists := box.on_goal(scorer, scoring, lineup(scoring).on_ice, lineup(other).on_ice, beaten, pp)
+	last_assists = assists
 	goal.emit(scoring, scorer)
 	_bench_react(scoring, "cheer")
 	_bench_react(other, "groan", 0.8)
@@ -2324,6 +2921,7 @@ func _on_save(g: Goalie, _kind: StringName) -> void:
 	if phase == Phase.LIVE:
 		stats.saves[g.team] += 1
 		box.add(g, "sv")
+		_last_save = g
 	elif phase == Phase.SHOOTOUT:
 		_shootout_result(false)
 
@@ -2347,6 +2945,7 @@ func _on_left_play() -> void:
 
 
 func _on_hit(attacker: Skater, victim: Skater, _power: float, kind: StringName, boards: bool) -> void:
+	_since_hit = 0.0
 	if victim and attacker:
 		var t := victim.team
 		tension[t] += {&"big_hit": 0.7, &"check": 0.22}.get(kind, 0.06) + (0.2 if boards and kind == &"big_hit" else 0.0)

@@ -21,7 +21,7 @@ const TURN_SLOW := 14.0           ## rad/s turn rate when nearly stopped
 const HARD_STOP_ANGLE := 2.2689   ## 130 degrees: reversing the stick past this = hockey stop
 const HARD_STOP_DECEL := 24.0
 const GLIDE_DECEL := 2.2          ## coasting with no stick input
-const DOWN_DECEL := 5.0           ## sliding on the ice after a hit
+const DOWN_DECEL := 8.0           ## sliding on the ice after a hit (a body on the ice grabs: a short slide)
 const OVERSPEED_DECEL := 6.0      ## bleeding off turbo speed
 const CARVE_BLEED := 0.35         ## speed lost per rad/s of turning
 const TURBO_SPEED_MULT := 1.25
@@ -35,6 +35,14 @@ const AIM_MEMORY := 0.35          ## a pass aims where the stick pointed this re
 const PASS_LEAD_MAX := 3.0        ## meters a pass leads a moving receiver, at most
 const BACKWARD_SPEED := 0.72      ## top speed skating backwards (share of forward)
 const PASS_CONE := 1.1345         ## 65 degrees
+const SHOT_RANGE := 32.0          ## meters from the net a shot still goes at it
+const SHOT_AIM_CLOSE := 18.0      ## inside this, a stick pointing away still aims (low)
+const SHOT_POST_INSET := 0.17     ## a full-corner aim sits this far inside the post (m)
+const SHOT_REST_HEIGHT := 0.35    ## aim height with the stick sideways or idle (0 ice .. 1 top)
+const SHOT_SCATTER := 0.55        ## Accuracy's degrees become meters at the net, times this
+const PASS_LANE_WIDTH := 1.1      ## an opponent this close to the line is "in the lane" (m)
+const PASS_LANE_PENALTY := 30.0   ## per opponent in the lane (about 19 degrees of stick angle)
+const PASS_STICKY_BONUS := 8.0    ## the current pick's edge (about 5 degrees)
 const SAUCER_HOLD := 0.22         ## hold pass this long for a saucer pass
 
 # --- Shooting ---
@@ -81,6 +89,8 @@ var ai_brain: Brain
 var intent := SkaterIntent.new()
 var is_human := false
 var frozen := false               ## faceoff setup: stand still (the brain still runs)
+var autopilot: Brain              ## set: drives the skater instead of `brain` (skating to a faceoff)
+var _ignored := SkaterIntent.new()   ## what `brain` wants while the autopilot drives
 var puck: Puck
 var rink: Rink
 var teammates: Array[Skater] = []
@@ -96,6 +106,14 @@ var windup_time := 0.0
 var shot_charge := 0.0
 var last_shot_kind: StringName = &""
 var fall_side := 1.0              ## which way a knockdown topples (visual)
+## Body checks, for the visual. Checker: which shoulder leads the check (+1 right, -1 left)
+## and seconds since the last one landed. Victim: the push direction (flat, world), how
+## hard (after balance) and seconds since.
+var check_lead := 1.0
+var since_check_landed := 10.0
+var hit_dir := Vector3.ZERO
+var hit_power := 0.0
+var since_hit := 10.0
 var energy := 1.0                 ## shift fatigue: drains on the ice, recovers on the bench
 var fatigue_enabled := true
 var benched := false              ## off the ice (bench or penalty box)
@@ -145,6 +163,7 @@ var _down_time := 0.0
 var _pass_hold := -1.0
 var _aim_dir := Vector3.ZERO     ## last firm stick direction (for passes)
 var _aim_age := INF
+var _last_pass_target: Skater = null
 var _shoot_buffer := 0.0
 var _deke_cooldown := 0.0
 var _deke_return := 0.0
@@ -380,7 +399,13 @@ func _resume_live() -> void:
 
 func _physics_process(delta: float) -> void:
 	intent.clear()
-	if brain:
+	if autopilot:
+		if brain:
+			# Still read (into nothing), so a pad's button edges stay current for later.
+			brain.update(self, _ignored, delta)
+			_ignored.clear()
+		autopilot.update(self, intent, delta)
+	elif brain:
 		brain.update(self, intent, delta)
 	if frozen:
 		velocity = Vector3.ZERO
@@ -408,6 +433,8 @@ func _tick_timers(delta: float) -> void:
 	_shoot_buffer = maxf(0.0, _shoot_buffer - delta)
 	_deke_cooldown = maxf(0.0, _deke_cooldown - delta)
 	_check_cooldown = maxf(0.0, _check_cooldown - delta)
+	since_check_landed += delta
+	since_hit += delta
 	_poke_cooldown = maxf(0.0, _poke_cooldown - delta)
 	if _deke_return > 0.0:
 		_deke_return -= delta
@@ -504,6 +531,8 @@ func _begin_deke() -> void:
 	_juke(right * side, PlayerStats.lerp_stat(stats.agility, 4.5, 6.5), DEKE_TIME)
 
 
+## The teammate a pass in `dir` goes to: mostly where the stick points, then the open
+## lane, then distance. The last pick gets a small edge so the marker doesn't flicker.
 func choose_pass_target(dir: Vector3) -> Skater:
 	var best: Skater = null
 	var best_score := INF
@@ -520,10 +549,35 @@ func choose_pass_target(dir: Vector3) -> Skater:
 			continue
 		# Where the stick points matters far more than who is closest.
 		var score := rad_to_deg(ang) * 1.6 + d * 0.25
+		score += _lane_blockers(m) * PASS_LANE_PENALTY
+		if m == _last_pass_target:
+			score -= PASS_STICKY_BONUS
 		if score < best_score:
 			best_score = score
 			best = m
+	_last_pass_target = best
 	return best
+
+
+## Opponents standing in the passing lane to `mate` (close to the line, between the two).
+func _lane_blockers(mate: Skater) -> int:
+	var a := Vector2(global_position.x, global_position.z)
+	var b := Vector2(mate.global_position.x, mate.global_position.z)
+	var ab := b - a
+	var len2 := ab.length_squared()
+	if len2 < 0.01:
+		return 0
+	var n := 0
+	for o in opponents:
+		if not is_instance_valid(o):
+			continue
+		var p := Vector2(o.global_position.x, o.global_position.z)
+		var t := (p - a).dot(ab) / len2
+		if t < 0.08 or t > 0.95:
+			continue
+		if p.distance_to(a + ab * t) < PASS_LANE_WIDTH:
+			n += 1
+	return n
 
 
 func pass_aim_dir() -> Vector3:
@@ -543,11 +597,11 @@ func _fire_pass(saucer: bool) -> void:
 	var dir := pass_aim_dir()
 	var receiver := choose_pass_target(dir)
 	var origin := puck.global_position
-	var max_speed := PlayerStats.lerp_stat(stats.passing, 17.0, 25.0)
+	var max_speed := PlayerStats.lerp_stat(stats.passing, 19.0, 28.0)
 	var v: Vector3
 	if receiver:
 		var dist := origin.distance_to(receiver.global_position)
-		var spd := clampf(9.0 + dist * 0.9, 10.0, max_speed)
+		var spd := clampf(11.0 + dist * 1.1, 12.0, max_speed)
 		var horiz := spd * (0.7 if saucer else 1.0)
 		var avg := horiz * 0.88 # ice friction slows the pass on the way
 		var aim := receiver.reception_point()
@@ -576,27 +630,83 @@ func _can_one_time() -> bool:
 	return net != null and global_position.distance_to(net.global_position) < ONE_TIMER_RANGE
 
 
+## The stick direction a shot aims with: held now, or let go of a moment ago.
+func shot_aim() -> Vector3:
+	if intent.move.length() > 0.3:
+		return intent.move
+	if _aim_age < AIM_MEMORY:
+		return _aim_dir
+	return Vector3.ZERO
+
+
+## A shot from here goes at the net (in range and facing it), rather than along the stick.
+func _shot_on_net(kind: StringName, aim: Vector3) -> bool:
+	var net := attacking_net()
+	if net == null:
+		return false
+	var to_net := net.global_position - global_position
+	to_net.y = 0.0
+	var d := to_net.length()
+	if d >= SHOT_RANGE:
+		return false
+	if kind == &"one_timer":
+		return true
+	var dir := aim.normalized() if aim.length() > 0.3 else heading
+	if dir.angle_to(to_net) < deg_to_rad(80.0):
+		return true
+	# Close in and facing the net, any stick direction is an aim (pull back = low).
+	return d < SHOT_AIM_CLOSE and heading.angle_to(to_net) < deg_to_rad(95.0)
+
+
+## Where on the goal mouth the stick aims (no scatter). Left/right on the stick picks
+## the side (screen x = world x); toward the net end of the ice is high, away is low.
+## No stick: low-to-mid on the side the goalie leaves open (far side if centered).
+func aimed_spot(kind: StringName, aim: Vector3) -> Vector3:
+	var net := attacking_net()
+	var np := net.global_position
+	var half := RinkSpec.NET_WIDTH * 0.5 - SHOT_POST_INSET
+	var top := RinkSpec.NET_HEIGHT - (0.3 if kind == &"slap" else 0.22)
+	var ax := 0.0
+	var up := 0.0
+	if aim.length() > 0.3:
+		var n := aim.normalized()
+		var toward := signf(np.z - global_position.z)
+		ax = clampf(n.x * 1.4, -1.0, 1.0)
+		up = clampf(n.z * toward * 1.4, -1.0, 1.0)
+	else:
+		var g := _goalie_of(net)
+		var gx := (g.global_position.x - np.x) if g else 0.0
+		if absf(gx) > 0.08:
+			ax = -signf(gx) * 0.75
+		else:
+			var from := global_position.x - np.x
+			ax = -signf(from) * 0.6 if absf(from) > 0.5 else 0.0
+	var v := SHOT_REST_HEIGHT + (up * (1.0 - SHOT_REST_HEIGHT) if up > 0.0 else up * SHOT_REST_HEIGHT)
+	return Vector3(np.x + ax * half, lerpf(0.06, top, v), np.z)
+
+
+func _goalie_of(net: Net) -> Goalie:
+	for g in get_tree().get_nodes_in_group("goalies"):
+		if g is Goalie and g.net == net and is_instance_valid(g):
+			return g
+	return null
+
+
 func _fire_shot(kind: StringName, charge: float) -> void:
 	var net := attacking_net()
 	var origin := puck.global_position
-	var aim := intent.move
+	var aim := shot_aim()
 	var dir := aim.normalized() if aim.length() > 0.3 else heading
 	var wrist_speed := PlayerStats.lerp_stat(stats.shot_power, 22.0, 30.0) * lerpf(0.92, 1.0, energy if fatigue_enabled else 1.0)
 	var spd: float
 	var spread: float
-	var h_lo := 0.12
-	var h_hi := 0.85
 	match kind:
 		&"slap":
 			spd = lerpf(wrist_speed, PlayerStats.lerp_stat(stats.shot_power, 33.0, 44.0), charge)
 			spread = PlayerStats.lerp_stat(stats.shot_accuracy, 6.0, 2.0) * (0.8 + 0.4 * charge)
-			h_lo = 0.05
-			h_hi = 0.65
 		&"one_timer":
 			spd = PlayerStats.lerp_stat(stats.shot_power, 31.0, 41.0)
 			spread = PlayerStats.lerp_stat(stats.shot_accuracy, 5.0, 1.6)
-			h_lo = 0.05
-			h_hi = 0.7
 		_:
 			spd = wrist_speed
 			spread = PlayerStats.lerp_stat(stats.shot_accuracy, 4.0, 1.2)
@@ -604,19 +714,16 @@ func _fire_shot(kind: StringName, charge: float) -> void:
 	spd *= 1.0 + 0.03 * catch_up
 
 	var target: Vector3
-	var to_net := Vector3.ZERO
-	if net:
-		to_net = net.global_position - origin
-		to_net.y = 0.0
-	var on_net := net != null and to_net.length() < 32.0 \
-			and (kind == &"one_timer" or dir.angle_to(to_net) < deg_to_rad(80.0))
+	var fdir: Vector3
+	var on_net := _shot_on_net(kind, aim)
 	if on_net:
-		# Left/right on the stick picks the side of the net (screen x = world x).
-		var ax := clampf(aim.x, -1.0, 1.0)
-		if absf(ax) < 0.2:
-			ax = _rng.randf_range(-0.55, 0.55)
-		var half := RinkSpec.NET_WIDTH * 0.5 - 0.12
-		target = Vector3(net.global_position.x + ax * half, _rng.randf_range(h_lo, h_hi), net.global_position.z)
+		# Aimed at a spot on the goal mouth; Accuracy decides how close to it the puck goes
+		# (meters at the net, so a long shot strays further than one from the slot).
+		target = aimed_spot(kind, aim)
+		var reach := Vector2(target.x - origin.x, target.z - origin.z).length()
+		var sigma := clampf(reach * deg_to_rad(spread) * SHOT_SCATTER, 0.04, 0.6)
+		target.x += _rng.randfn(0.0, sigma)
+		target.y = maxf(0.03, target.y + _rng.randfn(0.0, sigma * 0.7))
 	else:
 		target = origin + dir * 20.0
 		target.y = 0.3 if kind == &"wrist" else 0.0
@@ -624,10 +731,11 @@ func _fire_shot(kind: StringName, charge: float) -> void:
 	var flat := target - origin
 	flat.y = 0.0
 	var dist := maxf(flat.length(), 0.5)
-	var fdir := flat.normalized().rotated(Vector3.UP, deg_to_rad(_rng.randfn(0.0, spread)))
+	fdir = flat.normalized()
+	if not on_net:
+		fdir = fdir.rotated(Vector3.UP, deg_to_rad(_rng.randfn(0.0, spread)))
 	var t := dist / spd
 	var vy := (target.y - origin.y) / t + 0.5 * Puck.GRAVITY * t
-	vy += _rng.randfn(0.0, spread * 0.05)
 	vy = clampf(vy, 0.0, 12.0)
 	var v := fdir * spd + Vector3.UP * vy
 	puck.release(v, self, null)
@@ -643,6 +751,20 @@ func _begin_check() -> void:
 	_check_cooldown = CHECK_COOLDOWN
 	_check_dir = intent.move.normalized() if intent.move.length() > 0.3 else heading
 	_juke(_check_dir, CHECK_LUNGE, CHECK_TIME)
+	# Lead with the shoulder nearer the target (the nearest opponent ahead); with nobody
+	# there, the one away from the stick blade.
+	check_lead = -forehand_side()
+	var best := 3.5
+	for o in opponents:
+		if not is_instance_valid(o) or o.is_down():
+			continue
+		var to := o.global_position - global_position
+		to.y = 0.0
+		if to.length() < best and to.length() > 0.05 and to.normalized().dot(_check_dir) > 0.2:
+			best = to.length()
+			var across := to.dot(right_dir())
+			if absf(across) > 0.08:
+				check_lead = signf(across)
 
 
 func _check_contact() -> void:
@@ -672,6 +794,7 @@ func _check_contact() -> void:
 			foul_committed.emit(self, o, &"boarding")
 		velocity *= 0.4
 		_juke_speed = 0.0
+		since_check_landed = 0.0
 		_set_state(State.SKATE)
 		return
 
@@ -691,6 +814,9 @@ func receive_hit(power: float, dir: Vector3, _attacker: Skater) -> Dictionary:
 			boards = true
 	fall_side = signf(dir.dot(right_dir())) if absf(dir.dot(right_dir())) > 0.1 else 1.0
 	last_impact = p
+	hit_dir = Vector3(dir.x, 0.0, dir.z).normalized()
+	hit_power = p
+	since_hit = 0.0
 	var kind: StringName
 	if p < BUMP_LIMIT:
 		kind = &"bump"
@@ -699,12 +825,12 @@ func receive_hit(power: float, dir: Vector3, _attacker: Skater) -> Dictionary:
 			puck.strip(self, dir * 2.0)
 	elif p < CHECK_LIMIT:
 		kind = &"check"
-		_knock(dir * p * 0.6, State.DOWN, DOWN_TIME)
+		_knock(dir * p * 0.42, State.DOWN, DOWN_TIME)
 		if has_puck():
 			puck.strip(self, dir * 3.0)
 	else:
 		kind = &"big_hit"
-		_knock(dir * minf(p * 0.7, 9.0), State.DOWN, BIG_DOWN_TIME)
+		_knock(dir * minf(p * 0.5, 6.5), State.DOWN, BIG_DOWN_TIME)
 		if has_puck():
 			puck.strip(self, dir * 4.0)
 	return {"kind": kind, "boards": boards}
@@ -717,7 +843,7 @@ func stay_down(seconds: float) -> void:
 
 
 func _knock(v: Vector3, s: State, duration: float) -> void:
-	velocity = velocity * 0.3 + v
+	velocity = velocity * 0.2 + v
 	velocity.y = 0.0
 	_juke_speed = 0.0
 	_pass_hold = -1.0

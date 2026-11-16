@@ -5,3 +5,16 @@
 
 # Old roster backups
 /data/knockout_hockey_rostersold.*
+
+# Voice generator: local Python env, generated takes, retired old clips, caches
+/data/hockey_voicegen/venv/
+/data/hockey_voicegen/takes/
+/data/hockey_voicegen/retired/
+/data/hockey_voicegen/voices/.cache/
+/data/hockey_voicegen/todo.json
+/data/hockey_voicegen/redo_list.txt
+/data/hockey_voicegen/__pycache__/
+/data/hockey_voicegen/studio/output/
+/data/hockey_voicegen/studio/cache/
+/data/hockey_voicegen/studio/__pycache__/
+/data/hockey_voicegen/voices/.trash/

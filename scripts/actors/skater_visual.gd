@@ -12,6 +12,7 @@ const UNIFORM_SHADER := preload("res://scenes/actors/uniform.gdshader")
 const SKIN_SHADER := preload("res://scenes/actors/skin.gdshader")
 const GLOVE_SHADER := preload("res://scenes/actors/glove.gdshader")
 const RING_SHADER := preload("res://scenes/actors/player_ring.gdshader")
+const AIM_SHADER := preload("res://scenes/actors/aim_reticle.gdshader")
 const STICK_SHADER := preload("res://scenes/actors/stick.gdshader")
 const MeshLod := preload("res://scripts/core/mesh_lod.gd")
 ## Stick finishes (Skater.stick_style): "X on Y" is X graphics on a Y stick; home / away
@@ -75,7 +76,14 @@ var _bend := 0.3
 ## bottom shoulder dips as far as the bottom hand needs to reach its grip (_dip).
 var stance_sway := 0.05
 var stance_twist := 0.1
-var stance_bend := 1.15   ## forward bend of the spine in the ready stance (rad)
+var stance_bend := 0.82   ## forward bend of the spine in the ready stance (rad)
+## Each push of the stride: the hips sink this far (m) and the chest pumps forward this
+## much (rad) at full stride; the shoulders turn against the legs (counter_twist, rad) as
+## the hips turn with them (hip_turn, rad).
+var stride_bob := 0.035
+var stride_pump := 0.07
+var counter_twist := 0.2
+var hip_turn := 0.12
 var _dip := 0.0
 var windup_arc_end := 120.0     ## degrees around from straight ahead the blade swings back
 var windup_arc_reach := 0.9     ## its distance out from the body at the top (m, flat)
@@ -85,11 +93,25 @@ var _swing_charge := 0.0   ## the slap shot's charge at release (the downswing s
 var dip_max := 0.15      ## most the bottom shoulder dips past stance_sway to reach (rad)
 var dip_lean := 0.0     ## the dip also leans the chest forward this much of it (over the shaft)
 var _twist := 0.0
+## Hit reactions: a sprung tilt of the whole body (model pitch, roll; rad) kicked by each
+## hit taken, so the impact shows the same frame, before any clip blends in.
+var _jolt := Vector2.ZERO
+var _jolt_v := Vector2.ZERO
+var _seen_hit := 10.0
+var _fight_mode := false   ## set_fight_mode: fights keep the pelvis over the feet too
+## Checking: 0..1 pose weights, the load into the hit and the drive through it.
+var _check_load := 0.0
+var _check_drive := 0.0
 var _stride := 0.0
 var _stride_amt := 0.0
 var _free_arm := 0.0
 var _blade := Vector3.ZERO        ## blade position relative to the skater
 var _marker_on := false
+var _pass_mark: Node3D            ## under the teammate a pass would go to (human carrier only)
+var _pass_mark_mat: StandardMaterial3D
+var _aim_mark: Node3D             ## on the goal mouth: where a shot would go (human carrier near the net)
+var _aim_mark_mat: ShaderMaterial
+var _aim_pos := Vector3.INF
 var _tag: Label3D
 var _ring_mat: ShaderMaterial    ## the ring's sprint (outer), legs (inner) and slap-shot (middle) meters
 var _name_tag: Label3D           ## the controlled player's number and name, above the P tag
@@ -718,7 +740,8 @@ func set_fight_mode(on: bool) -> void:
 		face.set_expression("angry" if on else "neutral")
 	if not on:
 		set_helmet(true)
-	rig.lock_root = on
+	_fight_mode = on
+	rig.lock_root = on or skater.is_down()
 	rig.reach_w = [0.0, 0.0]
 	if not on:
 		yaw_offset = 0.0
@@ -1159,6 +1182,8 @@ func _build_markers() -> void:
 	ring.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	marker = _add_mesh(self, _torus(0.42, 0.5), _unshaded(Color(1, 1, 1, 0.8)), Vector3(0, 0.02, 0))
 	marker.visible = false
+	_build_pass_mark()
+	_build_aim_mark()
 
 	spray = CPUParticles3D.new()
 	spray.amount = 48
@@ -1207,6 +1232,92 @@ func _build_markers() -> void:
 
 func set_marker(on: bool) -> void:
 	_marker_on = on
+
+
+## A ring at the receiver's feet and an arrow over their head, in the passer's player color.
+## It lives on the passer's visual (top level) and follows whoever the stick points at.
+func _build_pass_mark() -> void:
+	_pass_mark = Node3D.new()
+	_pass_mark.top_level = true
+	_pass_mark.physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_OFF
+	_pass_mark.visible = false
+	add_child(_pass_mark)
+	_pass_mark_mat = _unshaded(Color(1, 1, 1, 0.85))
+	_pass_mark_mat.no_depth_test = true
+	_pass_mark_mat.render_priority = 1
+	var r := _add_mesh(_pass_mark, _torus(0.55, 0.68), _pass_mark_mat, Vector3(0, 0.03, 0))
+	r.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	var cone := CylinderMesh.new()
+	cone.top_radius = 0.22
+	cone.bottom_radius = 0.0
+	cone.height = 0.38
+	cone.radial_segments = 4
+	cone.rings = 1
+	var a := _add_mesh(_pass_mark, cone, _pass_mark_mat, Vector3(0, 2.55, 0))
+	a.name = "Arrow"
+	a.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+
+
+const AIM_SHOW_RANGE := 20.0   ## the reticle shows inside this distance of the net (m)
+
+
+## A small ring with a dot, standing on the goal line, facing the shooter.
+func _build_aim_mark() -> void:
+	_aim_mark = Node3D.new()
+	_aim_mark.top_level = true
+	_aim_mark.physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_OFF
+	_aim_mark.visible = false
+	add_child(_aim_mark)
+	_aim_mark_mat = ShaderMaterial.new()
+	_aim_mark_mat.shader = AIM_SHADER
+	_aim_mark_mat.render_priority = 2
+	var q := QuadMesh.new()
+	q.size = Vector2(0.5, 0.5)
+	var m := _add_mesh(_aim_mark, q, _aim_mark_mat, Vector3.ZERO)
+	m.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+
+
+func _update_aim_mark(delta: float) -> void:
+	var show := false
+	if skater.is_human and skater.human_index >= 0 and skater.has_puck() and skater.can_act():
+		var net := skater.attacking_net()
+		var winding := skater.state == Skater.State.WINDUP
+		if net and skater.global_position.distance_to(net.global_position) < AIM_SHOW_RANGE:
+			var kind := &"slap" if winding and skater.windup_time > Skater.WRIST_WINDOW else &"wrist"
+			var aim := skater.shot_aim()
+			if skater._shot_on_net(kind, aim):
+				show = true
+				var want := skater.aimed_spot(kind, aim)
+				# Glide between spots (the stick wobbles); snap when it first appears.
+				_aim_pos = want if _aim_pos == Vector3.INF else _aim_pos.lerp(want, _ease(18.0, delta))
+				_aim_mark.global_position = _aim_pos
+				var c: Color = HumanBrain.PLAYER_COLORS[skater.human_index % 4]
+				c.a = 1.0 if winding else 0.8
+				_aim_mark_mat.set_shader_parameter("color", c)
+				# A loaded slap shot is wilder: the ring opens up as it charges.
+				_aim_mark.scale = Vector3.ONE * (1.0 + 0.4 * skater.shot_charge if winding else 1.0)
+	if not show:
+		_aim_pos = Vector3.INF
+	_aim_mark.visible = show
+
+
+func _update_pass_mark() -> void:
+	var target: Skater = null
+	if skater.is_human and skater.human_index >= 0 and skater.has_puck() and skater.can_act():
+		target = skater.choose_pass_target(skater.pass_aim_dir())
+	_pass_mark.visible = target != null
+	if target == null:
+		return
+	var at: Vector3 = target.visual.global_position if target.visual else target.global_position
+	var t := Time.get_ticks_msec() * 0.001
+	_pass_mark.global_position = Vector3(at.x, 0.0, at.z)
+	_pass_mark.scale = Vector3.ONE * (1.0 + 0.08 * sin(t * 9.0))
+	var arrow := _pass_mark.get_node("Arrow") as Node3D
+	arrow.position.y = 2.55 + 0.1 * sin(t * 6.0)
+	arrow.rotation.y = t * 2.5
+	var c: Color = HumanBrain.PLAYER_COLORS[skater.human_index % 4]
+	c.a = 0.9
+	_pass_mark_mat.albedo_color = c
 
 
 # --- Clips -----------------------------------------------------------------------
@@ -1333,12 +1444,24 @@ func _state_clips() -> void:
 	_prev_state = s
 	match s:
 		Skater.State.DOWN:
+			# Both clips stand a beat before going over (falling_down starts dropping
+			# 0.3 s in, knocked_down 0.5 s): start there, so the hit takes the legs out at
+			# once. Their pelvis also travels a meter or more back; the skater's own slide
+			# carries the body instead (lock_root).
 			var big := skater._down_time > Skater.DOWN_TIME + 0.1
-			play_clip("knocked_down" if big else "falling_down", Vector3.ONE, -1.0, 1.7 if big else 1.9, 0.08)
+			rig.lock_root = true
+			if big:
+				play_clip("knocked_down", Vector3.ONE, -1.0, 1.5, 0.06, 0.5)
+			else:
+				play_clip("falling_down", Vector3.ONE, -1.0, 1.6, 0.06, 0.3)
 		Skater.State.STUMBLE:
-			play_clip("big_side_hit" if randf() < 0.5 else "hit_to_body", Vector3(0.0, 0.8, 0.7), Skater.STUMBLE_TIME + 0.15, 1.4, 0.06)
+			# Pushed toward the left: the side-hit clip (it rocks that way); otherwise the
+			# body-hit one. The jolt (_tick_jolt) tips the body the way the hit pushed.
+			var to_left := skater.hit_dir.dot(skater.right_dir()) < -0.3
+			play_clip("big_side_hit" if to_left else "hit_to_body", Vector3(0.0, 0.8, 0.7), Skater.STUMBLE_TIME + 0.15, 1.5, 0.05, 0.1)
 		_:
 			if was == Skater.State.DOWN:
+				rig.lock_root = _fight_mode
 				stop_clip(0.35)
 
 
@@ -1385,6 +1508,7 @@ func snap() -> void:
 		_clip_w = Vector3.ZERO
 		anim.stop()
 	_prev_state = skater.state
+	rig.lock_root = _fight_mode or skater.is_down()
 	_process(0.0)
 
 
@@ -1407,6 +1531,8 @@ func _process(delta: float) -> void:
 	_pose(delta)
 	_update_stick(delta)
 	_update_human_tag()
+	_update_pass_mark()
+	_update_aim_mark(delta)
 	marker.visible = _marker_on
 	spray.emitting = skater.stopping
 	spray.position = skater.heading * 0.2 + Vector3(0, 0.05, 0)
@@ -1427,7 +1553,12 @@ func _pose(delta: float) -> void:
 		target_yaw += deg_to_rad(80.0) * side
 	if skater.is_down() and spd > 1.0:
 		target_yaw = atan2(vel.x, vel.z)
-	_yaw = lerp_angle(_yaw, target_yaw, _ease(14.0 if not skater.is_down() else 6.0, delta))
+	# Down: turns quickly at first (the back to the hit, so the fall goes with the push),
+	# then lazily as the slide settles.
+	var yaw_rate := 14.0
+	if skater.is_down():
+		yaw_rate = 16.0 if skater._state_time < 0.3 else 6.0
+	_yaw = lerp_angle(_yaw, target_yaw, _ease(yaw_rate, delta))
 
 	var lean_target := clampf(skater.turn_speed * spd * 0.035, -0.45, 0.45)
 	if skater.stopping:
@@ -1437,10 +1568,15 @@ func _pose(delta: float) -> void:
 	_lean = lerpf(_lean, lean_target, _ease(8.0, delta))
 
 	var fast := clampf(spd / 9.0, 0.0, 1.0)
-	# Ready stance: knees well bent, chest forward over the knees, so the arms can reach
-	# the stick with the elbows bent.
-	var crouch := 0.21 + fast * 0.08 + (0.04 if skater.turbo_active else 0.0) + (0.08 if skater.stopping else 0.0)
-	var bend := stance_bend + fast * 0.2 + (0.1 if skater.turbo_active else 0.0)
+	# Ready stance: knees well bent, chest forward over the knees but the back fairly
+	# straight and the head up. Driving hard folds forward more; coasting without the
+	# puck straightens up a little.
+	var crouch := 0.21 + fast * 0.07 + (0.04 if skater.turbo_active else 0.0) + (0.08 if skater.stopping else 0.0)
+	var bend := stance_bend + _stride_amt * 0.22 + (0.08 if skater.turbo_active else 0.0)
+	if skater.has_puck():
+		bend += 0.12
+	elif spd > 2.5:
+		bend -= 0.12 * (1.0 - clampf(_stride_amt * 2.0, 0.0, 1.0))
 	var twist := 0.0
 	match skater.state:
 		Skater.State.WINDUP:
@@ -1452,9 +1588,7 @@ func _pose(delta: float) -> void:
 			twist = side * 0.45
 			bend += 0.1
 		Skater.State.CHECK:
-			bend += 0.25
-			twist = side * 0.35
-			crouch += 0.06
+			pass   # the check's own pose goes over the top (_check_pose)
 		Skater.State.POKE:
 			bend += 0.2
 			crouch += 0.03
@@ -1466,6 +1600,7 @@ func _pose(delta: float) -> void:
 	_crouch = lerpf(_crouch, crouch, _ease(7.0, delta))
 	_bend = lerpf(_bend, bend, _ease(8.0, delta))
 	_twist = lerpf(_twist, twist, _ease(12.0, delta))
+	_check_weights(delta)
 
 	# Stride: cadence follows speed; amplitude follows how hard the skater is pushing.
 	var pushing := clampf(skater.intent.move.length(), 0.0, 1.0)
@@ -1488,9 +1623,17 @@ func _pose(delta: float) -> void:
 		if _stride_amt > 0.3 and delta > 0.0:
 			Sfx.play("stride", global_position, -17.0 + 7.0 * _stride_amt)
 
-	rig.hips_drop = _crouch
-	rig.lean = _bend + _dip * dip_lean
-	rig.twist = _twist
+	# The stride's rhythm in the upper body: each push sinks the hips and pumps the chest
+	# forward; the hips turn with the legs and the shoulders against them, so the torso
+	# winds and unwinds instead of riding the legs like a block.
+	var push2 := 0.5 - 0.5 * cos(2.0 * _stride)     # 1 at the middle of each leg's push
+	var sa := _stride_amt * (0.0 if skater.is_down() else 1.0)
+	var legs_fwd := cos(_stride)                     # +1: the left foot forward
+	rig.hips_drop = _crouch + push2 * stride_bob * sa
+	rig.lean = _bend + _dip * dip_lean + push2 * stride_pump * sa
+	rig.hips_yaw = -legs_fwd * hip_turn * sa
+	rig.twist = _twist + legs_fwd * (counter_twist + hip_turn) * sa
+	rig.top_rock = 0.05 + 0.07 * _free_arm
 	rig.stride_phase = _stride
 	rig.stride_amt = _stride_amt * (0.6 if backward else 1.0)
 	rig.stride_dir = -1.0 if backward else 1.0
@@ -1510,15 +1653,65 @@ func _pose(delta: float) -> void:
 	var free := skater.state == Skater.State.SKATE and not skater.has_puck() and not skater.intent.shoot_held 			and skater._shoot_buffer <= 0.0 and not skater.stopping and _stride_amt > 0.45
 	_free_arm = lerpf(_free_arm, 1.0 if free else 0.0, _ease(5.0 if free else 9.0, delta))
 	rig.free_arm = _free_arm
+	_check_pose()
 
 	rig.breath = hold_breath
 	if display_pose != "":
 		_display_pose(delta)
-	var pitch := 0.0
-	var roll := _lean + roll_offset
-	if skater.state == Skater.State.STUMBLE:
-		roll += sin(skater._state_time * 40.0) * 0.12
+	_tick_jolt(delta)
+	var pitch := _jolt.x - _check_drive * 0.08
+	var roll := _lean + roll_offset + _jolt.y
 	model.rotation = Vector3(pitch, _yaw, roll)
+
+
+## Checking: the load (crouch, the lead shoulder turned into the target, stick tucked in)
+## while the check is coming, then the drive up and through once it lands.
+func _check_weights(delta: float) -> void:
+	var checking := skater.state == Skater.State.CHECK
+	_check_load = lerpf(_check_load, 1.0 if checking else 0.0, _ease(22.0 if checking else 8.0, delta))
+	var landed := skater.since_check_landed
+	var drive := 0.0
+	if landed < 0.45:
+		drive = 1.0 - smoothstep(0.12, 0.45, landed)
+	elif checking:
+		drive = smoothstep(0.1, Skater.CHECK_TIME, skater._state_time) * 0.5
+	_check_drive = lerpf(_check_drive, drive, _ease(30.0 if drive > _check_drive else 8.0, delta))
+
+
+func _check_pose() -> void:
+	var w := maxf(_check_load, _check_drive)
+	if w <= 0.001:
+		return
+	var lead := skater.check_lead   # +1: the right shoulder leads
+	# Right shoulder forward = the torso turned to its left (rig twist +).
+	rig.twist = lerpf(rig.twist, lead * 0.7, w)
+	# Load: sink and fold, the lead shoulder dipped toward the target. Drive: the legs
+	# straighten up through the hit, chest up and over the shoulder.
+	rig.hips_drop += 0.04 * _check_load - 0.1 * _check_drive
+	rig.lean += 0.18 * _check_load + 0.12 * _check_drive
+	rig.sway += -lead * (0.14 * _check_load - 0.05 * _check_drive)
+	rig.hips_shift.z += 0.08 * _check_drive
+	rig.free_arm = 0.0
+
+
+## The hit-reaction tilt: each new hit kicks it away from the hitter, a stiff spring
+## pulls it back within about a third of a second.
+func _tick_jolt(delta: float) -> void:
+	if skater.since_hit < _seen_hit:
+		var yb := Basis(Vector3.UP, model.rotation.y)
+		var local := yb.inverse() * skater.hit_dir
+		var k := clampf(skater.hit_power / 8.0, 0.4, 1.6) * 3.2
+		# Pushed toward the model's back (+Z): the head goes back (pitch +); pushed to the
+		# model's left (-X): the head goes left (roll +).
+		_jolt_v += Vector2(local.z, -local.x) * k
+	_seen_hit = skater.since_hit
+	if delta <= 0.0:
+		return
+	_jolt_v += (-_jolt * 170.0 - _jolt_v * 15.0) * delta
+	_jolt += _jolt_v * delta
+	if _jolt.length() < 0.001 and _jolt_v.length() < 0.01:
+		_jolt = Vector2.ZERO
+		_jolt_v = Vector2.ZERO
 
 
 ## "P1".."P4" tag, number and name, and the ring for human-controlled skaters. The ring is
@@ -1573,6 +1766,10 @@ func _update_stick(delta: float) -> void:
 		Skater.State.DOWN:
 			target = h * 0.2 + right * skater.fall_side * 0.9 + Vector3.UP * 0.05
 			follow = _ease(10.0, delta)
+		Skater.State.CHECK:
+			# Stick pulled in, blade up off the ice on the side away from the lead shoulder.
+			target = h * 0.55 - right * skater.check_lead * 0.35 + Vector3.UP * 0.35
+			follow = _ease(25.0, delta)
 		Skater.State.FOLLOW_THROUGH:
 			# Down onto the ice at the puck first, then up and out toward the target, the
 			# stick ending about level at chest height.
