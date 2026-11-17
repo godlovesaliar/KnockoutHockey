@@ -77,6 +77,18 @@ const POKE_HIT_AT := 0.08
 const POKE_REACH := 0.9
 const POKE_COOLDOWN := 0.6
 
+# --- Fouls (the director rolls whether the referee calls them) ---
+const TRIP_REACH := 0.75          ## a missed poke whose tip lands this close to the carrier: tripping
+const HOOK_REACH := 1.05          ## ...or, from behind, this close: hooking (the stick catches the body)
+const HOOK_BEHIND := 0.35         ## "from behind": poker-to-carrier direction · carrier heading above this
+const CHARGE_RUNUP := 0.9         ## s of turbo straight into a check before it counts as a run-up
+const CHARGE_CLOSING := 9.0       ## m/s closing speed at contact, with a run-up: charging
+const HIGHSTICK_RANGE := 1.35     ## a slap shot's windup catches an opponent this close on the stick side
+const HIGHSTICK_CHARGE := 0.35    ## only a real windup (slap charge at least this)
+const HOLD_RANGE := 0.8           ## draped on the carrier: closer than this, beside or behind them
+const HOLD_TIME := 1.8            ## s glued on before it's holding
+const HOLD_COOLDOWN := 6.0        ## s before the same skater can be flagged for holding again
+
 @export var team := 0
 @export var number := 19
 @export var shoots_left := true
@@ -180,6 +192,11 @@ var _puck_lat_target := 1.0
 var _dangle_t := 0.0
 var _rng := RandomNumberGenerator.new()
 var _since_puck := 99.0           ## seconds since this skater last had the puck
+var _turbo_run := 0.0             ## s of unbroken turbo (charging run-ups)
+var _check_runup := 0.0           ## _turbo_run when the current check began
+var _draped_on: Skater = null       ## the carrier this skater is draped on (holding)
+var _draped_time := 0.0
+var _draped_cooldown := 0.0
 
 
 func _ready() -> void:
@@ -443,6 +460,8 @@ func _tick_timers(delta: float) -> void:
 	_puck_lat = move_toward(_puck_lat, _puck_lat_target, 9.0 * delta)
 	_dangle_t += delta * (5.0 + flat_speed() * 0.4)
 	_since_puck = 0.0 if has_puck() else _since_puck + delta
+	_draped_cooldown = maxf(0.0, _draped_cooldown - delta)
+	_check_holding(delta)
 
 
 # --- Actions ---------------------------------------------------------------
@@ -740,6 +759,8 @@ func _fire_shot(kind: StringName, charge: float) -> void:
 	var v := fdir * spd + Vector3.UP * vy
 	puck.release(v, self, null)
 	last_shot_kind = kind
+	if kind == &"slap" and charge >= HIGHSTICK_CHARGE:
+		_check_high_stick()
 	shot_released.emit(self, kind, v.length())
 	_set_state(State.FOLLOW_THROUGH)
 
@@ -747,6 +768,7 @@ func _fire_shot(kind: StringName, charge: float) -> void:
 # --- Checking ------------------------------------------------------------------
 
 func _begin_check() -> void:
+	_check_runup = _turbo_run
 	_set_state(State.CHECK)
 	_check_cooldown = CHECK_COOLDOWN
 	_check_dir = intent.move.normalized() if intent.move.length() > 0.3 else heading
@@ -792,6 +814,9 @@ func _check_contact() -> void:
 			foul_committed.emit(self, o, &"interference")
 		elif from_behind and result.boards:
 			foul_committed.emit(self, o, &"boarding")
+		elif _check_runup >= CHARGE_RUNUP and closing >= CHARGE_CLOSING:
+			# A long turbo run straight into the hit: charging.
+			foul_committed.emit(self, o, &"charging")
 		velocity *= 0.4
 		_juke_speed = 0.0
 		since_check_landed = 0.0
@@ -851,6 +876,45 @@ func _knock(v: Vector3, s: State, duration: float) -> void:
 	_down_time = duration
 
 
+## A big slap-shot windup with an opponent tight on the stick side: the stick comes up
+## into them (high-sticking).
+func _check_high_stick() -> void:
+	var side := right_dir() * forehand_side()
+	for o in opponents:
+		if not is_instance_valid(o) or o.is_down() or o.benched:
+			continue
+		var to := o.global_position - global_position
+		to.y = 0.0
+		var d := to.length()
+		if d < 0.05 or d > HIGHSTICK_RANGE:
+			continue
+		# On the stick side, and not out in front (the blade comes back and up over the shoulder).
+		if to.dot(side) / d > 0.25 and to.dot(heading) / d < 0.6:
+			foul_committed.emit(self, o, &"high_sticking")
+			return
+
+
+## Holding: glued to the other team's carrier, beside or behind them, for HOLD_TIME.
+func _check_holding(delta: float) -> void:
+	var c: Skater = puck.carrier if puck else null
+	var ok := c != null and not (c is Goalie) and c.team != team and not has_puck() 			and can_act() and not benched and _draped_cooldown <= 0.0 and c.flat_speed() > 1.0
+	if ok:
+		var to := c.global_position - global_position
+		to.y = 0.0
+		var d := to.length()
+		ok = d < HOLD_RANGE and d > 0.05 and to.dot(c.heading) / d > -0.2
+	if not ok or c != _draped_on:
+		_draped_on = c if ok else null
+		_draped_time = 0.0
+		return
+	_draped_time += delta
+	if _draped_time >= HOLD_TIME:
+		foul_committed.emit(self, c, &"holding")
+		_draped_on = null
+		_draped_time = 0.0
+		_draped_cooldown = HOLD_COOLDOWN
+
+
 func _begin_poke() -> void:
 	_set_state(State.POKE)
 	_poke_cooldown = POKE_COOLDOWN
@@ -863,8 +927,15 @@ func _try_poke() -> void:
 		return
 	var tip := global_position + heading * 1.25
 	if Vector2(puck.global_position.x - tip.x, puck.global_position.z - tip.z).length() > POKE_REACH:
-		# Missed the puck — did the stick catch the carrier's skates instead?
-		if Vector2(c.global_position.x - tip.x, c.global_position.z - tip.z).length() < 0.75:
+		# Missed the puck — did the stick catch the carrier instead? From behind it hooks
+		# the body (hooking); otherwise it takes the skates (tripping).
+		var miss := Vector2(c.global_position.x - tip.x, c.global_position.z - tip.z).length()
+		var to := c.global_position - global_position
+		to.y = 0.0
+		var behind := to.length() > 0.05 and to.normalized().dot(c.heading) > HOOK_BEHIND
+		if behind and miss < HOOK_REACH:
+			foul_committed.emit(self, c, &"hooking")
+		elif miss < TRIP_REACH:
 			foul_committed.emit(self, c, &"tripping")
 		return
 	var chance := 0.5 + (stats.defense - c.stats.puck_handling) * 0.005 - (0.3 if c.intent.protect else 0.0)
@@ -943,6 +1014,7 @@ static func _dist_to_segment_flat(p: Vector3, a: Vector3, b: Vector3) -> float:
 func _update_stamina(delta: float) -> void:
 	turbo_active = intent.turbo and not _turbo_locked and intent.move.length() > 0.2 \
 			and state != State.WINDUP and can_act()
+	_turbo_run = _turbo_run + delta if turbo_active else 0.0
 	if turbo_active:
 		stamina -= PlayerStats.lerp_stat(stats.endurance, 0.38, 0.22) * delta
 		if stamina <= 0.0:

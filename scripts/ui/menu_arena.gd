@@ -9,7 +9,7 @@ const FORWARDS := ["C", "LW", "RW"]
 
 ## Builds the arena under `root`. `focus`: where the action is (lights and dust gather
 ## there). Returns {rink, puck}.
-static func build(root: Node3D, focus: Vector3) -> Dictionary:
+static func build(root: Node3D, focus: Vector3, arena_spec := {}) -> Dictionary:
 	var env := WorldEnvironment.new()
 	var e := Environment.new()
 	e.background_mode = Environment.BG_COLOR
@@ -70,6 +70,8 @@ static func build(root: Node3D, focus: Vector3) -> Dictionary:
 	root.add_child(fill)
 
 	var rink: Rink = (load("res://scenes/match/Rink.tscn") as PackedScene).instantiate()
+	# Menus stand in Modern Arena unless told otherwise (the haze and lights here suit it).
+	rink.arena_spec = arena_spec if not arena_spec.is_empty() else Arenas.find("modern")
 	# The stands are far off, hazy and blurred here: the simplest fans look the same.
 	Arena.low_detail = true
 	root.add_child(rink)
@@ -98,14 +100,13 @@ static func camera_attributes() -> CameraAttributesPractical:
 static func teams_with_logos() -> Array[int]:
 	var out: Array[int] = []
 	for i in Teams.count():
-		if ResourceLoader.exists(str(Teams.team(i).get("logo", ""))):
+		if Teams.has_logo(i):
 			out.append(i)
 	return out
 
 
 static func logo(team: int) -> Texture2D:
-	var path := str(Teams.team(team).get("logo", ""))
-	return load(path) if ResourceLoader.exists(path) else null
+	return Teams.logo(team)
 
 
 ## The team's best forward from the roster sheet: {number, first, last, gender,
@@ -166,19 +167,27 @@ static func make_skater(root: Node3D, arena: Dictionary, team: int, opponent: in
 	s.puck = arena.puck
 	s.rink = arena.rink
 	s.fatigue_enabled = false
-	s.body_type = "female" if who.get("gender", "") == "Female" else "male"
-	Rosters.apply_size(s, who)
-	# Same looks as in a game for roster players (see MatchDirector).
-	var look := RandomNumberGenerator.new()
-	look.seed = hash("%s %s %s" % [Teams.team(team).abbr, who.get("first", ""), who.get("last", "")])
-	s.skin_tone = SkaterVisual.SKIN_TONES[look.randi() % SkaterVisual.SKIN_TONES.size()]
-	s.gear_style = look.randi() % 2
-	s.visor = Skater.visor_for("%s %s %s" % [Teams.team(team).abbr, who.get("first", ""), who.get("last", "")])
-	var hair := SkaterVisual.random_look(look, s.body_type, s.skin_tone)
-	s.hair_style = hair.hair_style
-	s.facial_hair = hair.facial_hair
-	s.hair_color = hair.hair_color
-	s.eye_color = hair.eye_color
+	if who.has("custom"):
+		# A created or generated player Edit Roster signed: their own looks and gear.
+		var stats := s.stats
+		CustomPlayers.apply(s, who.custom)
+		s.stats = stats
+	else:
+		s.body_type = "female" if who.get("gender", "") == "Female" else "male"
+		Rosters.apply_size(s, who)
+		# Same looks as in a game for roster players (see MatchDirector): seeded by their
+		# original team, so a traded player looks the same.
+		var key := "%s %s %s" % [who.get("abbr", Teams.team(team).abbr), who.get("first", ""), who.get("last", "")]
+		var look := RandomNumberGenerator.new()
+		look.seed = hash(key)
+		s.skin_tone = SkaterVisual.SKIN_TONES[look.randi() % SkaterVisual.SKIN_TONES.size()]
+		s.gear_style = look.randi() % 2
+		s.visor = Skater.visor_for(key)
+		var hair := SkaterVisual.random_look(look, s.body_type, s.skin_tone)
+		s.hair_style = hair.hair_style
+		s.facial_hair = hair.facial_hair
+		s.hair_color = hair.hair_color
+		s.eye_color = hair.eye_color
 	root.add_child(s)
 	s.brain = ScriptBrain.new(func(_s: Skater, _i: SkaterIntent, _t: float) -> void: pass)
 	# Menu players are posing for the camera: eyes on it, a word or a smirk now and then.

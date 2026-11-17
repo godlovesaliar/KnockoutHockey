@@ -1,7 +1,12 @@
 class_name CustomPlayers
 ## Players made in CUSTOMIZE > CREATE PLAYER, saved to `user://custom_players.json`.
-## They start in Free Agency (`team` = FREE_AGENT); CUSTOMIZE > EDIT ROSTER (to come)
-## signs them to teams by setting `team` to the team's abbreviation.
+## They start in Free Agency (`team` = FREE_AGENT); CUSTOMIZE > EDIT ROSTER signs them to
+## teams by setting `team` to the team's abbreviation (Rosters.move).
+##
+## Free Agency also holds generated players (`user://generated_players.json`, made the
+## first time they're needed: GENERATED_COUNT random players around a depth player's
+## ratings), so it isn't only created players. They're the same format with
+## `generated` = true and don't show in Create Player's list.
 ##
 ## Each player is a plain dictionary (JSON-friendly: colors are indices into the
 ## SkaterVisual palettes):
@@ -20,6 +25,8 @@ class_name CustomPlayers
 ## start (down to POINTS_MIN) gives points back. Free: any rating 1 to 99.
 
 const SAVE_PATH := "user://custom_players.json"
+const GENERATED_PATH := "user://generated_players.json"
+const GENERATED_SEED := 20261116
 const FREE_AGENT := "FA"
 
 const POSITIONS := ["C", "LW", "RW", "D", "G"]
@@ -75,12 +82,14 @@ const WEIGHT_DEFAULT := {"Male": 205, "Female": 160}   ## multiples of 5 (the cr
 
 static var _list: Array = []
 static var _loaded := false
+static var _gen: Array = []
+static var _gen_loaded := false
 
 
 ## A new player with every setting at its default.
 static func blank() -> Dictionary:
 	var p := {
-		"team": FREE_AGENT, "first": "", "last": "", "nickname": "", "number": 19, "position": "C", "hand": "L",
+		"id": "", "team": FREE_AGENT, "first": "", "last": "", "nickname": "", "number": 19, "position": "C", "hand": "L",
 		"playstyle": "Two-Way", "skill_mode": "points", "ratings": {},
 		"gender": "Male", "height_in": HEIGHT_DEFAULT.Male, "weight_lbs": WEIGHT_DEFAULT.Male, "skin": 1, "eyes": 1, "hair_style": "messy", "hair_color": 1,
 		"facial_hair": "", "helmet": 0, "visor": true, "stick": "black", "tape": "white",
@@ -257,20 +266,35 @@ static func apply(s: Skater, p: Dictionary) -> void:
 
 # --- Storage -----------------------------------------------------------------------
 
+## Created players (what Create Player lists).
 static func all() -> Array:
 	_load()
 	return _list
 
 
+## Generated free agents (made on first use).
+static func generated() -> Array:
+	_load_generated()
+	return _gen
+
+
+## Created and generated players together.
+static func everyone() -> Array:
+	return all() + generated()
+
+
 static func save_player(p: Dictionary, index: int) -> int:
 	_load()
 	var copy := p.duplicate(true)
+	if str(copy.get("id", "")) == "":
+		copy.id = _new_id()
 	if index >= 0 and index < _list.size():
 		_list[index] = copy
 	else:
 		_list.append(copy)
 		index = _list.size() - 1
 	_write()
+	Rosters.changed()
 	return index
 
 
@@ -279,6 +303,51 @@ static func delete_player(index: int) -> void:
 	if index >= 0 and index < _list.size():
 		_list.remove_at(index)
 		_write()
+		Rosters.changed()
+
+
+## The created or generated player with this id, or {}.
+static func find(id: String) -> Dictionary:
+	for p: Dictionary in everyone():
+		if str(p.get("id", "")) == id:
+			return p
+	return {}
+
+
+## Signs a created or generated player to `team` (an abbr or FREE_AGENT) wearing `number`.
+## Call through Rosters.move, which picks the number and refreshes the rosters.
+static func set_team(id: String, team: String, number: int) -> void:
+	var p := find(id)
+	if p.is_empty():
+		return
+	p.team = team
+	p.number = number
+	if p.get("generated", false):
+		_write_generated()
+	else:
+		_write()
+
+
+## Everyone back in Free Agency (Rosters.reset_all).
+static func release_all() -> void:
+	for p: Dictionary in all():
+		p.team = FREE_AGENT
+	_write()
+	for p: Dictionary in generated():
+		p.team = FREE_AGENT
+	_write_generated()
+
+
+## A roster-sheet row for the player with what the rosters need on top: `id`, `club`
+## (where they play) and `custom` (the player, for their looks: see MatchDirector).
+static func roster_row(p: Dictionary) -> Dictionary:
+	var row := as_row(p)
+	row.id = str(p.get("id", ""))
+	row.club = str(p.get("team", FREE_AGENT))
+	row.abbr = row.club
+	row.display_name = display_name(p)
+	row.custom = p
+	return row
 
 
 ## Players in Free Agency (not signed to a team), as [index, player] pairs.
@@ -296,30 +365,64 @@ static func display_name(p: Dictionary) -> String:
 	return n if n != "" else "Unnamed #%d" % int(p.get("number", 19))
 
 
+static func _new_id() -> String:
+	return "cp:%d_%d" % [Time.get_unix_time_from_system(), randi() % 1000000]
+
+
 static func _load() -> void:
 	if _loaded:
 		return
 	_loaded = true
-	_list = []
-	if not FileAccess.file_exists(SAVE_PATH):
+	_list = _read(SAVE_PATH)
+	var fixed := false
+	for p: Dictionary in _list:
+		if str(p.get("id", "")) == "":
+			p.id = _new_id()
+			fixed = true
+	if fixed:
+		_write()
+
+
+static func _load_generated() -> void:
+	if _gen_loaded:
 		return
-	var data: Variant = JSON.parse_string(FileAccess.get_file_as_string(SAVE_PATH))
+	_gen_loaded = true
+	_gen = _read(GENERATED_PATH)
+	if _gen.is_empty():
+		_gen = FreeAgentGen.make(GENERATED_SEED)
+		_write_generated()
+
+
+static func _read(path: String) -> Array:
+	var out := []
+	if not FileAccess.file_exists(path):
+		return out
+	var data: Variant = JSON.parse_string(FileAccess.get_file_as_string(path))
 	if data is Array:
 		for d: Variant in data:
 			if d is Dictionary:
 				var p := blank()
 				p.merge(d, true)
 				# JSON numbers come back as floats.
-				for k: String in ["number", "skin", "eyes", "hair_color", "helmet"]:
+				for k: String in ["number", "skin", "eyes", "hair_color", "helmet", "height_in", "weight_lbs"]:
 					p[k] = int(p[k])
 				for k: String in p.ratings:
 					p.ratings[k] = int(p.ratings[k])
-				_list.append(p)
+				out.append(p)
+	return out
 
 
 static func _write() -> void:
-	var f := FileAccess.open(SAVE_PATH, FileAccess.WRITE)
+	_store(SAVE_PATH, _list)
+
+
+static func _write_generated() -> void:
+	_store(GENERATED_PATH, _gen)
+
+
+static func _store(path: String, list: Array) -> void:
+	var f := FileAccess.open(path, FileAccess.WRITE)
 	if f == null:
-		push_warning("CustomPlayers: can't write %s" % SAVE_PATH)
+		push_warning("CustomPlayers: can't write %s" % path)
 		return
-	f.store_string(JSON.stringify(_list, "\t"))
+	f.store_string(JSON.stringify(list, "	"))

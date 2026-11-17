@@ -8,7 +8,7 @@ extends Control
 ## type into the row (Enter keeps it, Esc drops it). L1 / R1 (Q / E) or a click switches
 ## tabs. The camera moves to what the row changes: the face for looks, the back for the
 ## name and number, the blade for stick and tape. Drag with the mouse to turn around the
-## player. Saved players go to Free Agency (CustomPlayers), where Edit Roster will sign
+## player. Saved players go to Free Agency (CustomPlayers), where Edit Roster signs
 ## them to teams. Back: the CUSTOMIZE menu (press it twice to leave unsaved changes).
 ##
 ## `-- shot=<png> [wait=<s>] [tab=player|skills|look|gear] [sel=<n>] [kb=1] [<player key>=<value> ...]`
@@ -293,7 +293,7 @@ func _tab_rows(tab: String) -> Array:
 					"hint": "Only for this screen: see the player and the team-colored sticks in a team's uniform."},
 			]
 	rows.append({"key": "save", "label": "SAVE PLAYER", "kind": "action",
-		"hint": "New players go to Free Agency, where Edit Roster (coming soon) signs them to teams."})
+		"hint": "New players go to Free Agency, where Edit Roster signs them to teams."})
 	if tab == "player" and _edit_index >= 0:
 		rows.append({"key": "delete", "label": "DELETE PLAYER", "kind": "action",
 			"hint": "Removes this saved player. Press twice to confirm."})

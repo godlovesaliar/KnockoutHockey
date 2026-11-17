@@ -360,7 +360,8 @@ static func uniform_colors(team: Color) -> Dictionary:
 static func uniform_material(c: Dictionary, darken := 1.0) -> ShaderMaterial:
 	var design: String = c.get("design", "classic")
 	var accent: Color = c.get("number_outline", Color.BLACK)
-	var key := "%s|%s|%s|%s|%s|%s|%s|%.2f" % [c.jersey.to_html(), c.trim.to_html(), c.pants.to_html(), c.gloves.to_html(), c.skates.to_html(), accent.to_html(), design, darken]
+	var params := Teams.design_params(c)
+	var key := "%s|%s|%s|%s|%s|%s|%s|%s|%.2f" % [c.jersey.to_html(), c.trim.to_html(), c.pants.to_html(), c.gloves.to_html(), c.skates.to_html(), accent.to_html(), design, str(params) if c.has("design_params") else "", darken]
 	if _materials.has(key):
 		return _materials[key]
 	var m := ShaderMaterial.new()
@@ -369,7 +370,6 @@ static func uniform_material(c: Dictionary, darken := 1.0) -> ShaderMaterial:
 		if c[k] is Color:
 			m.set_shader_parameter(k, c[k])
 	m.set_shader_parameter("accent_color", accent)
-	var params: Dictionary = Teams.DESIGNS.get(design, {})
 	for k: String in params:
 		m.set_shader_parameter(k, params[k])
 	m.set_shader_parameter("darken", darken)
@@ -822,7 +822,7 @@ static func _skate_mesh(xf: Transform3D) -> ArrayMesh:
 ## out by normal_fade.
 ## Yoke designs carry the back number a little lower, clear of the yoke.
 static func number_drop(c: Dictionary) -> float:
-	var d: Dictionary = Teams.DESIGNS.get(c.get("design", "classic"), {})
+	var d := Teams.design_params(c)
 	return 0.06 if float(d.get("yoke_r", 0.0)) > 0.0 else 0.0
 
 

@@ -438,7 +438,8 @@ func _on_goal(team: int, scorer: Skater) -> void:
 
 
 func _on_penalty(offender: Skater, kind: StringName) -> void:
-	var line: String = {&"tripping": "trippingcall", &"boarding": "bigpenalty", &"interference": "interference"}.get(kind, "penalty")
+	var line: String = {&"tripping": "trippingcall", &"boarding": "bigpenalty", &"interference": "interference",
+			&"hooking": "hookingcall", &"high_sticking": "highstickcall", &"holding": "holdingcall", &"charging": "chargingcall"}.get(kind, "penalty")
 	if not Sfx.has_line(line):
 		line = "penalty"
 	_say(line, 1.0, 3, 0.0)

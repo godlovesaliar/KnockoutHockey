@@ -5,7 +5,8 @@ extends Node3D
 ##   fov=<deg>             lens (default 60)
 ##   excite=<0..1>         crowd excitement (fans stand and cheer)
 ##   goal=<0|1>            the screens flash GOAL for that team
-##   home=<i> away=<i>     Teams.LIST indices (default 0, 1)
+##   home=<i> away=<i>     Teams indices (default 0, 1)
+##   arena=<id>            an arena (Arenas; default: the home team's)
 ##   shot=<png> wait=<s>   save a screenshot after `wait` seconds and quit
 ##   noarena               the bare rink (for comparing stats)
 ##   stats                 print fps, draw calls and primitives with the shot
@@ -27,8 +28,9 @@ func _ready() -> void:
 	add_child(sun)
 	_rink = (load("res://scenes/match/Rink.tscn") as PackedScene).instantiate()
 	_rink.build_arena = not args.has("noarena")
-	add_child(_rink)
 	var home := int(args.get("home", "0"))
+	_rink.arena_spec = Arenas.find(str(args["arena"])) if args.has("arena") else Arenas.home_of(home)
+	add_child(_rink)
 	var away := int(args.get("away", "1"))
 	_rink.set_bench_colors([MenuStyle.team_color(home), MenuStyle.team_color(away)])
 	var logo := MenuStyle.team_logo(home)

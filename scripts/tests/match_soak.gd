@@ -54,6 +54,15 @@ func _play(n: int, period: float, totals: Dictionary) -> void:
 	add_child(m)
 	var done := {"finished": false} # lambdas capture locals by value, so use a container
 	m.match_finished.connect(func(_s: Array) -> void: done.finished = true)
+	m.penalty_called.connect(func(_o: Skater, kind: StringName) -> void:
+		var k := "pen_" + str(kind)
+		totals[k] = int(totals.get(k, 0)) + 1)
+	await get_tree().process_frame
+	for t in 2:   # every foul committed, called or not
+		for s in m.lineup(t).all_skaters():
+			s.foul_committed.connect(func(_o: Skater, _v: Skater, kind: StringName) -> void:
+				var k := "foul_" + str(kind)
+				totals[k] = int(totals.get(k, 0)) + 1)
 	if OS.get_cmdline_user_args().has("trace"):
 		m.phase_changed.connect(func(ph: int) -> void:
 			print("  [%.1fs] phase %s  P%d clock %.1f  score %s" % [Time.get_ticks_msec() / 1000.0, MatchDirector.Phase.keys()[ph], m.period, m.clock, m.score]))

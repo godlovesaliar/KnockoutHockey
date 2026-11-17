@@ -64,10 +64,15 @@ func _team_call(t: int) -> String:
 
 
 ## "pa_n17_big" / "pa_n17_flat" for a player's number ("" when the number has no line).
+## Every Pine Barrens Camper wears a number with 13 in it (113, 1313...): the PA just calls
+## them all "Number thirteen".
 func _num(s: Skater, big := false) -> String:
-	if s == null or s.number < 0 or s.number >= AnnouncerLines.NUMBERS:
+	if s == null:
 		return ""
-	return "pa_n%d_%s" % [s.number, "big" if big else "flat"]
+	var n := 13 if _team_call(s.team) == "campers" else s.number
+	if n < 0 or n >= AnnouncerLines.NUMBERS:
+		return ""
+	return "pa_n%d_%s" % [n, "big" if big else "flat"]
 
 
 func _on_goal(team: int, scorer: Skater) -> void:

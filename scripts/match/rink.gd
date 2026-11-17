@@ -30,6 +30,9 @@ const AD_GAP := 1.6        ## meters of plain board between ads (stretched to fi
 
 var ice_material: ShaderMaterial
 var arena: Arena   ## null when build_arena is off (or in the editor)
+## The arena to build (Arenas format). Empty: the game's (Arenas.for_game, from the
+## settings' home team). Set before the rink enters the tree, or use rebuild_arena.
+var arena_spec := {}
 var nets: Array[Net] = []
 ## Teams switch ends every period. Unswapped: team 0 defends the +Z net (bottom of the screen).
 var ends_swapped := false
@@ -53,6 +56,11 @@ const SEAT_HIPS := 0.27          ## a seated player's hips: this far in front of
 
 func _ready() -> void:
 	add_to_group("rink")
+	if arena_spec.is_empty() and not Engine.is_editor_hint():
+		arena_spec = Arenas.for_game(int(GameSettings.config.get("home_team", 0)))
+	var boards: Variant = Arenas.option_color(arena_spec.get("boards", "white"), board_color)
+	if boards != null:
+		board_color = boards
 	_build_ice()
 	_build_boards()
 	_build_ads()
@@ -62,9 +70,40 @@ func _ready() -> void:
 	_build_doors()
 	_build_nets()
 	if build_arena and not Engine.is_editor_hint():
-		arena = Arena.new()
-		arena.name = "Arena"
-		add_child(arena)
+		_make_arena()
+
+
+func _make_arena() -> void:
+	arena = Arena.new()
+	arena.name = "Arena"
+	arena.spec = arena_spec
+	add_child(arena)
+
+
+## Builds a different arena around the rink (the board color too). Keeps the teams it
+## was dressed for.
+func rebuild_arena(spec: Dictionary) -> void:
+	arena_spec = spec
+	var c: Variant = Arenas.option_color(spec.get("boards", "white"), Color(0.96, 0.96, 0.94))
+	set_board_color(c if c != null else Color(0.96, 0.96, 0.94))
+	if not build_arena:
+		return
+	var teams := [-1, -1]
+	if arena:
+		teams = [arena.home_team, arena.away_team]
+		remove_child(arena)
+		arena.queue_free()
+	_make_arena()
+	if teams[0] >= 0 or teams[1] >= 0:
+		arena.set_teams(teams[0], teams[1])
+
+
+## Recolors the boards (and the doors' panels).
+func set_board_color(c: Color) -> void:
+	board_color = c
+	for n: Node in find_children("*", "MeshInstance3D", true, false):
+		if n.name in ["Boards", "BoardsOuter", "Panel"] and (n as MeshInstance3D).material_override is StandardMaterial3D:
+			((n as MeshInstance3D).material_override as StandardMaterial3D).albedo_color = c
 
 
 func get_net(index: int) -> Net:

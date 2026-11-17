@@ -6,7 +6,8 @@ class_name Teams
 ## number's face and outline. `chant` names the crowd's chant clip (Sfx); `logo` is
 ## the crest (cut from the logo sheets by tools/build_logos.gd); `call` names the team's
 ## announcer clips (intro_home_<call> / intro_away_<call>).
-## The team editor (M7) will replace this table.
+## Teams made in Create Team (CustomTeams) come after these: team(i) for
+## i >= LIST.size(). Read teams through count() / team(i) / logo(i), never LIST.
 
 const LIST := [
 	{
@@ -419,28 +420,116 @@ const DESIGN_OF := {
 
 
 static func count() -> int:
-	return LIST.size()
+	return LIST.size() + CustomTeams.all().size()
 
 
+## The team, wearing any uniform saved in Create Uniform (Uniforms).
 static func team(i: int) -> Dictionary:
+	if _dressed.has(i):
+		return _dressed[i]
+	var t: Dictionary = base_team(i)
+	if Uniforms.has_any(str(t.abbr)):
+		t = Uniforms.apply(t)
+		_dressed[i] = t
+	return t
+
+
+## The team as the league list (or Create Team) has it, before Create Uniform.
+static func base_team(i: int) -> Dictionary:
+	if i >= LIST.size():
+		var custom := CustomTeams.all()
+		if not custom.is_empty():
+			return custom[mini(i - LIST.size(), custom.size() - 1)]
 	return LIST[clampi(i, 0, LIST.size() - 1)]
+
+
+static var _dressed := {}   ## index -> team with its saved uniforms (Uniforms.apply)
+
+
+static func is_custom(i: int) -> bool:
+	return i >= LIST.size() and i < count()
+
+
+## The index of the team with this abbr, or -1.
+static func find_abbr(abbr: String) -> int:
+	for i in count():
+		if str(team(i).abbr) == abbr:
+			return i
+	return -1
+
+
+static var _logos := {}   ## logo path -> Texture2D (or null)
+
+
+## The team's crest, or null. League teams' are imported PNGs; created teams' are drawn
+## badges saved under user:// (CustomTeams.logo_path), loaded once.
+static func logo(i: int) -> Texture2D:
+	var path := str(team(i).get("logo", ""))
+	if path == "":
+		return null
+	if not _logos.has(path):
+		var tex: Texture2D = null
+		if path.begins_with("res://"):
+			if ResourceLoader.exists(path):
+				tex = load(path)
+		elif FileAccess.file_exists(path):
+			var img := Image.load_from_file(path)
+			if img != null and not img.is_empty():
+				img.generate_mipmaps()
+				tex = ImageTexture.create_from_image(img)
+		_logos[path] = tex
+	return _logos[path]
+
+
+static func has_logo(i: int) -> bool:
+	var path := str(team(i).get("logo", ""))
+	return ResourceLoader.exists(path) if path.begins_with("res://") else (path != "" and FileAccess.file_exists(path))
+
+
+## A created team or a uniform was saved or deleted: drop cached logos and uniforms.
+static func changed() -> void:
+	_logos.clear()
+	_dressed.clear()
 
 
 ## A team's uniform for this game: its own colors, or road whites when they'd clash
 ## with the opponent's (jerseys too alike to tell apart from the camera).
 ## `design` names its entry in DESIGNS.
 static func uniform_vs(i: int, opponent: int, away: bool) -> Dictionary:
-	var mine: Dictionary = team(i).colors.duplicate()
-	mine["design"] = DESIGN_OF.get(team(i).get("call", ""), "classic")
+	return uniform_of(team(i), team(opponent), away)
+
+
+## uniform_vs for team dictionaries (Create Team previews a team that isn't saved yet).
+static func uniform_of(mine_team: Dictionary, their_team: Dictionary, away: bool) -> Dictionary:
+	var mine: Dictionary = mine_team.colors.duplicate()
+	mine["design"] = mine_team.get("design", DESIGN_OF.get(mine_team.get("call", ""), "classic"))
+	if mine_team.has("design_params"):
+		mine["design_params"] = mine_team.design_params
 	if not away:
 		return mine
-	var theirs: Dictionary = team(opponent).colors
-	var a: Color = mine.jersey
+	var theirs: Dictionary = their_team.colors
 	var b: Color = theirs.jersey
-	if Vector3(a.r - b.r, a.g - b.g, a.b - b.b).length() > CLASH:
+	if mine_team.has("road"):
+		# A road set saved in Create Uniform: worn on the road unless it clashes and the
+		# home one doesn't.
+		var road: Dictionary = mine_team.road.duplicate()
+		if _clash(road.jersey, b) and not _clash(mine.jersey, b):
+			return mine
+		return road
+	if not _clash(mine.jersey, b):
 		return mine
+	return auto_road(mine)
+
+
+static func _clash(a: Color, b: Color) -> bool:
+	return Vector3(a.r - b.r, a.g - b.g, a.b - b.b).length() <= CLASH
+
+
+## The road uniform worked out from the home one: white with the home color as trim, or
+## for a light home jersey the trim color.
+static func auto_road(mine: Dictionary) -> Dictionary:
 	var road := mine.duplicate()
-	if a.get_luminance() > 0.7:
+	if (mine.jersey as Color).get_luminance() > 0.7:
 		# Already a light jersey: wear the trim color instead.
 		road.jersey = mine.trim
 		road.trim = mine.jersey
@@ -452,11 +541,18 @@ static func uniform_vs(i: int, opponent: int, away: bool) -> Dictionary:
 	return road
 
 
+## A uniform's design parameters (Create Uniform's own, else the named design's).
+static func design_params(c: Dictionary) -> Dictionary:
+	if c.has("design_params"):
+		return c.design_params
+	return DESIGNS.get(c.get("design", "classic"), {})
+
+
 ## Teams.LIST indices of the teams in a conference, in list order.
 static func in_conference(conference: String) -> Array[int]:
 	var out: Array[int] = []
-	for i in LIST.size():
-		if LIST[i].conference == conference:
+	for i in count():
+		if team(i).conference == conference:
 			out.append(i)
 	return out
 

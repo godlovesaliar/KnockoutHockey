@@ -137,6 +137,10 @@ const GROUPS := [
 		["trippingcall", "pbp", ["penalty_trip"], "a tripping penalty"],
 		["bigpenalty", "pbp", ["penalty_boarding"], "a boarding penalty"],
 		["interference", "pbp", ["penalty_interference"], "an interference penalty"],
+		["hookingcall", "pbp", ["penalty_hook"], "a hooking penalty"],
+		["highstickcall", "pbp", ["penalty_highstick"], "a high-sticking penalty"],
+		["holdingcall", "pbp", ["penalty_holding"], "a holding penalty"],
+		["chargingcall", "pbp", ["penalty_charging"], "a charging penalty"],
 		["powerplay", "pbp", [], "a team goes on the power play"],
 		["pk_success", "pbp", [], "a penalty is killed off"],
 		["whistle", "pbp", [], "a whistle for a frozen puck or a puck out of play"],
@@ -197,6 +201,10 @@ const GROUPS := [
 		["pa_pen_tripping", "pa", [], "end of a penalty call: \"Two minutes, for tripping.\""],
 		["pa_pen_interference", "pa", [], "end of a penalty call: \"Two minutes, for interference.\""],
 		["pa_pen_boarding", "pa", [], "end of a penalty call: \"Two minutes, for boarding.\""],
+		["pa_pen_hooking", "pa", [], "end of a penalty call: \"Two minutes, for hooking.\""],
+		["pa_pen_high_sticking", "pa", [], "end of a penalty call: \"Two minutes, for high-sticking.\""],
+		["pa_pen_holding", "pa", [], "end of a penalty call: \"Two minutes, for holding.\""],
+		["pa_pen_charging", "pa", [], "end of a penalty call: \"Two minutes, for charging.\""],
 		["pa_pen_fighting", "pa", [], "after a fight with majors: both numbers, then \"Five minutes each, for fighting.\""],
 		["pa_full_strength", "pa", [], "a penalty runs out"],
 		["pa_hattrick", "pa", [], "after a home player's third goal"],
@@ -218,7 +226,7 @@ const GROUPS := [
 ]
 
 ## Lines the CSV has that nothing in the game calls (no such penalty yet).
-const UNUSED := ["penalty_hook", "penalty_slash", "penalty_rough", "penalty_highstick"]
+const UNUSED := ["penalty_slash", "penalty_rough"]
 
 static var _alias_cache := {}
 static var _voice_cache := {}
@@ -240,7 +248,7 @@ static func groups() -> Array:
 				var fills: Array = [line]
 				if "{team}" in line:
 					fills = []
-					for i in Teams.count():
+					for i in Teams.LIST.size():   # league teams (created ones have no clips)
 						fills.append(line.replace("{team}", Teams.team(i)["call"]))
 				elif "{n}" in line:
 					fills = nums.map(func(n: String) -> String: return line.replace("{n}", n))

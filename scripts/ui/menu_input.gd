@@ -4,10 +4,13 @@ extends Node
 ## Remembers whether a pad or a keyboard spoke last, so screens can show that device's
 ## button prompts.
 ##
-##   Keyboard 1: W A S D, accept J / Space / Enter, back L / Esc / Backspace, Q / E bumpers.
-##   Keyboard 2: arrows, accept Num 1 / Num Enter, back Num 3, Num 7 / Num 9 bumpers.
-##   Pads: d-pad or left stick, accept Cross, back Circle, Start, L1 / R1. (Prompts are
-##   PlayStation buttons; Godot's JOY_BUTTON_A / B are Cross / Circle.)
+##   Keyboard 1: W A S D, accept J / Space / Enter, back L / Esc / Backspace, Q / E bumpers,
+##   K square, I triangle, Tab select.
+##   Keyboard 2: arrows, accept Num 1 / Num Enter, back Num 3, Num 7 / Num 9 bumpers,
+##   Num 4 square, Num 8 triangle, Num 5 select.
+##   Pads: d-pad or left stick, accept Cross, back Circle, Start, L1 / R1, Square, Triangle,
+##   Select. (Prompts are PlayStation buttons; Godot's JOY_BUTTON_A / B / X / Y are
+##   Cross / Circle / Square / Triangle.)
 ##
 ## Screens that only need one cursor use moved / side / accepted / back. Screens where
 ## each controller acts for itself (team select) use the dev_* signals, which name the
@@ -23,6 +26,7 @@ signal dev_side(dev: String, dir: int)
 signal dev_bumper(dev: String, dir: int)   ## -1 left bumper, +1 right
 signal dev_accepted(dev: String)
 signal dev_back(dev: String)
+signal button(name: String)   ## "square", "triangle" or "select" (screens that use more buttons)
 
 const REPEAT_FIRST := 0.38
 const REPEAT_NEXT := 0.09
@@ -30,9 +34,10 @@ const REPEAT_NEXT := 0.09
 const KEYS := {
 	"kb1": {"up": [KEY_W], "down": [KEY_S], "left": [KEY_A], "right": [KEY_D],
 		"ok": [KEY_J, KEY_SPACE, KEY_ENTER], "back": [KEY_L, KEY_ESCAPE, KEY_BACKSPACE],
-		"lb": [KEY_Q], "rb": [KEY_E]},
+		"lb": [KEY_Q], "rb": [KEY_E], "square": [KEY_K], "triangle": [KEY_I], "select": [KEY_TAB]},
 	"kb2": {"up": [KEY_UP], "down": [KEY_DOWN], "left": [KEY_LEFT], "right": [KEY_RIGHT],
-		"ok": [KEY_KP_1, KEY_KP_ENTER], "back": [KEY_KP_3], "lb": [KEY_KP_7], "rb": [KEY_KP_9]},
+		"ok": [KEY_KP_1, KEY_KP_ENTER], "back": [KEY_KP_3], "lb": [KEY_KP_7], "rb": [KEY_KP_9],
+		"square": [KEY_KP_4], "triangle": [KEY_KP_8], "select": [KEY_KP_5]},
 }
 
 var using_pad := false
@@ -53,6 +58,7 @@ func _process(delta: float) -> void:
 		var k: Dictionary = KEYS[dev]
 		_device(dev, false, delta, _keys(k.down) - _keys(k.up), _keys(k.right) - _keys(k.left),
 				_keys(k.ok) > 0, _keys(k.back) > 0, false, _keys(k.lb) > 0, _keys(k.rb) > 0)
+		_extra(dev, false, _keys(k.square) > 0, _keys(k.triangle) > 0, _keys(k.select) > 0)
 	for p in Input.get_connected_joypads():
 		var y := Input.get_joy_axis(p, JOY_AXIS_LEFT_Y)
 		var x := Input.get_joy_axis(p, JOY_AXIS_LEFT_X)
@@ -64,6 +70,8 @@ func _process(delta: float) -> void:
 				Input.is_joy_button_pressed(p, JOY_BUTTON_B), Input.is_joy_button_pressed(p, JOY_BUTTON_START),
 				Input.is_joy_button_pressed(p, JOY_BUTTON_LEFT_SHOULDER),
 				Input.is_joy_button_pressed(p, JOY_BUTTON_RIGHT_SHOULDER))
+		_extra("pad%d" % p, true, Input.is_joy_button_pressed(p, JOY_BUTTON_X),
+				Input.is_joy_button_pressed(p, JOY_BUTTON_Y), Input.is_joy_button_pressed(p, JOY_BUTTON_BACK))
 
 
 ## Labels for the prompt bar, matching the device in use.
@@ -103,6 +111,20 @@ func _device(dev: String, pad: bool, delta: float, v: int, h: int, ok: bool, bk:
 	if _pressed(dev + ":rb", rb):
 		using_pad = pad
 		dev_bumper.emit(dev, 1)
+
+
+## The prompt label for an extra button on the device in use.
+func button_label(name: String) -> String:
+	if using_pad:
+		return name.to_upper()
+	return {"square": "K", "triangle": "I", "select": "TAB"}.get(name, name)
+
+
+func _extra(dev: String, pad: bool, square: bool, triangle: bool, select: bool) -> void:
+	for b: Array in [["square", square], ["triangle", triangle], ["select", select]]:
+		if _pressed(dev + ":" + b[0], b[1]):
+			using_pad = pad
+			button.emit(b[0])
 
 
 func _keys(keys: Array) -> int:

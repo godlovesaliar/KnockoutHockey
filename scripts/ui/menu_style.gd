@@ -60,7 +60,6 @@ const FONT_DIR := "res://assets/fonts/"
 static var _fonts := {}
 static var _title_fonts := {}
 static var _chrome: Shader
-static var _logos := {}
 
 
 ## The heavy sports face: italic unless `slant` is 0.
@@ -341,10 +340,7 @@ static func team_color(team_id: int) -> Color:
 
 ## The team's crest (cached), or null.
 static func team_logo(team_id: int) -> Texture2D:
-	if not _logos.has(team_id):
-		var path: String = Teams.team(team_id).get("logo", "")
-		_logos[team_id] = load(path) if path != "" and ResourceLoader.exists(path) else null
-	return _logos[team_id]
+	return Teams.logo(team_id)
 
 
 ## A slanted bar (the menu's parallelogram): `skew` pixels of lean on each end.

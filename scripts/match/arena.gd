@@ -16,25 +16,30 @@ extends Node3D
 const CROWD_SHADER := preload("res://scenes/match/crowd.gdshader")
 const SEGS := 24
 
+# The building's sizes. Upper case like constants: these are Modern Arena's, and a
+# style (ArenaStyles) may set its own before the arena is built (see `spec`).
 # Lower bowl.
-const START := 3.4          ## the bowl's front wall (clear of the benches and boxes)
-const LOW_ROWS := 18
-const LOW_DEPTH := 0.85
-const LOW_RISE := 0.42
-const LOW_Y0 := 1.1         ## first row: fans see over the boards
+var START := 3.4          ## the bowl's front wall (clear of the benches and boxes)
+var LOW_ROWS := 18
+var LOW_DEPTH := 0.85
+var LOW_RISE := 0.42
+var LOW_Y0 := 1.1         ## first row: fans see over the boards
 # Suite level and fascia.
-const CROSS_W := 1.8        ## cross aisle behind the lower bowl
-const SUITE_STEP := 1.2     ## suite floor above the cross aisle
-const SUITE_DEPTH := 2.6
-const SUITE_H := 3.0
-const OVERHANG := 0.6       ## the upper bowl's fascia juts out over the balcony
-const FASCIA_H := 1.3
+var CROSS_W := 1.8        ## cross aisle behind the lower bowl
+var SUITE_STEP := 1.2     ## suite floor above the cross aisle
+var SUITE_DEPTH := 2.6
+var SUITE_H := 3.0
+var OVERHANG := 0.6       ## the upper bowl's fascia juts out over the balcony
+var FASCIA_H := 1.3
 # Upper bowl, top concourse, roof.
-const UP_ROWS := 15
-const UP_DEPTH := 0.8
-const UP_RISE := 0.56
-const TOP_W := 2.0
-const ROOF_Y := 34.0
+var UP_ROWS := 15
+var UP_DEPTH := 0.8
+var UP_RISE := 0.56
+var TOP_W := 2.0
+var ROOF_Y := 34.0         ## a flat roof's height; a dome's crown
+# Style switches.
+var SUITES := true          ## a suite level between the bowls (off: one rake with a cross aisle)
+var DOME_SPRING := 0.0      ## > 0: a ribbed dome springing from the back wall at this height, up to ROOF_Y
 # Center-hung scoreboard: its bottom is above the broadcast camera (24 m up).
 const BOARD_Y := 25.5
 const BOARD_SIZE := Vector3(5.8, 4.9, 8.6)
@@ -83,6 +88,10 @@ const DARK_WEAR := [Color(0.07, 0.07, 0.08), Color(0.12, 0.13, 0.17), Color(0.1,
 @export var seat_color := Color(0.2, 0.24, 0.36)      ## before the home team is known
 @export var concrete := Color(0.27, 0.27, 0.29)
 
+## What to build: the arena's style and options (Arenas format). Set before it enters
+## the tree; empty builds Modern Arena with every option at its default.
+var spec := {}
+
 var match_ref: Node = null          ## the MatchDirector feeding the screens (null in menus)
 var home_team := -1
 var away_team := -1
@@ -108,6 +117,9 @@ var _rng := RandomNumberGenerator.new()
 
 
 func _ready() -> void:
+	var sizes := Arenas.sizes(str(spec.get("style", "modern")))
+	for k: String in sizes:
+		set(k, sizes[k])
 	_rng.seed = 7151
 	_crowd_mat = ShaderMaterial.new()
 	_crowd_mat.shader = CROWD_SHADER
@@ -125,13 +137,20 @@ func _ready() -> void:
 		low_detail = true
 	_build_seating()
 	low_detail = was
-	_build_ribbon()
+	if spec.get("ribbon", true):
+		_build_ribbon()
+	else:
+		_build_fascia()
 	_build_roof()
 	_build_lights()
-	_build_scoreboard()
+	if spec.get("scoreboard", true):
+		_build_scoreboard()
+	if spec.get("banners", false):
+		_build_banners()
 	_build_ribbon_texture()
-	for n: String in ["Roof", "Trusses", "LightHousings", "IceLights", "StandLights", "Scoreboard"]:
-		_to_rafters(get_node(n))
+	for n: String in ["Roof", "Coffers", "Trusses", "Ribs", "Crown", "CrownRing", "LightHousings", "IceLights", "StandLights", "Scoreboard", "Banners"]:
+		if has_node(n):
+			_to_rafters(get_node(n))
 	_recolor()
 	var sfx := get_node_or_null("/root/Sfx")
 	if sfx and sfx.has_signal("crowd_reacted"):
@@ -140,39 +159,39 @@ func _ready() -> void:
 
 # --- Heights and offsets of the levels ------------------------------------------
 
-static func low_y(i: int) -> float:
+func low_y(i: int) -> float:
 	return LOW_Y0 + i * LOW_RISE
 
 
-static func low_o(i: int) -> float:
+func low_o(i: int) -> float:
 	return START + i * LOW_DEPTH
 
 
-static func cross_y() -> float:
+func cross_y() -> float:
 	return low_y(LOW_ROWS - 1) + LOW_RISE
 
 
-static func balcony_o() -> float:
+func balcony_o() -> float:
 	return low_o(LOW_ROWS) + CROSS_W
 
 
-static func suite_y() -> float:
+func suite_y() -> float:
 	return cross_y() + SUITE_STEP
 
 
-static func fascia_o() -> float:
+func fascia_o() -> float:
 	return balcony_o() - OVERHANG
 
 
-static func up_y(i: int) -> float:
+func up_y(i: int) -> float:
 	return suite_y() + SUITE_H + FASCIA_H + i * UP_RISE
 
 
-static func up_o(i: int) -> float:
+func up_o(i: int) -> float:
 	return fascia_o() + i * UP_DEPTH
 
 
-static func back_o() -> float:
+func back_o() -> float:
 	return up_o(UP_ROWS) + TOP_W
 
 
@@ -369,10 +388,11 @@ func _build_bowl() -> void:
 	_ring_wall(risers, low_o(LOW_ROWS), low_y(LOW_ROWS - 1), cross_y())
 	_ring_cap(treads, low_o(LOW_ROWS), balcony_o(), cross_y())
 	# Suite balcony: its front wall, floor, the lit windows at the back, the soffit above.
-	_ring_wall(dark, balcony_o(), cross_y(), suite_y())
-	_ring_cap(treads, balcony_o(), balcony_o() + SUITE_DEPTH, suite_y())
 	var top := suite_y() + SUITE_H
-	_ring_cap(dark, fascia_o(), balcony_o() + SUITE_DEPTH + 0.3, top, false)
+	if SUITES:
+		_ring_wall(dark, balcony_o(), cross_y(), suite_y())
+		_ring_cap(treads, balcony_o(), balcony_o() + SUITE_DEPTH, suite_y())
+		_ring_cap(dark, fascia_o(), balcony_o() + SUITE_DEPTH + 0.3, top, false)
 	# Upper bowl: the fascia is its first riser (the ribbon board covers its face).
 	for i in UP_ROWS:
 		if i > 0:
@@ -382,23 +402,26 @@ func _build_bowl() -> void:
 	var ty := up_y(UP_ROWS - 1) + UP_RISE
 	_ring_wall(risers, up_o(UP_ROWS), up_y(UP_ROWS - 1), ty)
 	_ring_cap(treads, up_o(UP_ROWS), back_o(), ty)
-	_ring_wall(dark, back_o(), ty, ROOF_Y)
+	_ring_wall(dark, back_o(), ty, DOME_SPRING if DOME_SPRING > 0.0 else ROOF_Y)
 	_commit(risers, MeshUtil.material(concrete, 0.85), "BowlRisers")
 	_commit(treads, MeshUtil.material(concrete.darkened(0.35), 0.9), "BowlTreads")
 	_commit(dark, MeshUtil.material(Color(0.07, 0.07, 0.09), 0.8), "BowlDark")
 
 	# Suite windows: warm rooms behind glass, split by mullions.
-	var win := _st()
-	_ring_wall(win, balcony_o() + SUITE_DEPTH, suite_y(), top)
-	_commit(win, _emissive(Color(0.42, 0.3, 0.2), 0.25), "SuiteWindows", false)
-	_mullions(balcony_o() + SUITE_DEPTH - 0.02, suite_y(), top, 4.2)
+	if SUITES:
+		var win := _st()
+		_ring_wall(win, balcony_o() + SUITE_DEPTH, suite_y(), top)
+		_commit(win, _emissive(Color(0.42, 0.3, 0.2), 0.25), "SuiteWindows", false)
+		_mullions(balcony_o() + SUITE_DEPTH - 0.02, suite_y(), top, 4.2)
 	# Glass rails: the balcony front, the upper bowl front, the cross aisle.
 	var glass := _st()
-	_ring_wall(glass, balcony_o() + 0.03, suite_y(), suite_y() + 1.0)
+	if SUITES:
+		_ring_wall(glass, balcony_o() + 0.03, suite_y(), suite_y() + 1.0)
 	_ring_wall(glass, fascia_o() + 0.05, up_y(0), up_y(0) + 0.95)
 	_commit(glass, _glass(), "GlassRails", false)
 	var rails := _st()
-	_ring_cap(rails, balcony_o() - 0.02, balcony_o() + 0.08, suite_y() + 1.0)
+	if SUITES:
+		_ring_cap(rails, balcony_o() - 0.02, balcony_o() + 0.08, suite_y() + 1.0)
 	_ring_cap(rails, fascia_o(), fascia_o() + 0.1, up_y(0) + 0.95)
 	_ring_cap(rails, low_o(LOW_ROWS) - 0.03, low_o(LOW_ROWS) + 0.05, cross_y() + 0.95)
 	_ring_cap(rails, START - 0.04, START + 0.06, LOW_Y0)
@@ -515,11 +538,13 @@ func _build_seating() -> void:
 		var band := 0 if i == 0 else 1 + (i - 1) / CHUNK_ROWS
 		for s in _row_spots(up_o(i) + UP_DEPTH - 0.44, SEAT_W, up_aisles):
 			seats.append([1, _seat_xf(s, up_y(i)), _sector(s[0]), _chunk(1, s[0], band)])
-	for r in 2:
+	for r in (2 if SUITES else 0):
 		for s in _row_spots(balcony_o() + 0.95 + r * 1.0, 0.75, low_aisles):
 			seats.append([2, _seat_xf(s, suite_y() + r * 0.25), _sector(s[0]), _chunk(2, s[0], 0)])
 
-	var occupancy := [0.9, 0.82, 0.55]
+	# Attendance (an arena option) thins every level alike.
+	var filled := clampf(float(spec.get("attendance", 100)) / 100.0, 0.05, 1.0)
+	var occupancy := [0.9 * filled, 0.82 * filled, 0.55 * filled]
 	var groups := {}
 	for s: Array in seats:
 		var key: int = s[2] * 3 + s[0]
@@ -827,6 +852,11 @@ func _recolor() -> void:
 	if home_team >= 0:
 		home_c = MenuStyle.team_color(home_team)
 		colors = Teams.team(home_team).colors
+	# The arena's own seat color, if it has one (else the home team's).
+	var own: Variant = Arenas.option_color(spec.get("seats", "team"))
+	if own != null:
+		home_c = own
+	_color_banners()
 	_seat_mats[0].albedo_color = home_c.darkened(0.3)
 	_seat_mats[1].albedo_color = home_c.darkened(0.5)
 	var away_colors: Dictionary = Teams.team(away_team).colors if away_team >= 0 else {}
@@ -1007,9 +1037,83 @@ static func _img(tex: Texture2D) -> Image:
 	return img
 
 
+## The fascia's face without a ribbon board: a plain band in the arena's dark trim.
+func _build_fascia() -> void:
+	var st := _st()
+	_ring_wall(st, fascia_o() - 0.01, suite_y() + SUITE_H, up_y(0), true, 1.0)
+	_commit(st, MeshUtil.material(Color(0.07, 0.07, 0.09), 0.7), "Fascia", false)
+
+
+## The color of the lights over the ice (the arena's `lights` option).
+func light_color() -> Color:
+	return Arenas.LIGHT_COLORS.get(str(spec.get("lights", "cool")), Arenas.LIGHT_COLORS.cool)
+
+
+# --- Banners ---------------------------------------------------------------------------
+
+const BANNER_SIZE := Vector2(3.2, 6.4)
+var _banner_mat: StandardMaterial3D
+
+## Championship banners hanging from the trusses over each end, in the home team's
+## colors with its crest (colored by _recolor once the teams are known).
+func _build_banners() -> void:
+	var root := Node3D.new()
+	root.name = "Banners"
+	add_child(root)
+	_banner_mat = StandardMaterial3D.new()
+	_banner_mat.roughness = 0.85
+	_banner_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	# Lit a little from the light grid's spill (the roof is dark up there).
+	_banner_mat.emission_enabled = true
+	_banner_mat.emission_energy_multiplier = 0.35
+	var top := ROOF_Y - 3.0 if DOME_SPRING <= 0.0 else DOME_SPRING + 7.0
+	for end: float in [-1.0, 1.0]:
+		for i in 6:
+			var mi := MeshInstance3D.new()
+			var q := QuadMesh.new()
+			q.size = BANNER_SIZE
+			mi.mesh = q
+			mi.material_override = _banner_mat
+			mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+			var x := (i - 2.5) * (BANNER_SIZE.x + 1.2)
+			var z := end * (RinkSpec.HALF_L + up_o(UP_ROWS / 2) * 0.55)
+			mi.position = Vector3(x, top - BANNER_SIZE.y * 0.5, z)
+			mi.rotation.y = 0.0 if end < 0.0 else PI
+			root.add_child(mi)
+
+
+func _color_banners() -> void:
+	if _banner_mat == null:
+		return
+	var col := MenuStyle.team_color(home_team) if home_team >= 0 else seat_color
+	var trim := Color(0.95, 0.95, 0.93)
+	if home_team >= 0:
+		trim = Teams.team(home_team).colors.trim
+		if (trim as Color).is_equal_approx(col):
+			trim = Color(0.95, 0.95, 0.93)
+	var w := 128
+	var h := 256
+	var img := Image.create(w, h, false, Image.FORMAT_RGBA8)
+	img.fill(col)
+	img.fill_rect(Rect2i(0, int(h * 0.82), w, int(h * 0.05)), trim)
+	img.fill_rect(Rect2i(0, int(h * 0.9), w, int(h * 0.03)), trim)
+	img.fill_rect(Rect2i(0, 0, w, 6), trim)
+	var logo := _img(MenuStyle.team_logo(home_team)) if home_team >= 0 else null
+	if logo:
+		var lw := int(w * 0.8)
+		logo.resize(lw, maxi(1, int(logo.get_height() * lw / float(logo.get_width()))), Image.INTERPOLATE_BILINEAR)
+		img.blend_rect(logo, Rect2i(Vector2i.ZERO, logo.get_size()), Vector2i((w - lw) / 2, int(h * 0.12)))
+	img.generate_mipmaps()
+	_banner_mat.albedo_texture = ImageTexture.create_from_image(img)
+	_banner_mat.emission_texture = _banner_mat.albedo_texture
+
+
 # --- Roof, trusses and lights ---------------------------------------------------------
 
 func _build_roof() -> void:
+	if DOME_SPRING > 0.0:
+		_build_dome()
+		return
 	var half_x := RinkSpec.HALF_W + back_o() + 1.0
 	var half_z := RinkSpec.HALF_L + back_o() + 1.0
 	var st := _st()
@@ -1047,6 +1151,99 @@ func _build_roof() -> void:
 	_commit(steel, MeshUtil.material(Color(0.2, 0.21, 0.23), 0.6, 0.5), "Trusses", false)
 
 
+## The dome: concrete panels between ribs, rising from the back wall to an oculus at
+## the crown, with the light grid hung beneath on cables.
+const DOME_RINGS := 14
+const DOME_RIB_EVERY := 5   ## loop points between meridian ribs
+const OCULUS := 0.14        ## the crown opening's size, as a share of the base
+
+
+## A point on the dome over loop point `base`: t 0 at the spring line, 1 at the oculus
+## (a quarter-ellipse in profile).
+func _dome_point(base: Vector2, t: float) -> Vector3:
+	var top := acos(OCULUS)
+	var phi := t * top
+	var k := cos(phi)
+	return Vector3(base.x * k, DOME_SPRING + (ROOF_Y - DOME_SPRING) * sin(phi) / sin(top), base.y * k)
+
+
+func _build_dome() -> void:
+	var base := _loop(back_o())
+	var n := base.size()
+	var panels := _st()
+	var coffers := _st()   # every other panel a shade darker: the coffered look
+	var center := Vector3(0, DOME_SPRING, 0)
+	for j in DOME_RINGS:
+		var t0 := float(j) / DOME_RINGS
+		var t1 := float(j + 1) / DOME_RINGS
+		for i in n:
+			var a := _dome_point(base[i], t0)
+			var b := _dome_point(base[(i + 1) % n], t0)
+			var c := _dome_point(base[(i + 1) % n], t1)
+			var d := _dome_point(base[i], t1)
+			var st := coffers if (i / DOME_RIB_EVERY + j) % 2 == 1 else panels
+			MeshUtil.quad(st, a, b, c, d, (center - (a + c) * 0.5).normalized())
+	_commit(panels, MeshUtil.material(concrete.lightened(0.08), 0.95), "Roof", false)
+	_commit(coffers, MeshUtil.material(concrete.darkened(0.12), 0.95), "Coffers", false)
+	# The crown: a lit ring round the oculus, dark beyond.
+	var crown := _st()
+	var lit := _st()
+	var apex := Vector3(0, ROOF_Y + 0.5, 0)
+	for i in n:
+		var a := _dome_point(base[i], 1.0)
+		var b := _dome_point(base[(i + 1) % n], 1.0)
+		MeshUtil.quad(crown, a, b, apex, apex, Vector3.DOWN)
+		MeshUtil.quad(lit, a, b, b + Vector3(0, -0.6, 0), a + Vector3(0, -0.6, 0), (Vector3(0, a.y, 0) - a).normalized())
+	_commit(crown, MeshUtil.material(Color(0.03, 0.03, 0.05), 1.0), "Crown", false)
+	_commit(lit, _emissive(light_color(), 2.5), "CrownRing", false)
+	# Ribs: meridians from the spring line to the crown, and rings round the dome.
+	var ribs := _st()
+	for i in range(0, n, DOME_RIB_EVERY):
+		for j in DOME_RINGS:
+			var p0 := _dome_point(base[i], float(j) / DOME_RINGS)
+			var p1 := _dome_point(base[i], float(j + 1) / DOME_RINGS)
+			_beam(ribs, p0 + (center - p0).normalized() * 0.3, p1 + (center - p1).normalized() * 0.3, 0.3)
+	for j: int in [0, 4, 8, 12]:
+		for i in n:
+			var p0 := _dome_point(base[i], float(j) / DOME_RINGS)
+			var p1 := _dome_point(base[(i + 1) % n], float(j) / DOME_RINGS)
+			_beam(ribs, p0 + (center - p0).normalized() * 0.3, p1 + (center - p1).normalized() * 0.3, 0.26)
+	_commit(ribs, MeshUtil.material(concrete.lightened(0.3), 0.85), "Ribs", false)
+	# The light grid over the ice and a catwalk ring over the stands, hung from the dome.
+	var steel := _st()
+	for gx: float in GRID_X:
+		_beam(steel, Vector3(gx, 29.4, -RinkSpec.HALF_L), Vector3(gx, 29.4, RinkSpec.HALF_L), 0.22)
+		for hz: float in [-RinkSpec.HALF_L + 2.0, -10.0, 10.0, RinkSpec.HALF_L - 2.0]:
+			_beam(steel, Vector3(gx, 29.6, hz), Vector3(gx, _dome_height(gx, hz), hz), 0.04)
+	for tz: float in [-RinkSpec.HALF_L, -20.0, -10.0, 10.0, 20.0, RinkSpec.HALF_L]:
+		_beam(steel, Vector3(-10.5, 29.4, tz), Vector3(10.5, 29.4, tz), 0.12)
+	var ring := _loop(START + 6.0)
+	for i in ring.size():
+		var a := ring[i]
+		var b := ring[(i + 1) % ring.size()]
+		_beam(steel, Vector3(a.x, 30.5, a.y), Vector3(b.x, 30.5, b.y), 0.25)
+		if i % 6 == 0:
+			_beam(steel, Vector3(a.x, 30.7, a.y), Vector3(a.x, _dome_height(a.x, a.y), a.y), 0.04)
+	_commit(steel, MeshUtil.material(Color(0.2, 0.21, 0.23), 0.6, 0.5), "Trusses", false)
+
+
+## The dome's underside height over (x, z).
+func _dome_height(x: float, z: float) -> float:
+	var dir := Vector2(x, z)
+	if dir.length() < 0.01:
+		return ROOF_Y
+	# The base loop's reach in that direction.
+	var reach := 0.0
+	for p in _loop(back_o()):
+		if p.normalized().dot(dir.normalized()) > 0.995:
+			reach = maxf(reach, p.length())
+	if reach <= 0.0:
+		return ROOF_Y
+	var k := clampf(dir.length() / reach, OCULUS, 1.0)
+	var t := acos(k) / acos(OCULUS)
+	return _dome_point(Vector2(reach, 0.0), t).y - 0.3
+
+
 ## Fixtures over the ice (bright, aimed down) and over the stands (dimmer), as glowing
 ## lenses in dark housings; a few real spot lights put the shine on the ice.
 func _build_lights() -> void:
@@ -1073,8 +1270,9 @@ func _build_lights() -> void:
 		MeshUtil.quad(l, Vector3(p.x - h * 0.8, y, p.z - h * 0.8), Vector3(p.x + h * 0.8, y, p.z - h * 0.8),
 				Vector3(p.x + h * 0.8, y, p.z + h * 0.8), Vector3(p.x - h * 0.8, y, p.z + h * 0.8), Vector3.DOWN)
 	_commit(housing, MeshUtil.material(Color(0.12, 0.12, 0.13), 0.5, 0.6), "LightHousings", false)
-	_commit(lens, _emissive(Color(0.95, 0.97, 1.0), 9.0), "IceLights", false)
-	_commit(lens_dim, _emissive(Color(1.0, 0.95, 0.88), 5.0), "StandLights", false)
+	var tint := light_color()
+	_commit(lens, _emissive(Color(0.95, 0.97, 1.0) * tint / Color(0.94, 0.96, 1.0), 9.0), "IceLights", false)
+	_commit(lens_dim, _emissive(Color(1.0, 0.95, 0.88).lerp(tint, 0.5), 5.0), "StandLights", false)
 	for sx: float in [-5.0, 5.0]:
 		for sz: float in [-20.0, 0.0, 20.0]:
 			var s := SpotLight3D.new()
@@ -1086,7 +1284,7 @@ func _build_lights() -> void:
 			s.spot_attenuation = 0.6
 			s.light_energy = 1.6
 			s.light_specular = 0.8
-			s.light_color = Color(0.94, 0.96, 1.0)
+			s.light_color = tint
 			add_child(s)
 
 
@@ -1130,7 +1328,7 @@ func _build_scoreboard() -> void:
 	var cable := MeshUtil.material(Color(0.35, 0.36, 0.38), 0.4, 0.8)
 	for cx: float in [-1.0, 1.0]:
 		for cz: float in [-1.0, 1.0]:
-			var top := ROOF_Y - 2.2 - BOARD_Y
+			var top := (ROOF_Y - 2.2 if DOME_SPRING <= 0.0 else ROOF_Y - 0.6) - BOARD_Y
 			var from := Vector3(cx * (b.x * 0.5 - 1.0), b.y + 1.2, cz * (b.z * 0.5 - 1.0))
 			_block(Vector3(0.05, top - from.y, 0.05), Vector3(from.x, (from.y + top) * 0.5, from.z), cable, "Cable", root)
 	# The screens: wide ones face the sides (most of the crowd), narrow ones the ends.

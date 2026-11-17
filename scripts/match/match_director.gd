@@ -31,8 +31,10 @@ const D_NUMBERS := [[4, 44, 2, 5, 7, 3], [55, 77, 33, 47, 6, 2]]
 const G_NUMBERS := [1, 30]
 const F_POS := ["C", "LW", "RW"]
 const WALK_SPEED := 5.0      ## m/s for scripted walks through the bench and box doors
-const FOUL_CHANCE := {&"tripping": 0.65, &"interference": 0.4, &"boarding": 0.8}
-const FOUL_NAMES := {&"tripping": "TRIPPING", &"interference": "INTERFERENCE", &"boarding": "BOARDING"}
+const FOUL_CHANCE := {&"tripping": 0.65, &"interference": 0.4, &"boarding": 0.8,
+		&"hooking": 0.55, &"high_sticking": 0.7, &"holding": 0.3, &"charging": 0.6}
+const FOUL_NAMES := {&"tripping": "TRIPPING", &"interference": "INTERFERENCE", &"boarding": "BOARDING",
+		&"hooking": "HOOKING", &"high_sticking": "HIGH-STICKING", &"holding": "HOLDING", &"charging": "CHARGING"}
 const SHOOTOUT_NET := 1
 const SHOOTOUT_TIME := 9.0
 const INTERMISSION_AFTER := 2.5   ## seconds after the period ends before the stats screen
@@ -189,9 +191,12 @@ func _ready() -> void:
 	rules.penalties = penalties
 	_build_teams()
 	apply_camera(camera if not _cmd_cam else cam.mode_name(), camera_follow)
-	var home_logo: String = Teams.team(team_ids[0]).get("logo", "")
-	if ResourceLoader.exists(home_logo):
-		rink.set_center_logo(load(home_logo))
+	# The game's arena (the rules screen's pick, or the home team's): the rink built the
+	# settings' home team's, so a home team from the command line may need another.
+	var venue := Arenas.for_game(team_ids[0])
+	if str(venue.id) != str(rink.arena_spec.get("id", "")):
+		rink.rebuild_arena(venue)
+	rink.set_center_logo(center_logo(venue, team_ids[0]))
 	rink.set_bench_colors([MenuStyle.team_color(team_ids[0]), MenuStyle.team_color(team_ids[1])])
 	if rink.arena:
 		rink.arena.set_teams(team_ids[0], team_ids[1])
@@ -287,6 +292,8 @@ func _parse_cmdline() -> void:
 		_glass_demo.call_deferred()
 	if args.has("pulltest"):     # the away team pulls its goalie a few seconds in (pulltest=late: down a goal late)
 		_pull_demo.call_deferred(str(args["pulltest"]))
+	if args.has("arena"):   # an arena id (Arenas), as the rules screen's pick
+		GameSettings.config.arena = str(args["arena"])
 	if args.has("home"):
 		team_ids[0] = int(args["home"])
 	if args.has("away"):
@@ -457,6 +464,21 @@ func _roster_players(lu: Lineup, t: int, roster: Array) -> void:
 		_setup_player(s, t, int(p.number), p.hand == "L", p)
 		s.is_defense = true
 		lu.defense.append(s)
+	# A thin roster (a created team still filling up): generated players make up the
+	# lines it can't, at least two forward lines and two pairs.
+	var need_f := (6 if format == 5 else 4) - lu.forwards.size()
+	for i in maxi(0, need_f):
+		var s: Skater = SKATER_SCENE.instantiate()
+		_setup_player(s, t, F_NUMBERS[t][(lu.forwards.size()) % F_NUMBERS[t].size()], i % 3 != 2)
+		s.position_name = F_POS[i % 3]
+		lu.forwards.append(s)
+	var need_d := (4 if format == 5 else 2) - lu.defense.size()
+	for i in maxi(0, need_d):
+		var s: Skater = SKATER_SCENE.instantiate()
+		_setup_player(s, t, D_NUMBERS[t][(lu.defense.size()) % D_NUMBERS[t].size()], i % 2 == 0)
+		s.position_name = "D"
+		s.is_defense = true
+		lu.defense.append(s)
 	var gs := Rosters.goalies(roster)
 	var g: Goalie = GOALIE_SCENE.instantiate()
 	if gs.is_empty():
@@ -472,8 +494,8 @@ func _setup_player(s: Skater, t: int, number: int, left: bool, p := {}) -> void:
 	var info := Teams.team(team_ids[t])
 	var tc: Dictionary = Teams.uniform_vs(team_ids[t], team_ids[1 - t], t == 1)
 	s.uniform = tc
-	if ResourceLoader.exists(info.get("logo", "")):
-		s.crest = load(info.logo)
+	if Teams.logo(team_ids[t]):
+		s.crest = Teams.logo(team_ids[t])
 	s.team_color = tc.jersey
 	s.shoots_left = left
 	if p.is_empty():
@@ -484,6 +506,10 @@ func _setup_player(s: Skater, t: int, number: int, left: bool, p := {}) -> void:
 		s.gear_style = _rng.randi() % 2
 		_set_look(s, SkaterVisual.random_look(_rng, s.body_type, s.skin_tone))
 		s.visor = Skater.visor_for("%s %d" % [info.get("abbr", ""), number])
+	elif p.has("custom"):
+		# A created or generated player (Edit Roster signed them): their own looks and gear.
+		CustomPlayers.apply(s, p.custom)
+		s.number = number
 	else:
 		s.stats = Rosters.stats(p)
 		s.body_type = "female" if p.gender == "Female" else "male"
@@ -513,6 +539,17 @@ func _set_look(s: Skater, look: Dictionary) -> void:
 	s.facial_hair = look.facial_hair
 	s.hair_color = look.hair_color
 	s.eye_color = look.eye_color
+
+
+## The center-ice logo an arena paints (its `center` option): the home crest, the
+## league's, or none.
+static func center_logo(venue: Dictionary, home: int) -> Texture2D:
+	match str(venue.get("center", "home")):
+		"league":
+			return Stinger.logo()
+		"none":
+			return null
+	return Teams.logo(home)
 
 
 func lineup(t: int) -> Lineup:
@@ -972,10 +1009,9 @@ func _start_intro() -> void:
 		star.visual.snap()
 		star.visual.play_clip("idle", Vector3.ONE, -1.0, 1.0, 0.05)
 		_showcase.append(star)
-		var info := Teams.team(team_ids[t])
-		if ResourceLoader.exists(info.get("logo", "")):
+		if Teams.logo(team_ids[t]):
 			var logo := Sprite3D.new()
-			logo.texture = load(info.logo)
+			logo.texture = Teams.logo(team_ids[t])
 			logo.pixel_size = 3.0 / float(logo.texture.get_width())   # 3 m wide
 			logo.shaded = false
 			logo.alpha_cut = SpriteBase3D.ALPHA_CUT_DISABLED
@@ -2372,6 +2408,8 @@ func _regroup_cut(d3: Vector3, plan: Array) -> void:
 ##   jumbotron  up at the scoreboard over center ice (the score, the clock)
 func _dead_time_shot(subj: Skater, d3: Vector3, plan: Array) -> Dictionary:
 	var kinds := {"player": 4.0 if subj else 0.0, "goalie": 2.0, "bench": 2.0, "crowd": 1.5, "jumbotron": 1.0}
+	if rink.arena == null or not rink.arena.has_node("Scoreboard"):
+		kinds.jumbotron = 0.0   # (an arena without the center-hung board)
 	var g: Goalie = null
 	for t in 2:
 		var gg: Goalie = teams[t].goalie

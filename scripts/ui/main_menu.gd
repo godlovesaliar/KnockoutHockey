@@ -11,6 +11,10 @@ const PRACTICE_SCENE := "res://scenes/match/Practice.tscn"
 const OPTIONS_SCENE := "res://scenes/ui/Options.tscn"
 const CREDITS_SCENE := "res://scenes/ui/Credits.tscn"
 const CREATE_PLAYER_SCENE := "res://scenes/ui/CreatePlayer.tscn"
+const CREATE_TEAM_SCENE := "res://scenes/ui/CreateTeam.tscn"
+const CREATE_UNIFORM_SCENE := "res://scenes/ui/CreateUniform.tscn"
+const CREATE_ARENA_SCENE := "res://scenes/ui/CreateArena.tscn"
+const EDIT_ROSTER_SCENE := "res://scenes/ui/EditRoster.tscn"
 
 const MAIN := [
 	{"id": "play", "text": "PLAY NOW", "hint": "Pick your teams and controllers, then drop the puck."},
@@ -30,10 +34,10 @@ const MODES := [
 ]
 const CUSTOMIZE := [
 	{"id": "create_player", "text": "CREATE PLAYER", "hint": "Build a skater or goalie: look, equipment and ratings."},
-	{"id": "create_team", "text": "CREATE TEAM", "soon": true, "hint": "Build your own club: name, colors, logo and roster."},
-	{"id": "create_arena", "text": "CREATE ARENA", "soon": true, "hint": "Design a home rink: ice, boards, seats and lights."},
-	{"id": "create_uniform", "text": "CREATE UNIFORM", "soon": true, "hint": "Design jerseys, pants, socks and helmets."},
-	{"id": "edit_roster", "text": "EDIT ROSTER", "soon": true, "hint": "Sign free agents (your created players) and move players between teams."},
+	{"id": "create_team", "text": "CREATE TEAM", "hint": "Build your own club: name, colors and badge, then sign free agents."},
+	{"id": "create_arena", "text": "CREATE ARENA", "hint": "Build an arena: style, seats, boards, lights and crowd. Make it a team's home."},
+	{"id": "create_uniform", "text": "CREATE UNIFORM", "hint": "Any team's home and road uniforms: colors and stripes."},
+	{"id": "edit_roster", "text": "EDIT ROSTER", "hint": "Sign free agents, release players and make trades between teams."},
 	{"id": "back", "text": "BACK", "hint": "Back to the main menu."},
 ]
 const EXTRAS := [
@@ -236,6 +240,14 @@ func _accept() -> void:
 			_go(CREDITS_SCENE)
 		"create_player":
 			_go(CREATE_PLAYER_SCENE)
+		"create_team":
+			_go(CREATE_TEAM_SCENE)
+		"create_uniform":
+			_go(CREATE_UNIFORM_SCENE)
+		"create_arena":
+			_go(CREATE_ARENA_SCENE)
+		"edit_roster":
+			_go(EDIT_ROSTER_SCENE)
 		"back":
 			_show_list(MAIN, _main_index)
 		"quit":

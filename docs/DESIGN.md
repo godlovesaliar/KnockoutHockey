@@ -54,8 +54,15 @@ Set on the rules screen before an exhibition (`RulesSelect.RULES`); the saved de
 - **Offsides:** delayed offside: the linesman's arm goes up and play goes on until the puck leaves the zone or every attacker tags up; an attacker touching the puck in the zone first blows it dead.
 - **Icing:** no-touch icing (any touch cancels it). No icing while shorthanded. *(Hybrid icing, a race to the faceoff dot line, was the original plan.)*
 - **Penalties:** called automatically from contact events; the referee rolls whether each foul is called (`MatchDirector.FOUL_CHANCE`).
-  - *Minor (2:00), built:* tripping (a poke check that hits the skater, not the puck), boarding (a hit from behind near the boards), interference (hitting a player without the puck after a grace period).
-  - *Minor, not built yet:* hooking, high-sticking, holding, charging (a check started with too much distance). The announcer CSV already has hooking, slashing, roughing and high-sticking calls waiting for them.
+  - *Minor (2:00), all built:*
+    - **Tripping:** a poke check that misses the puck and catches the carrier's skates (the stick tip within 0.75 m of them).
+    - **Hooking:** a poke check that misses the puck from behind (more than about 70° behind the carrier) with the tip within 1.05 m: the stick catches the body.
+    - **Boarding:** a hit from behind into the boards.
+    - **Interference:** hitting a player who hasn't had the puck for 0.8 s.
+    - **Charging:** a check on the carrier after 0.9 s or more of unbroken turbo straight into it, closing at 9 m/s or more (and not already boarding).
+    - **High-sticking:** a slap shot with a real windup (35%+ charge) while an opponent is within 1.35 m on the stick side and not out in front: the stick comes up into them.
+    - **Holding:** staying draped on the other team's carrier (within 0.8 m, beside or behind, while they're moving) for 1.8 s. The same player can't be flagged again for 6 s.
+    - Each foul's call chance is in `FOUL_CHANCE` (hooking 55%, high-sticking 70%, holding 30%, charging 60%), times the referee's strictness. The thresholds are the foul constants near the top of `skater.gd`. The CSV's slashing and roughing calls still have no penalty.
   - *Major (5:00):* fighting (both players, offsetting, so no power play).
   - Delayed penalty: the referee's arm goes up and the whistle blows when the penalized team touches the puck. The team with the puck can pull its goalie for an extra attacker meanwhile (§4.7); the computer does once it has the puck out of its own zone.
   - How often fouls get called depends on the referee's **strictness**, a hidden variable rolled each game: about 0.85 (Rookie) to 1.1 (Legend) plus a random spread, clamped to 0.65–1.35. It scales each foul's call chance (`MatchDirector.ref_strictness`; `-- ref=<x>` sets it, `-- reflog` prints it).
@@ -448,7 +455,7 @@ user://
   - **Energy (shift fatigue):** drains at roughly 1/48 per second on the ice and recovers on the bench. Below 1, it scales speed, acceleration and shot power down to 0.82×.
   - **Line changes:** tired groups change at faceoffs, or on the fly via the bench gate on the −X boards when the puck isn't in that team's defensive zone.
   - **Rules (`MatchRules`):** delayed offside (cleared when the puck leaves the zone or everyone tags up), no-touch icing (canceled by any touch, and a shorthanded team can't ice it), and delayed penalties (the whistle goes when the offending team touches the puck).
-  - **Fouls:** these come from skater events (tripping, interference, boarding), and the director rolls whether the ref calls them. Power-play goals end the earliest minor. In 3v3, a penalty gives the other team an extra skater (4-on-3).
+  - **Fouls:** these come from skater events (tripping, hooking, interference, boarding, charging, high-sticking, holding: §2.2), and the director rolls whether the ref calls them. Power-play goals end the earliest minor. In 3v3, a penalty gives the other team an extra skater (4-on-3).
   - **Overtime modes:** `off`, `sudden_death`, `shootout`, and `sd_so`. In the shootout, every attempt goes at the −Z net, it runs best-of-N then sudden death, and the winner gets +1 goal.
   - **Humans:** each human gets a `HumanBrain(kind: ANY/KB1/KB2/PAD)` with its own edge detection, and `TeamControl` maps humans to skaters one-to-one. Rings and P1–P4 tags are colored per player.
 - **M5 additions (characters and sound; done before M4 so fights are built on real bodies):**
@@ -536,7 +543,7 @@ The current assets were quick placeholders; none of them are a requirement.
 | **M0** | Project setup | Godot project, folder structure, input map, gray-box rink with colliders, nets, puck bouncing correctly. | Done |
 | **M1** | Skate & shoot | One capsule skater (with stick) skating, picking up the puck, deking, passing to a dummy, wrist/slap shots, goals detected. *The "does it feel good?" milestone.* | Done (Practice mode keeps it) |
 | **M2** | 3v3 hockey | Two 3v3 teams of capsules, basic AI, AI goalies, checking (bump/check/big hit), faceoffs, clock, score, periods. | Done |
-| **M3** | Full rules | 5v5, line changes and stamina, offsides/icing/penalties with toggles, player switching, OT/shootout, local multiplayer (up to 4). | Done, except four of the seven planned minor penalties |
+| **M3** | Full rules | 5v5, line changes and stamina, offsides/icing/penalties with toggles, player switching, OT/shootout, local multiplayer (up to 4). | Done (all seven planned minor penalties, 2026-11-16) |
 | **M4** | Fighting | Fight triggers, prompt, forced fights, the mini-game, consequences. | Done and being reworked (styles, reach, rocked, hit feedback), plus Knockout Mode. Left: §14.2 |
 | **M5** | Characters | Shared skeleton, retargeted animations, gear, recolorable jerseys, goalie model. | Done, plus body size from height and weight, faces, hair, names on the back and the referee |
 | **M6** | Presentation | HUD, announcer pop-ups, replays, three stars, big-hit slow-mo, glass breaks, crowd, audio, Zamboni. | Mostly done. Left: Zamboni, goal light, the glass repair crew, the announcer backlog (§14.1) |
@@ -558,7 +565,7 @@ What's built but not finished, and what's waiting. The not-built items are also 
 - **Fights need far more lines:** play-by-play and color reactions during a fight (big shots, a fighter rocked, the clinch, the knockdown, a decision, a draw, the styles), not just `fighting` at the start and `banter_fight` after.
 - **Knockout Mode** has no announcer lines of its own yet (the tale of the tape, each bout's result, the final card).
 - **Team banter (in progress):** one or two duet files per team (`both/banter_<team>.mp3`) that play **once per game, at a random time**, when that team is playing. Recorded so far: Quahogs (2), North Dakote, Mountain Goats, Florida Man. Not wired in yet.
-- **Unused CSV penalty calls** (hooking, slashing, roughing, high-sticking) wait for those penalties.
+- **Unused CSV penalty calls** (slashing, roughing) wait for those penalties. Hooking, high-sticking, holding and charging (2026-11-16) need booth takes (`hookingcall` etc.; the CSV's `penalty_hook` / `penalty_highstick` count) and PA endings (`pa_pen_hooking`, `pa_pen_high_sticking`, `pa_pen_holding`, `pa_pen_charging`); until then the booth uses the generic `penalty` line and the PA stops after the number.
 
 ### 14.2 Fights
 
@@ -577,4 +584,4 @@ What's built but not finished, and what's waiting. The not-built items are also 
 
 ### 14.4 Not built yet (from the plan)
 
-The Zamboni; a repair crew for glass breaks; hooking, high-sticking, holding and charging; a setting to turn off shake and slow motion; a goal light; the team, arena and uniform editors and Edit Roster; the outdoor arena; Shootout mode; a remapping screen; Season, playoffs and management; Records and Unlockables.
+The Zamboni; a repair crew for glass breaks; a setting to turn off shake and slow motion; a goal light; the team, arena and uniform editors and Edit Roster; the outdoor arena; Shootout mode; a remapping screen; Season, playoffs and management; Records and Unlockables.

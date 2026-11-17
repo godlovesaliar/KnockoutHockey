@@ -29,7 +29,7 @@ const RULES := [
 	{"key": "icing", "label": "ICING", "values": [true, false], "names": ["On", "Off"],
 		"hint": "Clearing it the length of the ice brings it back."},
 	{"key": "penalties", "label": "PENALTIES", "values": [true, false], "names": ["On", "Off"],
-		"hint": "Trips, boarding and interference send players to the box."},
+		"hint": "Tripping, hooking, high-sticking, holding, charging, boarding and interference."},
 	{"key": "fighting", "label": "FIGHTING", "values": [true, false], "names": ["On", "Off"],
 		"hint": "Big hits can start a fight: drop the gloves or skate away."},
 	{"key": "injuries", "label": "INJURIES", "values": [true, false], "names": ["On", "Off"],
@@ -51,6 +51,7 @@ const ROW_SIZE := Vector2(800, 35)
 const ROW_GAP := 3.0
 
 var config := {}
+var _rules: Array = []      ## ARENA (built from the arenas there are), then RULES
 var _canvas: Control
 var _items: Array[MenuItem] = []
 var _index := 0
@@ -67,6 +68,9 @@ func _ready() -> void:
 	for k in ["home", "away"]:
 		if _arg(k, "") != "":
 			config[k + "_team"] = int(_arg(k, "0"))
+	if not config.has("arena") or (str(config.arena) != "" and str(Arenas.find(str(config.arena)).id) != str(config.arena)):
+		config.arena = ""   # (a deleted arena: back to the home team's)
+	_rules = [_arena_row()] + RULES
 	Sfx.play_music()
 	var back := MenuBackdrop.new()
 	back.team = int(config.get("home_team", 0))
@@ -118,7 +122,7 @@ func _ready() -> void:
 		_canvas.add_child(cr)
 		_crests.append(cr)
 
-	var rows := RULES.duplicate()
+	var rows := _rules.duplicate()
 	rows.append({"key": "", "label": "START GAME", "hint": "Drop the puck."})
 	for i in rows.size():
 		var d: Dictionary = rows[i]
@@ -163,8 +167,8 @@ func _process(_delta: float) -> void:
 
 
 func _refresh() -> void:
-	for i in RULES.size():
-		var st: Dictionary = RULES[i]
+	for i in _rules.size():
+		var st: Dictionary = _rules[i]
 		var idx: int = st.values.find(config.get(st.key))
 		_items[i].value = st.names[idx] if idx >= 0 else str(config.get(st.key))
 		# OT length / shootout rounds only matter with that kind of overtime.
@@ -172,6 +176,18 @@ func _refresh() -> void:
 		_items[i].soon = false
 		_items[i].modulate.a = 0.45 if (st.key == "ot_length" and ot in ["off", "shootout"]) \
 				or (st.key == "shootout_rounds" and ot in ["off", "sudden_death"]) else 1.0
+
+
+## The ARENA row: the home team's own arena, or any arena there is.
+func _arena_row() -> Dictionary:
+	var home := Arenas.home_of(int(config.get("home_team", 0)))
+	var values := [""]
+	var names := ["Home Arena (%s)" % str(home.name)]
+	for a: Dictionary in Arenas.all():
+		values.append(str(a.id))
+		names.append(str(a.name))
+	return {"key": "arena", "label": "ARENA", "values": values, "names": names,
+		"hint": "Where the game is played: the home team's arena, or any other (yours from Create Arena too)."}
 
 
 func _select(i: int, quiet := false) -> void:
@@ -185,9 +201,9 @@ func _select(i: int, quiet := false) -> void:
 
 
 func _step(i: int, dir: int) -> void:
-	if i >= RULES.size() or _leaving:
+	if i >= _rules.size() or _leaving:
 		return
-	var st: Dictionary = RULES[i]
+	var st: Dictionary = _rules[i]
 	var values: Array = st.values
 	var cur := values.find(config.get(st.key))
 	config[st.key] = values[wrapi(cur + dir, 0, values.size()) if cur >= 0 else 0]
