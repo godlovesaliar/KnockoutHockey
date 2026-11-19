@@ -28,7 +28,28 @@ uniform vec2 logo_size = vec2(6.4, 4.0);   // meters: across (x), along (z)
 uniform float logo_strength = 0.92;        // a touch of ice shows through the paint
 uniform float logo_flip = 1.0;             // 1 or -1: which end of the rink the top of the logo faces
 
+// Wear (IceWear): blade cuts, snow, haze, and the Zamboni's fresh sheet.
+uniform sampler2D wear_cuts : hint_default_black, filter_linear_mipmap, repeat_disable;
+uniform sampler2D wear_map : hint_default_black, filter_linear, repeat_disable;
+uniform vec2 wear_ext = vec2(13.06, 30.6);
+uniform float dull = 0.0;       // the whole sheet's lost shine (0 fresh .. ~0.75 end of period)
+uniform float wet = 0.0;        // fresh off the Zamboni: glassy
+uniform float sweeping = 0.0;   // 1 during a Zamboni pass: wear_map.b is where it has been
+
 varying vec2 rink_pos;
+
+float hash12(vec2 p) {
+	vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+	p3 += dot(p3, p3.yzx + 33.33);
+	return fract((p3.x + p3.y) * p3.z);
+}
+
+float vnoise(vec2 p) {
+	vec2 i = floor(p);
+	vec2 f = fract(p);
+	f = f * f * (3.0 - 2.0 * f);
+	return mix(mix(hash12(i), hash12(i + vec2(1, 0)), f.x), mix(hash12(i + vec2(0, 1)), hash12(i + vec2(1, 1)), f.x), f.y);
+}
 
 void vertex() {
 	rink_pos = VERTEX.xz;
@@ -100,7 +121,34 @@ void fragment() {
 	}
 	col = mix(col, blue_color, blue);
 
+	// Wear: everything above is the paint under the ice; the scuffed surface over it
+	// frosts white and loses its shine.
+	vec2 wuv = p / wear_ext * 0.5 + 0.5;
+	vec4 wm = texture(wear_map, wuv);
+	float keep = 1.0 - wm.b * sweeping;          // swept by the Zamboni this pass: clean
+	float laid = mix(1.0, wm.b, sweeping);       // ...and wet
+	float cut = clamp(texture(wear_cuts, wuv).r * 2.5, 0.0, 1.0) * keep;
+	float grain = vnoise(p * 3.1) * 0.6 + vnoise(p * 11.0) * 0.4;
+	float snow = smoothstep(0.05, 0.7, wm.r * (0.55 + grain * 0.9)) * keep;
+	float haze = clamp(dull * (0.55 + 0.45 * grain) + wm.g * 1.4, 0.0, 1.0) * keep;
+	// Clean ice is glassy: it mirrors the dark of the arena, more at a grazing angle, and
+	// reads deeper and a touch darker; fresh off the Zamboni (wet) all the more. Wear takes
+	// that away: haze turns the sheet a flat matte white, the cuts are fine grey gouges
+	// that hold shadow and rubber, snow piles up bright white.
+	float wet_k = wet * laid;
+	float gloss = clamp((1.0 - haze) * (1.0 - snow) * (0.55 + 0.45 * wet_k), 0.0, 1.0);
+	float graze = pow(1.0 - clamp(dot(NORMAL, VIEW), 0.0, 1.0), 2.2);
+	col *= 1.0 - 0.07 * gloss - 0.08 * wet_k;
+	col = mix(col, col * vec3(0.9, 0.95, 1.0), wet_k * 0.6);   // wet: a cool, clear tint
+	col = mix(col, vec3(0.30, 0.33, 0.40), clamp(graze * gloss * 0.75, 0.0, 0.6));
+	col = mix(col, vec3(0.95, 0.96, 0.97) * max(col.r, max(col.g, col.b)) / 0.92, haze * 0.25);
+	col = mix(col, vec3(0.47, 0.5, 0.54), cut * 0.75);
+	col = mix(col, vec3(0.97, 0.98, 1.0), clamp(snow, 0.0, 1.0));
+
+	float rough = mix(ice_roughness, 0.42, haze);
+	rough = mix(rough, 0.75, max(cut * 0.8, snow));
+	rough = mix(rough, 0.03, wet_k);
 	ALBEDO = col;
-	ROUGHNESS = ice_roughness;
-	SPECULAR = 0.6;
+	ROUGHNESS = rough;
+	SPECULAR = mix(0.6, 0.35, max(haze, snow)) + 0.15 * wet_k;
 }

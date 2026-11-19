@@ -146,6 +146,43 @@ const HELMETS := [
 ]
 const HELMET_CROWN := 0.1447
 const HELMET_HEAD_W := 0.1939
+## Skater.gear_style for a player who didn't choose their gear: GEAR_ROLL plus a random
+## number. Helmets take it modulo their count; goalies weigh their masks with it
+## (GoalieVisual.mask_index). Below GEAR_ROLL it is a created player's own choice.
+const GEAR_ROLL := 1000
+
+
+static func gear_roll(r: int) -> int:
+	return GEAR_ROLL + r % 2000   # (even, so the helmet a roll gives is r % 2 as it always was)
+## Team masks worn instead of the helmet (Teams.HEADGEAR_OF; tools/blender/mask_gear.py via
+## tools/build_gear.gd), by body type, modeled in the helmets' frame on the male head.
+## "lucha": luchador hoods, A full, B open below the nose, C crested (surfaces 0 hood,
+## 1 crest), each also fitted to the female head; each player's cut, pattern and color
+## order come from their name and number. "vintage": an old-school fiberglass goalie face
+## mask (0 shell, 1 chevrons, 2 straps), goalies too.
+const TEAM_MASKS := {
+	"lucha": {
+		"male": [preload("res://assets/characters/lucha_a.res"), preload("res://assets/characters/lucha_b.res"),
+				preload("res://assets/characters/lucha_c.res")],
+		"female": [preload("res://assets/characters/lucha_a_female.res"), preload("res://assets/characters/lucha_b_female.res"),
+				preload("res://assets/characters/lucha_c_female.res")],
+	},
+	"vintage": {"male": [preload("res://assets/characters/vintage_mask.res")]},
+}
+## Hood patterns (lucha_mask.gdshader: red accent 1, green accent 2, blue accent 3). New
+## ones are painted over assets/characters/masks/lucha_uv_guide.png and added here.
+const LUCHA_PATTERNS := [
+	preload("res://assets/characters/masks/lucha_clasico.png"),
+	preload("res://assets/characters/masks/lucha_alas.png"),
+	preload("res://assets/characters/masks/lucha_dividido.png"),
+	preload("res://assets/characters/masks/lucha_rayo.png"),
+]
+const LUCHA_SHADER := preload("res://scenes/actors/lucha_mask.gdshader")
+## The male eyes' center in the masks' frame: masks are set on each body's eyes, scaled
+## by its eyes-to-crown height (and across by its head width).
+const MASK_EYE := Vector3(0.0, 0.0255, 0.0747)
+## The vintage mask's colors: an aged white shell, red chevrons, black straps.
+const VINTAGE_COLORS := [Color(0.9, 0.86, 0.74), Color(0.68, 0.08, 0.07), Color(0.05, 0.05, 0.05)]
 static var _no_visor := {}   ## helmet mesh -> the same without its visor surfaces
 const STICK_MESH := preload("res://assets/characters/stick.res")
 const SKATE_MESH := preload("res://assets/characters/skate.res")
@@ -199,6 +236,7 @@ var _disp_out := Vector3.ZERO
 var _disp_age := 0.0                   ## s in the current display pose
 var _disp_chest_ref := Transform3D()   ## the chest (local) once the pose settled; "fixed" sticks follow it from there
 var _helmet: MeshInstance3D       ## on the Head bone; comes off for fights (take_off_helmet)
+var _mask := ""                   ## a team mask worn instead of the helmet (TEAM_MASKS key); stays on in fights
 var _helmet_rest: Transform3D     ## its place on the head
 var _hair_helm: Array[Node3D] = []   ## hairstyle pressed flat under the helmet
 var _hair_full: Array[Node3D] = []   ## ...and as modeled (helmet off)
@@ -424,8 +462,6 @@ static func skin_material(body_root: Node, tone: Color) -> ShaderMaterial:
 
 func _build_gear() -> void:
 	var c := team_colors()
-	var helmet := MeshUtil.material(c.helmet, 0.35)
-	var dark := MeshUtil.material(Color(0.06, 0.06, 0.07), 0.4)
 	var glove := glove_material(c.gloves, c.trim)
 	var skin := MeshUtil.material(skater.skin_tone, 0.62)
 	# Chest and hip bulk wear the uniform material, so the yoke, stripes and fabric carry
@@ -433,7 +469,18 @@ func _build_gear() -> void:
 	var cloth := uniform_material(c)
 	# Offsets are relative to the body's own joints (rest pose: +Z forward, +X = left).
 	var head := anchor_box("head", "Head", Vector3(0.2, 0.25, 0.22) * hs)
-	# Helmet model (tools/build_gear.gd): sized to the head's width, shell over the crown.
+	if TEAM_MASKS.has(c.get("headgear", "")):
+		_build_team_mask(head, c)
+	else:
+		_build_helmet(head, c)
+	var chest := anchor_box("chest", "Spine2", Vector3(0.36, 0.2, 0.24) * hs)
+	_build_body_gear(c, cloth, glove, skin, chest)
+
+
+## Helmet model (tools/build_gear.gd): sized to the head's width, shell over the crown.
+func _build_helmet(head: AABB, c: Dictionary) -> void:
+	var helmet := MeshUtil.material(c.helmet, 0.35)
+	var dark := MeshUtil.material(Color(0.06, 0.06, 0.07), 0.4)
 	var hspec: Dictionary = HELMETS[skater.gear_style % HELMETS.size()]
 	var hmesh: Mesh = hspec.mesh if skater.visor else without_visor(hspec.mesh)
 	var fit: float = head.size.x / HELMET_HEAD_W
@@ -450,7 +497,64 @@ func _build_gear() -> void:
 	_helmet = hm
 	_helmet_rest = hm.transform
 	_add_hair(head)
-	var chest := anchor_box("chest", "Spine2", Vector3(0.36, 0.2, 0.24) * hs)
+
+
+## A team mask (TEAM_MASKS) in place of the helmet, set on the eyes. Luchador hoods cover
+## the hair and follow the jaw; the vintage face mask leaves the hair as it is.
+func _build_team_mask(head: AABB, c: Dictionary) -> void:
+	_mask = c.headgear
+	var h := absi(("%s %s %d" % [skater.first_name, skater.last_name, skater.number]).hash())
+	var by_body: Dictionary = TEAM_MASKS[_mask]
+	var meshes: Array = by_body.get(skater.body_type, by_body.male)
+	var s := Vector3.ONE * (head.size.x / HELMET_HEAD_W)
+	var at := Vector3(head.get_center().x, head.end.y - HELMET_CROWN * s.y, head.get_center().z)
+	var eyes := skel.get_node_or_null("Eyes") as MeshInstance3D
+	if eyes != null:
+		var e := eyes.mesh.get_aabb().get_center()
+		s.y = (head.end.y - e.y) / (HELMET_CROWN - MASK_EYE.y)
+		s.z = s.y
+		at = Vector3(head.get_center().x, e.y - MASK_EYE.y * s.y, e.z - MASK_EYE.z * s.z)
+	var mm := attach("Head", meshes[h % meshes.size()], null, at, Basis.from_scale(s))
+	mm.material_override = null
+	mm.name = "Helmet"   # tools and views find the head gear by name
+	if _mask == "lucha":
+		var cols: Array = [c.jersey, c.trim, c.get("number_outline", Color(0.05, 0.05, 0.05))]
+		# Mostly the team color as the base; some wear one of the others.
+		var order: Array = [[0, 1, 2], [0, 1, 2], [0, 2, 1], [2, 0, 1], [1, 2, 0]][(h / 3) % 5]
+		var pat: Texture2D = LUCHA_PATTERNS[(h / 15) % LUCHA_PATTERNS.size()]
+		if face != null:
+			face.follow_jaw(mm)   # (swaps the mesh: materials after)
+		mm.set_surface_override_material(0, lucha_material(pat, cols[order[0]], cols[order[1]], cols[order[2]]))
+		mm.set_surface_override_material(1, MeshUtil.material(cols[order[1]], 0.4))
+		# No hair: the hood covers it (a beard would poke through).
+	else:
+		for i in VINTAGE_COLORS.size():
+			var m := MeshUtil.material(VINTAGE_COLORS[i], [0.35, 0.45, 0.85][i])
+			m.metallic_specular = [0.5, 0.5, 0.15][i]   # straps: dull elastic
+			m.cull_mode = BaseMaterial3D.CULL_DISABLED   # one-sided shell: its inside shows at the holes
+			mm.set_surface_override_material(i, m)
+		_add_hair(head, false)
+	_helmet = mm
+	_helmet_rest = mm.transform
+
+
+static func lucha_material(pat: Texture2D, base: Color, a1: Color, a2: Color) -> ShaderMaterial:
+	var key := "lucha|%s|%s|%s|%s" % [pat.resource_path, base.to_html(), a1.to_html(), a2.to_html()]
+	if not _materials.has(key):
+		var m := ShaderMaterial.new()
+		m.shader = LUCHA_SHADER
+		m.set_shader_parameter("pattern", pat)
+		m.set_shader_parameter("base_color", base)
+		m.set_shader_parameter("accent1", a1)
+		m.set_shader_parameter("accent2", a2)
+		# White details, unless the hood itself is light.
+		m.set_shader_parameter("accent3", Color(0.95, 0.95, 0.93) if base.get_luminance() < 0.7 else Color(0.05, 0.05, 0.05))
+		_materials[key] = m
+	return _materials[key]
+
+
+## Pads, gloves, skates, numbers and crest: everything but the head gear.
+func _build_body_gear(c: Dictionary, cloth: Material, glove: Material, skin: Material, chest: AABB) -> void:
 	var cc := chest.get_center()
 	var cr := Vector3(maxf(chest.size.x * 0.62, 0.25 * hs), 0.13 * hs, maxf(chest.size.z * 0.6, 0.15 * hs))
 	var chest_at := cc + Vector3(0, 0.02 * hs, 0)
@@ -499,10 +603,11 @@ func _build_gear() -> void:
 
 
 ## Hair (what shows under the helmet) and facial hair, sized to this body's head.
-func _add_hair(head: AABB) -> void:
+## `facial` false leaves the facial hair off (it would poke through a face mask).
+func _add_hair(head: AABB, facial := true) -> void:
 	var top := Vector3(head.get_center().x, head.end.y, head.get_center().z)
 	var b := Basis.from_scale(Vector3.ONE * head.size.x)
-	for id: String in [skater.hair_style, skater.facial_hair]:
+	for id: String in [skater.hair_style, skater.facial_hair if facial else ""]:
 		var path := HAIR_DIR + id + ".res"
 		if id == "" or not ResourceLoader.exists(path):
 			continue
@@ -517,29 +622,35 @@ func _add_hair(head: AABB) -> void:
 			hm.name = "HairHelm_" + id
 			_hair_full.append(mi)
 			_hair_helm.append(hm)
-			# Under the helmet the strands are thin on the crown: a hair-colored cap on the
-			# scalp shows through the vents.
-			var cap := attach("Head", _scalp_cap(), _cap_material(skater.hair_color), top + b * HAIR_CAP_AT, b * Basis.from_scale(HAIR_CAP_R))
+			# Pressed flat, the strands are thin on the crown and the back of the head: a
+			# hair-colored cap on the scalp shows in the helmet's vents and behind the
+			# goalie's mask.
+			var fit := _eye_fit(head)
+			var cap := attach("Head", SCALP_CAP, _cap_material(skater.hair_color), fit.origin, fit.basis)
 			cap.name = "HairCap"
 			_hair_helm.append(cap)
 	_show_hair(true)
 
 
-## Head space (head widths from the top of the head): the cap's center and radii.
-const HAIR_CAP_AT := Vector3(0.0, -0.5, -0.04)
-const HAIR_CAP_R := Vector3(0.54, 0.6, 0.63)
-static var _cap_mesh: SphereMesh
+## Where the head gear's frame (HELMET_* / MASK_EYE) sits on this body when set on the
+## eyes: scaled by eyes-to-crown height and across by head width (bodies without eyes: on
+## the crown, by head width).
+func _eye_fit(head: AABB) -> Transform3D:
+	var s := Vector3.ONE * (head.size.x / HELMET_HEAD_W)
+	var at := Vector3(head.get_center().x, head.end.y - HELMET_CROWN * s.y, head.get_center().z)
+	var eyes := skel.get_node_or_null("Eyes") as MeshInstance3D
+	if eyes != null:
+		var e := eyes.mesh.get_aabb().get_center()
+		s.y = (head.end.y - e.y) / (HELMET_CROWN - MASK_EYE.y)
+		s.z = s.y
+		at = Vector3(head.get_center().x, e.y - MASK_EYE.y * s.y, e.z - MASK_EYE.z * s.z)
+	return Transform3D(Basis.from_scale(s), at)
 
 
-static func _scalp_cap() -> SphereMesh:
-	if _cap_mesh == null:
-		_cap_mesh = SphereMesh.new()
-		_cap_mesh.radius = 1.0
-		_cap_mesh.height = 1.0
-		_cap_mesh.is_hemisphere = true
-		_cap_mesh.radial_segments = 24
-		_cap_mesh.rings = 8
-	return _cap_mesh
+## The scalp cap under head gear (modeled with the goalie mask, tools/blender/
+## goalie_mask_gear.py): skin-tight over the top and back of the male head, in the head
+## gear's frame (_eye_fit).
+const SCALP_CAP := preload("res://assets/characters/scalp_cap.res")
 
 
 static func _cap_material(color: Color) -> StandardMaterial3D:
@@ -553,6 +664,7 @@ static func _cap_material(color: Color) -> StandardMaterial3D:
 
 
 func _show_hair(helmet_on: bool) -> void:
+	helmet_on = helmet_on and _mask == ""   # a face mask leaves the hair as it is
 	for h in _hair_full:
 		h.visible = not helmet_on
 	for h in _hair_helm:
@@ -585,8 +697,8 @@ func set_helmet(on: bool) -> void:
 ## Fights: both hands go up to the helmet, the right one pulls it off and lets it drop to
 ## the ice (it stays there until set_helmet(true)). About HELMET_END seconds.
 func take_off_helmet() -> void:
-	if not helmet_on():
-		return
+	if not helmet_on() or _mask != "":
+		return   # masks stay on (no unmasking a luchador)
 	_helmet_t = 0.0
 	play_clip(HELMET_CLIP, Vector3(0.0, 1.0, 1.0), HELMET_END, HELMET_SPEED, 0.2, HELMET_FROM)
 

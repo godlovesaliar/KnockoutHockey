@@ -62,7 +62,21 @@ static func add_lods(mesh: Mesh) -> void:
 
 
 ## Adds LODs to the mesh of every MeshInstance3D under `root`.
+## Rebuilding a mesh's surfaces drops the per-surface material overrides of the instances
+## showing it (all but the first surface's), so they are put back afterwards.
 static func apply(root: Node) -> void:
-	for mi: MeshInstance3D in root.find_children("*", "MeshInstance3D", true, false):
+	var mis := root.find_children("*", "MeshInstance3D", true, false)
+	var saved := []
+	for mi: MeshInstance3D in mis:
+		var o := []
+		for s in mi.get_surface_override_material_count():
+			o.append(mi.get_surface_override_material(s))
+		saved.append(o)
+	for mi: MeshInstance3D in mis:
 		if mi.mesh != null:
 			add_lods(mi.mesh)
+	for k in mis.size():
+		var mi: MeshInstance3D = mis[k]
+		for s in mini(saved[k].size(), mi.get_surface_override_material_count()):
+			if saved[k][s] != null:
+				mi.set_surface_override_material(s, saved[k][s])

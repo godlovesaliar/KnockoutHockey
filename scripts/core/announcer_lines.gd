@@ -175,6 +175,14 @@ const GROUPS := [
 		["ko_series_win", "pbp", [], "Knockout Mode: the series is decided"],
 		["ko_series_react", "color", [], "Knockout Mode: after the series call"],
 	]],
+	["Intermission: the Zamboni", [
+		["zamboni_fan", "both", [], "a fan contest winner takes the Zamboni between periods: \"They're letting another fan drive the resurfacer...\" (Bobby is nervous for the boards)"],
+		["zamboni_crash", "color", [], "the fan driving the Zamboni hits the boards"],
+		["zamboni_good", "color", [], "the fan's Zamboni run ends with a clean, full sheet: hire this person"],
+		["zamboni_bad", "color", [], "the fan's Zamboni run ends patchy or wrecked: the crew will finish up"],
+		["zamboni_crew", "pbp", [], "the crew's Zamboni is out between periods (no fan contest): a fresh sheet coming"],
+		["pa_zamboni_fan", "pa", [], "a fan contest between periods: \"Please welcome tonight's fan contest winner, who'll be driving the ice resurfacer!\""],
+	]],
 	["Banter (Steve and Bobby together)", [
 		["banter", "both", [], "a long quiet spell, in place of Bobby's idle remarks now and then"],
 		["banter_intermission", "both", [], "after a period ends, while the teams head off (recap the period)"],

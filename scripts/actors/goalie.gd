@@ -30,12 +30,18 @@ var read_eta := INF
 var save_count := 0
 var save_spot := Vector3.ZERO
 var last_catch := false
+## How sharp this goalie plays: 0 rookie .. 1 legend. The match difficulty for a computer
+## team's goalie, 0.5 for one backing up a human team. Quickens the reflexes and firms up
+## every save chance; catch-up adds a little on top, like it does for skaters.
+var sharpness := 0.5
 
 var _tracked_flight := -1
 var _resolved_flight := -1
 var _react_left := 0.0
 var _hold_time := 0.0
 var _frozen_sent := false
+var last_try := {}                ## debug: the last shot resolved at the goalie's plane
+var _body_radius := 0.45          ## the collision capsule's (Goalie.tscn), read in _ready
 
 
 func _ready() -> void:
@@ -44,6 +50,9 @@ func _ready() -> void:
 	collision_layer = 1 << 6      # goalies: skaters bump them, the puck doesn't (saves are resolved in code)
 	collision_mask = 1 | (1 << 1) | (1 << 3)
 	set_meta("surface", "body")
+	var cs := get_node_or_null("Collision") as CollisionShape3D
+	if cs and cs.shape is CapsuleShape3D:
+		_body_radius = (cs.shape as CapsuleShape3D).radius
 
 
 func _make_visual() -> SkaterVisual:
@@ -112,6 +121,21 @@ func _angle_target() -> Vector3:
 	return t
 
 
+## Keeps a (net-local) spot far enough from both posts for the goalie's body to stand
+## there. The angle clamps allow spots the capsule can't reach beside a post, and the
+## goalie would otherwise keep pushing into it.
+func _clear_posts(t: Vector3) -> Vector3:
+	var clear := _body_radius + RinkSpec.POST_RADIUS + 0.02
+	for sx in [-1.0, 1.0]:
+		var post := Vector2(sx * (RinkSpec.NET_WIDTH * 0.5 + RinkSpec.POST_RADIUS), 0.0)
+		var off := Vector2(t.x, t.z) - post
+		if off.length() < clear:
+			off = (off.normalized() if off.length() > 0.001 else Vector2(0, 1)) * clear
+			t.x = post.x + off.x
+			t.z = maxf(off.y, 0.3)
+	return t
+
+
 func _track_puck(delta: float) -> void:
 	if puck.carrier != null or puck.dead:
 		if g == G.REACT:
@@ -128,7 +152,7 @@ func _track_puck(delta: float) -> void:
 			var cy := pl.y + vl.y * t - (0.0 if puck.on_ice else 0.5 * Puck.GRAVITY * t * t)
 			if absf(cx) < RinkSpec.NET_WIDTH * 0.5 + 0.6 and cy < RinkSpec.NET_HEIGHT + 0.5:
 				g = G.REACT
-				_react_left = PlayerStats.lerp_stat(stats.reflexes, 0.32, 0.12)
+				_react_left = PlayerStats.lerp_stat(stats.reflexes, 0.24, 0.09) * lerpf(1.3, 0.75, _sharp())
 	if g == G.REACT:
 		_react_left -= delta
 
@@ -136,7 +160,7 @@ func _track_puck(delta: float) -> void:
 func _move_goalie(delta: float) -> void:
 	var gl := _local(global_position)
 	var target := _angle_target()
-	var speed := PlayerStats.lerp_stat(stats.positioning, 2.4, 3.6)
+	var speed := PlayerStats.lerp_stat(stats.positioning, 3.0, 4.4) * lerpf(0.92, 1.08, _sharp())
 	# Go get a slow loose puck sitting in or near the crease.
 	var pl0 := _local(puck.global_position)
 	if puck.carrier == null and not puck.dead and puck.speed() < 4.0 and puck.can_pick(self) 			and pl0.z > -0.2 and pl0.z < 2.6 and absf(pl0.x) < 2.2:
@@ -157,16 +181,26 @@ func _move_goalie(delta: float) -> void:
 	# Never behind the goal line: from there the net is in the way. A puck sitting on the
 	# line or just in the net is still in reach (`_try_cover`) from out front.
 	target.z = maxf(target.z, 0.3)
+	target = _clear_posts(target)
 	var to := net.to_global(target) - global_position
 	to.y = 0.0
 	velocity = to / delta if to.length() < speed * delta else to.normalized() * speed
+	var before := global_position
 	move_and_slide()
 	global_position.y = 0.0
+	# Report how far it really went, not how hard it pushed: leaning on a post or a
+	# skater mustn't read as skating (the visual strides off this speed).
+	velocity = (global_position - before) / delta
+	velocity.y = 0.0
 	var face := puck.global_position - global_position
 	face.y = 0.0
 	if face.length() > 0.1:
 		heading = Skater._rotate_toward(heading, face.normalized(), 10.0 * delta)
 	butterfly = g == G.REACT and _react_left <= 0.0 and puck.on_ice
+
+
+func _sharp() -> float:
+	return minf(1.0, sharpness + 0.1 * catch_up)
 
 
 # --- Saves ---------------------------------------------------------------------
@@ -188,7 +222,9 @@ func _check_save() -> void:
 	var t := maxf(0.0, (pl.z - plane) / -vl.z)
 	var px := pl.x + vl.x * t
 	var py := maxf(pl.y + vl.y * t, 0.0)
+	last_try = {"flight": puck.flight, "px": px, "py": py, "plane": plane, "spd": puck.speed(), "react_left": _react_left, "g": g}
 	if absf(px) > RinkSpec.NET_WIDTH * 0.5 + 0.3 or py > RinkSpec.NET_HEIGHT + 0.3:
+		last_try["wide"] = true
 		return # wide or high: let it go
 	var gx := _local(global_position).x
 	var dx := px - gx
@@ -196,17 +232,26 @@ func _check_save() -> void:
 	var glove_side := dx > 0.0 # the glove is on the goalie's left = +x in the net frame
 	var reach: float
 	if py < 0.45:
-		reach = PlayerStats.lerp_stat(stats.pads, 0.22, 0.48)
+		reach = PlayerStats.lerp_stat(stats.pads, 0.28, 0.52)
 	elif glove_side:
-		reach = PlayerStats.lerp_stat(stats.glove, 0.25, 0.52)
+		reach = PlayerStats.lerp_stat(stats.glove, 0.3, 0.56)
 	else:
-		reach = PlayerStats.lerp_stat(stats.blocker, 0.25, 0.52)
+		reach = PlayerStats.lerp_stat(stats.blocker, 0.3, 0.56)
+	# Not read yet (a quick release, a shot from in close): no reaching save, but a goalie
+	# set on its angle still blocks what comes near the pads and gloves.
+	if not reacted:
+		reach *= 0.55
 	var chance := 0.0
 	if absf(dx) < BODY_HALF and py < SAVE_HEIGHT:
-		chance = 0.96 if reacted else 0.85
-	elif reacted and absf(dx) < BODY_HALF + reach and py < SAVE_HEIGHT + 0.25:
-		chance = lerpf(0.85, 0.35, (absf(dx) - BODY_HALF) / reach)
+		chance = 0.96 if reacted else 0.88
+	elif absf(dx) < BODY_HALF + reach and py < SAVE_HEIGHT + 0.25:
+		var f := (absf(dx) - BODY_HALF) / reach
+		chance = lerpf(0.88, 0.35, f) if reacted else lerpf(0.75, 0.22, f)
+	if chance > 0.0:
+		chance += (_sharp() - 0.5) * 0.14
 	chance -= clampf((puck.speed() - 25.0) * 0.006, 0.0, 0.12)
+	last_try["dx"] = dx
+	last_try["chance"] = chance
 	if _rng.randf() >= chance:
 		return
 	_make_save(px, py, plane, dx, glove_side)

@@ -4,17 +4,115 @@ extends SkaterVisual
 ## Wide crouched stance, butterfly drop on low shots, glove / blocker reach on saves,
 ## stick paddle flat on the ice in front of the pads.
 
-## Mask models (tools/build_gear.gd), picked by Skater.gear_style. Fitted to the face:
-## eye = where the eyes sit in the mask model's coordinates, crown = from there up to the
-## top of the head (model units), both measured on the male body where the masks were
-## tuned. Bodies without eyes fall back to the head box: fit = mask height / head height,
-## raise = above the head's center in head heights, fwd = ahead of it in head depths.
+## Mask models (tools/blender/goalie_mask_gear.py via tools/build_gear.gd), in the helmets'
+## frame. Skater.gear_style picks one: a created player's own choice (an index, as
+## CustomPlayers.MASK_NAMES), or a roll (SkaterVisual.gear_roll) weighted by `weight`, so
+## most goalies wear the modern mask. Per mask:
+##   surfaces  what each of the mesh's surfaces is: shell (team color), liner (the shell's
+##             dark inside; the combo's dark parts), cage, trim (backplate, pads and
+##             straps), white (the combo's helmet trim)
+##   helmet    fitted as the skaters' helmets are (it is one), not on the eyes
+##   squeeze   the pressed-down hair pulled in under a shell that sits closer to the
+##             temples than a helmet does
+##   beard     false where facial hair would poke through (the molded mask is on the face)
+##   paint     the mask's letter in its paint textures' names (MASK_PAINTS), if it can be
+##             painted (the combo is a plain helmet)
 const MASKS := [
-	{"mesh": preload("res://assets/characters/goalie_mask.res"), "eye": Vector3(0, 0.0115, 0.085), "crown": 0.168,
-		"fit": 1.3, "raise": 0.06, "fwd": 0.06},
-	{"mesh": preload("res://assets/characters/goalie_mask_b.res"), "eye": Vector3(0, 0.0023, 0.0646), "crown": 0.114,
-		"fit": 1.3, "raise": 0.08, "fwd": 0.03},
+	# Modern: a shell standing off the head, wraparound cage, backplate and straps.
+	{"mesh": preload("res://assets/characters/goalie_mask.res"), "surfaces": ["shell", "liner", "cage", "trim"],
+		"weight": 5, "squeeze": Vector3(0.8, 1.0, 1.0), "paint": "a"},
+	# Helmet and cage: the classic skater helmet with a full wire cage.
+	{"mesh": preload("res://assets/characters/goalie_mask_b.res"), "surfaces": ["shell", "liner", "cage", "white"],
+		"weight": 2, "helmet": true},
+	# '80s: a rounder, closer shell, a straight-bar cage, a big backplate.
+	{"mesh": preload("res://assets/characters/goalie_mask_c.res"), "surfaces": ["shell", "liner", "cage", "trim"],
+		"weight": 2, "squeeze": Vector3(0.8, 1.0, 1.0), "paint": "c"},
+	# Molded: a one-piece 1970s fiberglass mask over the whole face and forehead.
+	{"mesh": preload("res://assets/characters/goalie_mask_d.res"), "surfaces": ["shell", "liner", "trim"],
+		"weight": 2, "squeeze": Vector3(0.8, 0.6, 0.88), "beard": false, "paint": "d"},
 ]
+
+## Paint jobs (tools/blender/goalie_mask_paint.py; scenes/actors/mask_paint.gdshader): a
+## pattern texture per mask shape, res://assets/characters/masks/mask_<mask>_<name>.png,
+## and the color schemes it suits. A scheme names the base, accent 1, accent 2 and detail
+## colors: P the team's jersey color, S its trim, W white, K black. Each goalie's design
+## and scheme come from their name and number, the same every game; one in five wears the
+## mask plain.
+const MASK_PAINTS := [
+	{"name": "flames", "schemes": ["WPSK", "KPSW", "PSWK"]},    # flames, their core, their edge
+	{"name": "beast", "schemes": ["PKKW", "PSKW", "SKKW"]},     # stripes, gums and brows, teeth and eyes
+	{"name": "wings", "schemes": ["WPKS", "PWKS"]},             # feathers, their edges, pinstripes
+	{"name": "burst", "schemes": ["WPSK", "PSWK", "KPSW"]},     # spikes, their hearts, their edges
+	{"name": "stars", "schemes": ["WPSW", "WSPW"]},             # field, bars, stars
+	{"name": "bolts", "schemes": ["WSPK", "KSPW"]},             # lightning, cloud, edges
+	{"name": "sweep", "schemes": ["WPSK", "PSWK", "KPSW"]},     # blades, their echoes, pinstripe
+	{"name": "stitches", "schemes": ["WPSK", "PSKW"]},          # (stitches are the detail color)
+]
+const MASK_PAINT_SHADER := preload("res://scenes/actors/mask_paint.gdshader")
+const MASK_PAINT_DIR := "res://assets/characters/masks/"
+## For tools (the character viewer's `paint=`): a design name every goalie wears, "plain"
+## for none, or "" for each goalie's own.
+static var paint_override := ""
+
+
+## The paint material for a mask shell: `letter` the mask's (MASKS.paint), `seed` the
+## goalie's own number; null for a plain mask.
+static func mask_paint(letter: String, c: Dictionary, seed: int) -> ShaderMaterial:
+	var design: Dictionary = MASK_PAINTS[(seed / 5) % MASK_PAINTS.size()]
+	if paint_override != "":
+		design = {}
+		for d: Dictionary in MASK_PAINTS:
+			if d.name == paint_override:
+				design = d
+	elif seed % 5 == 0:
+		design = {}
+	if design.is_empty():
+		return null
+	var path := "%smask_%s_%s.png" % [MASK_PAINT_DIR, letter, design.name]
+	if not ResourceLoader.exists(path):
+		return null
+	var scheme: String = design.schemes[(seed / 47) % (design.schemes as Array).size()]
+	# The team's two colors, kept apart: a trim too close to the jersey (or to white, where
+	# the scheme has white beside it) gives way to the other candidates.
+	var primary: Color = c.jersey
+	var secondary: Color = c.trim
+	for alt: Color in [c.trim, c.get("number_outline", c.trim), c.get("helmet", c.trim), primary.lightened(0.45), primary.darkened(0.5)]:
+		secondary = alt
+		if _apart(alt, primary) and (not scheme.contains("W") or _apart(alt, Color(0.94, 0.94, 0.92))) \
+				and (not scheme.contains("K") or _apart(alt, Color(0.05, 0.05, 0.06))):
+			break
+	var cols := {"P": primary, "S": secondary, "W": Color(0.94, 0.94, 0.92), "K": Color(0.05, 0.05, 0.06)}
+	var key := "maskpaint|%s|%s|%s|%s" % [path, scheme, primary.to_html(), secondary.to_html()]
+	if not _materials.has(key):
+		var m := ShaderMaterial.new()
+		m.shader = MASK_PAINT_SHADER
+		m.set_shader_parameter("pattern", load(path))
+		m.set_shader_parameter("base_color", cols[scheme[0]])
+		m.set_shader_parameter("accent1", cols[scheme[1]])
+		m.set_shader_parameter("accent2", cols[scheme[2]])
+		m.set_shader_parameter("detail", cols[scheme[3]])
+		_materials[key] = m
+	return _materials[key]
+
+
+static func _apart(a: Color, b: Color) -> bool:
+	return Vector3(a.r - b.r, a.g - b.g, a.b - b.b).length() > 0.33
+
+
+## The MASKS index a gear_style stands for.
+static func mask_index(gear_style: int) -> int:
+	if gear_style < GEAR_ROLL:
+		return gear_style % MASKS.size()   # a created player's choice
+	var total := 0
+	for m: Dictionary in MASKS:
+		total += int(m.weight)
+	var k := ((gear_style - GEAR_ROLL) / 2) % total
+	for i in MASKS.size():
+		k -= int(MASKS[i].weight)
+		if k < 0:
+			return i
+	return 0
+
 
 const GOALIE_STICK_MESH := preload("res://assets/characters/goalie_stick.res")
 ## Goalie trapper (tools/blender/goalie_gear.py): origin at the hand, +Y on along the
@@ -89,30 +187,10 @@ func build(sk: Skater) -> void:
 func _build_gear() -> void:
 	var c := team_colors()
 	var head := anchor_box("head", "Head", Vector3(0.2, 0.25, 0.22) * hs)
-	# Goalie mask model (tools/build_gear.gd): covers the whole head, cage in front.
-	var mspec: Dictionary = MASKS[skater.gear_style % MASKS.size()]
-	var mmesh: Mesh = mspec.mesh
-	var fit: float = head.size.y * mspec.fit / mmesh.get_aabb().size.y
-	var at := head.get_center() + Vector3(0, head.size.y * mspec.raise, head.size.z * mspec.fwd)
-	var eyes := skel.get_node_or_null("Eyes") as MeshInstance3D
-	if eyes != null:
-		# Eye opening on the eyes, sized by eyes-to-crown: the head box alone put the mask
-		# too high and too small on the female body.
-		var e := eyes.mesh.get_aabb().get_center()
-		fit = (head.end.y - e.y) / float(mspec.crown)
-		at = Vector3(head.get_center().x, e.y, e.z) - (mspec.eye as Vector3) * fit
-	var mm := attach("Head", mmesh, null, at, Basis.from_scale(Vector3.ONE * fit))
-	mm.material_override = null
-	mm.name = "Helmet"   # as the skater's helmet: tools and views find the head gear by name
-	# Hair (the flattened under-helmet cut, which the mask covers but the cage shows at
-	# the hairline) and facial hair: without them the face behind the cage was bald.
-	_add_hair(head)
-	var shell := MeshUtil.material(c.jersey.lerp(Color.WHITE, 0.15), 0.35)
-	shell.cull_mode = BaseMaterial3D.CULL_DISABLED
-	var cage := MeshUtil.material(Color(0.12, 0.12, 0.13), 0.3)
-	cage.cull_mode = BaseMaterial3D.CULL_DISABLED
-	mm.set_surface_override_material(0, shell)
-	mm.set_surface_override_material(1, cage)
+	if TEAM_MASKS.has(c.get("headgear", "")):
+		_build_team_mask(head, c)   # a team's mask (the Campers' vintage one) instead
+	else:
+		_build_goalie_mask(head, c)
 	var chest := anchor_box("chest", "Spine2", Vector3(0.36, 0.2, 0.24) * hs)
 	var cc := chest.get_center()
 	var cr := Vector3(maxf(chest.size.x * 0.75, 0.3 * hs), 0.2 * hs, maxf(chest.size.z * 0.75, 0.2 * hs))
@@ -197,6 +275,45 @@ func _build_stick() -> void:
 ## Goalies don't fall or stumble from hits; their poses come from the rig.
 func _state_clips() -> void:
 	pass
+
+
+## Goalie mask model (MASKS).
+func _build_goalie_mask(head: AABB, c: Dictionary) -> void:
+	var spec: Dictionary = MASKS[mask_index(skater.gear_style)]
+	var fit := _eye_fit(head)
+	if spec.get("helmet", false):
+		var k: float = head.size.x / HELMET_HEAD_W
+		fit = Transform3D(Basis.from_scale(Vector3.ONE * k),
+				Vector3(head.get_center().x, head.end.y - HELMET_CROWN * k, head.get_center().z))
+	var mm := attach("Head", spec.mesh, null, fit.origin, fit.basis)
+	mm.material_override = null
+	mm.name = "Helmet"   # as the skater's helmet: tools and views find the head gear by name
+	# Hair (the flattened under-helmet cut, which the mask covers but the cage shows at
+	# the hairline) and facial hair: without them the face behind the cage was bald.
+	_add_hair(head, spec.get("beard", true))
+	if spec.has("squeeze"):
+		for h in _hair_helm:
+			if h.name != "HairCap":   # (the scalp cap is skin-tight already)
+				h.transform = h.transform * Transform3D(Basis.from_scale(spec.squeeze))
+	var liner := MeshUtil.material(Color(0.07, 0.07, 0.08), 0.85)   # foam padding
+	liner.metallic_specular = 0.15
+	var trim := MeshUtil.material(Color(0.1, 0.1, 0.11), 0.6)       # backplate and elastic
+	trim.metallic_specular = 0.3
+	var mats := {
+		"shell": MeshUtil.material(c.helmet if spec.get("helmet", false) else c.jersey.lerp(Color.WHITE, 0.15), 0.35),
+		"liner": liner,
+		"cage": MeshUtil.material(Color(0.12, 0.12, 0.13), 0.3),
+		"trim": trim,
+		"white": MeshUtil.material(Color(0.92, 0.92, 0.9), 0.4),
+	}
+	if spec.has("paint"):
+		var seed := absi(("%s %s %d" % [skater.first_name, skater.last_name, skater.number]).hash())
+		var painted := mask_paint(spec.paint, c, seed)
+		if painted != null:
+			mats["shell"] = painted
+	var surfaces: Array = spec.surfaces
+	for i in surfaces.size():
+		mm.set_surface_override_material(i, mats[surfaces[i]])
 
 
 func _pose(delta: float) -> void:

@@ -7,7 +7,10 @@ extends Node3D
 ##   goal=<0|1>            the screens flash GOAL for that team
 ##   home=<i> away=<i>     Teams indices (default 0, 1)
 ##   arena=<id>            an arena (Arenas; default: the home team's)
+##   time= snow= lights=   override those arena options (outdoor: day|dusk|night, none|light|heavy)
 ##   shot=<png> wait=<s>   save a screenshot after `wait` seconds and quit
+##   wear=<0..1>           ice wear: that much of a period's skating on the sheet (IceWear.prewear)
+##   zamboni=<0..1>        a Zamboni on the ice, that far through its pass (needs wear)
 ##   noarena               the bare rink (for comparing stats)
 ##   stats                 print fps, draw calls and primitives with the shot
 
@@ -29,7 +32,10 @@ func _ready() -> void:
 	_rink = (load("res://scenes/match/Rink.tscn") as PackedScene).instantiate()
 	_rink.build_arena = not args.has("noarena")
 	var home := int(args.get("home", "0"))
-	_rink.arena_spec = Arenas.find(str(args["arena"])) if args.has("arena") else Arenas.home_of(home)
+	_rink.arena_spec = (Arenas.find(str(args["arena"])) if args.has("arena") else Arenas.home_of(home)).duplicate()
+	for k: String in ["time", "snow", "lights"]:
+		if args.has(k):
+			_rink.arena_spec[k] = str(args[k])
 	add_child(_rink)
 	var away := int(args.get("away", "1"))
 	_rink.set_bench_colors([MenuStyle.team_color(home), MenuStyle.team_color(away)])
@@ -43,6 +49,20 @@ func _ready() -> void:
 		if args.has("goal"):
 			_rink.arena.flash_team = int(args["goal"])
 			_rink.arena.flash_until = INF
+	if args.has("wear") and _rink.wear:
+		_rink.wear.prewear(float(args["wear"]))
+		if args.has("zamboni"):
+			var z := Zamboni.new()
+			z.wear = _rink.wear
+			_rink.add_child(z)
+			z.set_trim(MenuStyle.team_color(home))
+			_rink.wear.begin_sweep()
+			var to := z.length * clampf(float(args["zamboni"]), 0.0, 1.0)
+			var d := 0.0
+			while d < to:
+				d = minf(d + 0.3, to)
+				z.place(d, true)
+			_rink.wear.upload()
 	var cam := Camera3D.new()
 	cam.fov = float(args.get("fov", "60"))
 	cam.far = 400.0

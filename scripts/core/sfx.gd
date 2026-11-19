@@ -20,6 +20,13 @@ const VOICES := 24
 ## a channel up, so they never cut off a horn, a hit or a crowd sting.
 const BED_CAP := {"stride": 6, "carve": 3}
 const CROWD_DB := -5.0            ## the crowd bed under everything
+## dB on the crowd (bed and reactions) for the building and how full it is (Arena sets it:
+## a half-full community rink is quieter than a sold-out arena).
+var venue_db := 0.0
+## A bed of outdoor sound under the crowd (set_ambience: "wind" at an outdoor rink), playing
+## whenever the crowd does.
+var _ambience: AudioStreamPlayer
+var _ambience_kind := ""
 
 ## A crowd reaction started (the arena's fans stand and cheer with it).
 signal crowd_reacted(sound: String)
@@ -114,6 +121,9 @@ func _ready() -> void:
 	_crowd.volume_db = CROWD_DB
 	_crowd.bus = "Crowd"
 	add_child(_crowd)
+	_ambience = AudioStreamPlayer.new()
+	_ambience.bus = "Effects"
+	add_child(_ambience)
 	_react = AudioStreamPlayer.new()
 	_react.bus = "Crowd"
 	add_child(_react)
@@ -205,13 +215,41 @@ func play(sound: String, at := Vector3.INF, volume_db := 0.0, pitch := 1.0) -> v
 	p.play()
 
 
+func set_venue(db: float) -> void:
+	venue_db = db
+	_crowd.volume_db = CROWD_DB + db
+
+
 func start_crowd() -> void:
 	if not _crowd.playing and not muted:
 		_crowd.play()
+	if _ambience_kind != "" and not _ambience.playing and not muted:
+		_ambience.play()
+
+
+## The ambience bed: `kind` "wind" (synthesized at first use, or a recorded wind_<n>.ogg in
+## CUT_DIR), "" for none. Plays with the crowd (start_crowd / stop_crowd).
+func set_ambience(kind: String, volume_db := 0.0) -> void:
+	if kind == "":
+		_ambience_kind = ""
+		_ambience.stop()
+		return
+	if kind == "wind" and not _streams.has("wind"):
+		_streams["wind"] = _wav(_wind_loop(10.0, 0.5), true)
+	if not _streams.has(kind):
+		return
+	if kind != _ambience_kind:
+		_ambience.stop()
+		_ambience.stream = _pick(kind)
+	_ambience_kind = kind
+	_ambience.volume_db = volume_db
+	if _crowd.playing and not _ambience.playing and not muted:
+		_ambience.play()
 
 
 func stop_crowd() -> void:
 	_crowd.stop()
+	_ambience.stop()
 	end_reaction(0.2)
 	stop_organ(0.2)
 	stop_voice()
@@ -229,7 +267,7 @@ func crowd_react(sound: String, volume_db := 0.0, priority := 1) -> void:
 	if _react_tween:
 		_react_tween.kill()
 	_react.stream = _pick(sound)
-	_react.volume_db = volume_db
+	_react.volume_db = volume_db + venue_db
 	_react.play()
 	if log_events:
 		print("[audio] %.1f crowd %s" % [Time.get_ticks_msec() / 1000.0, sound])
@@ -690,7 +728,7 @@ func _load_recordings() -> void:
 		var stream := load(CUT_DIR + f) as AudioStream
 		if stream == null:
 			continue
-		if name == "crowd" and stream is AudioStreamOggVorbis:
+		if name in ["crowd", "wind"] and stream is AudioStreamOggVorbis:
 			(stream as AudioStreamOggVorbis).loop = true
 		if not found.has(name):
 			found[name] = []
@@ -941,6 +979,34 @@ func _crowd_loop(dur: float, lp_a: float, amp: float) -> PackedFloat32Array:
 		if i < fade:
 			var w := float(i) / fade
 			s[i] = raw[i] * w + raw[i + s.size()] * (1.0 - w)
+	return s
+
+
+## Wind across open ice: noise through a two-pole low-pass that opens up in the gusts
+## (brighter and louder), the gusts' periods fitting the loop so it repeats seamlessly.
+func _wind_loop(dur: float, amp: float) -> PackedFloat32Array:
+	var fade := int(0.5 * RATE)
+	var raw := _buf(dur + 0.5)
+	var lp := 0.0
+	var lp2 := 0.0
+	var lp3 := 0.0
+	var peak := 0.0001
+	for i in raw.size():
+		var t := float(i) / RATE
+		var g := 0.55 + 0.25 * sin(TAU * t / dur) + 0.15 * sin(TAU * 3.0 * t / dur + 1.3) + 0.08 * sin(TAU * 7.0 * t / dur + 0.4)
+		var a := 0.003 + 0.025 * g * g
+		lp += a * (_n() - lp)
+		lp2 += a * (lp - lp2)
+		lp3 += 0.0008 * (lp2 - lp3)   # take out the rumble below the howl
+		raw[i] = (lp2 - lp3) * g / sqrt(a)
+		peak = maxf(peak, absf(raw[i]))
+	var s := _buf(dur)
+	for i in s.size():
+		s[i] = raw[i]
+		if i < fade:
+			var w := float(i) / fade
+			s[i] = raw[i] * w + raw[i + s.size()] * (1.0 - w)
+		s[i] *= amp / peak
 	return s
 
 

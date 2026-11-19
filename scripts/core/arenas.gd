@@ -4,7 +4,7 @@ class_name Arenas
 ##   id, name, style (STYLES), seats ("team" or a CustomTeams.PALETTE index), boards
 ##   ("white" or a palette index), lights (LIGHTS), ribbon / scoreboard / banners (bools),
 ##   attendance (percent of seats filled), center ("home", "league" or "none": the
-##   center-ice logo).
+##   center-ice logo); outdoor rinks also time (TIMES) and snow (SNOWS).
 ## Teams play at home in their home arena (`user://arena_homes.json`: abbr -> arena id;
 ## Modern Arena when unset). Outdoor arenas can only be a created team's home. A game's
 ## arena is the rules screen's ARENA pick, or the home team's (for_game).
@@ -16,13 +16,27 @@ const MAX_ARENAS := 24
 const STYLES := ["modern", "dome", "community", "outdoor"]
 const STYLE_NAMES := ["Modern Arena", "Retro Dome", "Community Rink", "Outdoor Rink"]
 ## Styles built so far (the rest show as coming soon).
-const READY := ["modern", "dome"]
+const READY := ["modern", "dome", "community", "outdoor"]
 const LIGHTS := ["cool", "neutral", "warm"]
 const LIGHT_NAMES := ["Cool White", "Neutral", "Warm"]
 const LIGHT_COLORS := {"cool": Color(0.94, 0.96, 1.0), "neutral": Color(1.0, 0.97, 0.9), "warm": Color(1.0, 0.86, 0.66)}
 const ATTENDANCE := [25, 50, 75, 100]
 const CENTERS := ["home", "league", "none"]
 const CENTER_NAMES := ["Home Team Logo", "League Logo", "None"]
+## Outdoor rinks only: the time of day, and the snow coming down.
+const TIMES := ["day", "dusk", "night"]
+const TIME_NAMES := ["Afternoon", "Sunset", "Night"]
+const SNOWS := ["none", "light", "heavy"]
+const SNOW_NAMES := ["None", "Flurries", "Heavy"]
+## The options each style uses (CREATE ARENA shows only these).
+const STYLE_OPTIONS := {
+	"modern": ["seats", "boards", "lights", "attendance", "ribbon", "scoreboard", "banners", "center"],
+	"dome": ["seats", "boards", "lights", "attendance", "ribbon", "scoreboard", "banners", "center"],
+	"community": ["seats", "boards", "lights", "attendance", "scoreboard", "banners", "center"],
+	"outdoor": ["time", "snow", "seats", "boards", "lights", "attendance", "scoreboard", "banners", "center"],
+}
+## How much louder or quieter the crowd is in each style, full (dB; attendance thins it too).
+const CROWD_DB := {"modern": 0.0, "dome": 0.0, "community": -3.0, "outdoor": -4.0}
 
 ## Each style's building sizes, over Arena's (Modern Arena's) own.
 const SIZES := {
@@ -32,10 +46,17 @@ const SIZES := {
 	"dome": {"SUITES": false, "CROSS_W": 2.2, "SUITE_STEP": 0.0, "SUITE_DEPTH": 0.0, "SUITE_H": 0.0,
 		"OVERHANG": 0.0, "FASCIA_H": 1.1, "LOW_ROWS": 17, "UP_ROWS": 16, "UP_DEPTH": 0.82, "UP_RISE": 0.5,
 		"TOP_W": 2.4, "DOME_SPRING": 21.0, "ROOF_Y": 37.0, "concrete": Color(0.46, 0.39, 0.32)},
+	# A local rink: aluminum bleachers down both sides, a block-walled barn with an arched
+	# wood roof (ArenaCommunity). Only the lower-bowl sizes are used (the bleacher rows).
+	"community": {"LOW_ROWS": 7, "LOW_DEPTH": 0.8, "LOW_RISE": 0.4, "LOW_Y0": 0.9},
+	# A frozen pond: a few rows of bleachers each side, snowbanks round the ends (ArenaOutdoor).
+	"outdoor": {"LOW_ROWS": 6, "LOW_DEPTH": 0.8, "LOW_RISE": 0.4, "LOW_Y0": 0.7},
 }
 ## Each style's built-in arena's own options (over blank()).
 const STYLE_DEFAULTS := {
 	"dome": {"lights": "warm", "banners": true},
+	"community": {"lights": "neutral", "banners": true, "attendance": 75},
+	"outdoor": {"lights": "neutral", "attendance": 75, "time": "dusk", "snow": "light"},
 }
 
 static var _list: Array = []
@@ -47,6 +68,7 @@ static func blank(style := "modern") -> Dictionary:
 	return {
 		"id": "", "name": "", "style": style, "seats": "team", "boards": "white", "lights": "cool",
 		"ribbon": true, "scoreboard": true, "banners": false, "attendance": 100, "center": "home",
+		"time": "dusk", "snow": "light",
 	}
 
 

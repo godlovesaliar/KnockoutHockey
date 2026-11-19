@@ -103,6 +103,13 @@ func update(_skater: Skater, i: SkaterIntent, _delta: float) -> void:
 	i.block_held = _cur.get("block", false)
 
 
+## This frame's controls (move: Vector3 stick / keys, screen terms; turbo, backward, the
+## buttons...), for things other than a skater to drive (the Zamboni).
+func read() -> Dictionary:
+	_poll()
+	return _cur
+
+
 func _poll() -> void:
 	var f := Engine.get_physics_frames()
 	if f == _frame:

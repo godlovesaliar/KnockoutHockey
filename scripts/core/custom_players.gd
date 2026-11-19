@@ -71,7 +71,7 @@ const HAIR_STYLE_NAMES := ["Messy", "Buzz Cut", "Shaggy", "Mop", "Quiff", "Braid
 const FACIAL_HAIR := ["", "beard", "chinstrap", "moustache"]   ## men only
 const FACIAL_HAIR_NAMES := ["None", "Beard", "Chinstrap", "Moustache"]
 const HELMET_NAMES := ["Modern", "Classic"]
-const MASK_NAMES := ["Mask 1", "Mask 2"]
+const MASK_NAMES := ["Modern", "Helmet & Cage", "'80s", "Molded"]   ## as GoalieVisual.MASKS
 
 ## Height (inches) and weight (lb): the creator's range, and the default per gender (about
 ## the roster's average). They set the body's size (BodyBuild).

@@ -1,6 +1,6 @@
 extends SceneTree
 ## Offline build step for equipment models:
-##   godot --headless --path . -s res://tools/build_gear.gd [-- only=helmet|mask|stick|goalie_stick|skate|glove|goalie_gear]
+##   godot --headless --path . -s res://tools/build_gear.gd [-- only=helmet|mask|team_mask|stick|goalie_stick|skate|glove|goalie_gear]
 ##
 ## Source models (assets/equip/, credits in assets/CREDITS.md) become plain meshes in
 ## meters, with their textures dropped (they carry real team and brand logos) and
@@ -8,7 +8,13 @@ extends SceneTree
 ## * Helmets (HELMETS, modeled by tools/blender/helmet_gear.py): one surface per role:
 ##   0 shell, 1 trim, 2 dark, 3 visor, 4 visor hardware. Front +Z; the origin is the male
 ##   body's head box center, crown and chin strap fitted to that head (see SkaterVisual).
-## * Goalie masks (MASKS): 0 shell, 1 cage. Front +Z, centered.
+## * Goalie masks (MASKS, modeled by tools/blender/goalie_mask_gear.py) in the helmets'
+##   frame, surfaces in each spec's node order: shell, liner (the shell's inside), cage,
+##   trim (backplate and straps; the combo's white helmet trim). And the hair-colored scalp
+##   cap worn under them and the helmets (scalp_cap), one surface.
+## * Team masks (TEAM_MASKS, modeled by tools/blender/mask_gear.py) in the helmets' frame:
+##   luchador hoods 0 hood (UV mapped for the pattern textures), 1 extras (the crest);
+##   the vintage face mask 0 shell, 1 marks, 2 straps.
 ## * Stick: 0 shaft, 1 blade. Heel at the origin, shaft up +Y (STICK_SHAFT m long), the
 ##   blade in the YZ plane toward +Z; its heel-to-toe vector is saved as the "blade" meta.
 ## * Goalie stick: the same layout; 0 body (shaft and paddle), 1 grip, 2 blade tape.
@@ -27,11 +33,23 @@ const HELMETS := [
 	{"out": "helmet_b", "src": EQUIP + "helmet_b.glb"},   # classic one-piece
 ]
 const HELMET_NODES := ["shell", "trim", "dark", "visor", "visor_hw"]
-## cage: "node" = nodes named *cage*, "surface1" = the model's second surface;
-## front: the model's front axis (default +Z).
+## Also in game axes and the helmets' frame (mask_gear.py): copied over, UVs kept.
+const TEAM_MASKS := [
+	{"out": "lucha_a", "src": EQUIP + "lucha_a.glb", "nodes": ["hood", "extras"]},
+	{"out": "lucha_b", "src": EQUIP + "lucha_b.glb", "nodes": ["hood", "extras"]},
+	{"out": "lucha_c", "src": EQUIP + "lucha_c.glb", "nodes": ["hood", "extras"]},
+	{"out": "lucha_a_female", "src": EQUIP + "lucha_a_female.glb", "nodes": ["hood", "extras"]},
+	{"out": "lucha_b_female", "src": EQUIP + "lucha_b_female.glb", "nodes": ["hood", "extras"]},
+	{"out": "lucha_c_female", "src": EQUIP + "lucha_c_female.glb", "nodes": ["hood", "extras"]},
+	{"out": "vintage_mask", "src": EQUIP + "vintage_mask.glb", "nodes": ["shell", "marks", "straps"]},
+]
+## The goalie masks: also in game axes and the helmets' frame, so only copied over.
 const MASKS := [
-	{"out": "goalie_mask", "src": EQUIP + "helmet-for-puck/source/helmet_sketchfab.fbx", "cage": "node", "height": 0.53, "tris": [0, 0]},
-	{"out": "goalie_mask_b", "src": EQUIP + "GMask.obj", "cage": "surface1", "height": 0.36, "tris": [7000, 3000], "front": Vector3.LEFT},
+	{"out": "goalie_mask", "src": EQUIP + "goalie_mask_a.glb", "nodes": ["shell", "liner", "cage", "trim"]},   # modern
+	{"out": "goalie_mask_b", "src": EQUIP + "goalie_mask_b.glb", "nodes": ["shell", "liner", "cage", "trim"]},   # helmet and cage
+	{"out": "goalie_mask_c", "src": EQUIP + "goalie_mask_c.glb", "nodes": ["shell", "liner", "cage", "trim"]},   # '80s
+	{"out": "goalie_mask_d", "src": EQUIP + "goalie_mask_d.glb", "nodes": ["shell", "liner", "trim"]},           # molded
+	{"out": "scalp_cap", "src": EQUIP + "goalie_mask_a.glb", "nodes": ["scalp"]},
 ]
 ## Both sticks are modeled by tools/blender/stick_gear.py in game axes, one glTF node per
 ## surface. Shaft (heel to butt) and blade (heel corner to toe along the bottom line, at
@@ -81,7 +99,10 @@ func _init() -> void:
 			_save(_nodes(spec.src, HELMET_NODES), spec.out)
 	if what in ["all", "mask"]:
 		for spec: Dictionary in MASKS:
-			_build_mask(spec)
+			_save(_nodes(spec.src, spec.nodes), spec.out)
+	if what in ["all", "team_mask"]:
+		for spec: Dictionary in TEAM_MASKS:
+			_save(_nodes(spec.src, spec.nodes), spec.out)
 	if what in ["all", "stick"]:
 		_build_stick()
 	if what in ["all", "goalie_stick"]:
@@ -142,7 +163,8 @@ func _part(arr: Array, xf: Transform3D, mat: Material, name: String, surf: int) 
 		if i < nr.size():
 			nr[i] = (nb * nr[i]).normalized()
 	var cols: PackedColorArray = arr[Mesh.ARRAY_COLOR] if arr[Mesh.ARRAY_COLOR] != null else PackedColorArray()
-	return {"verts": v, "norms": nr, "idx": idx, "colors": cols, "avg": _avg_color(mat as BaseMaterial3D), "name": name, "surf": surf}
+	var uvs: PackedVector2Array = arr[Mesh.ARRAY_TEX_UV] if arr[Mesh.ARRAY_TEX_UV] != null else PackedVector2Array()
+	return {"verts": v, "norms": nr, "idx": idx, "colors": cols, "uvs": uvs, "avg": _avg_color(mat as BaseMaterial3D), "name": name, "surf": surf}
 
 
 ## Applies `f(v) -> v` to a part's vertices and `b` to its normals.
@@ -178,6 +200,8 @@ func _merge(parts: Array) -> Dictionary:
 	var idx := PackedInt32Array()
 	var cols := PackedColorArray()   # kept only when every part has vertex colors
 	var all_cols := true
+	var uvs := PackedVector2Array()  # likewise UVs
+	var all_uvs := true
 	for p: Dictionary in parts:
 		var base := v.size()
 		v.append_array(p.verts)
@@ -190,9 +214,15 @@ func _merge(parts: Array) -> Dictionary:
 			cols.append_array(pc)
 		else:
 			all_cols = false
+		var pu: PackedVector2Array = p.get("uvs", PackedVector2Array())
+		if pu.size() == (p.verts as PackedVector3Array).size():
+			uvs.append_array(pu)
+		else:
+			all_uvs = false
 		for i: int in p.idx:
 			idx.append(base + i)
-	return {"verts": v, "norms": nr, "idx": idx, "colors": cols if all_cols else PackedColorArray()}
+	return {"verts": v, "norms": nr, "idx": idx, "colors": cols if all_cols else PackedColorArray(),
+			"uvs": uvs if all_uvs else PackedVector2Array()}
 
 
 ## Welds by position (dropping UV seams) and simplifies to about `target` triangles,
@@ -337,6 +367,9 @@ func _save(surfaces: Array, out: String, metas := {}) -> ArrayMesh:
 			var pc: PackedColorArray = p.get("colors", PackedColorArray())
 			if pc.size() == (p.verts as PackedVector3Array).size():
 				a[Mesh.ARRAY_COLOR] = pc   # baked shading for the glove shader (tools/blender/hand_gear.py)
+			var pu: PackedVector2Array = p.get("uvs", PackedVector2Array())
+			if pu.size() == (p.verts as PackedVector3Array).size():
+				a[Mesh.ARRAY_TEX_UV] = pu   # pattern textures (team masks)
 		mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, a)
 	for k: String in metas:
 		mesh.set_meta(k, metas[k])
@@ -367,26 +400,6 @@ func _avg_color(mat: BaseMaterial3D) -> Color:
 			k += 1
 	c /= maxf(k, 1)
 	return Color(c.x * tint.r, c.y * tint.g, c.z * tint.b, c.w * tint.a)
-
-
-# --- Goalie masks ------------------------------------------------------------------
-
-func _build_mask(spec: Dictionary) -> void:
-	var parts := _parts(spec.src)
-	var shell := []
-	var cage := []
-	for p: Dictionary in parts:
-		var is_cage: bool = (p.name as String).to_lower().contains("cage") if spec.cage == "node" else p.surf == 1
-		(cage if is_cage else shell).append(p)
-	var rot := orient(spec.get("front", Vector3.BACK), Vector3.UP)
-	for p: Dictionary in parts:
-		_map(p, func(v: Vector3) -> Vector3: return rot * v, rot)
-	var box := _bounds(parts)
-	var scale: float = spec.height / box.size.y
-	var center := box.get_center()
-	for p: Dictionary in parts:
-		_map(p, func(v: Vector3) -> Vector3: return (v - center) * scale, Basis.IDENTITY)
-	_save([_simplify(_merge(shell), spec.tris[0]), _simplify(_merge(cage), spec.tris[1])], spec.out)
 
 
 # --- Stick -------------------------------------------------------------------------

@@ -8,6 +8,9 @@ extends RefCounted
 ## that net is offside if a teammate is fully in the zone before the puck crosses.
 
 const IN_ZONE := RinkSpec.BLUE_LINE_Z + RinkSpec.LINE_WIDE * 0.5
+## A puck in the zone stays in until it's wholly back across the line: past its far
+## (neutral-zone) edge. Sitting on the line, or dangled onto it at the point, is still in.
+const OUT_OF_ZONE := RinkSpec.BLUE_LINE_Z - RinkSpec.LINE_WIDE * 0.5 - RinkSpec.PUCK_RADIUS
 
 var d: MatchDirector
 var offsides := true
@@ -16,6 +19,7 @@ var penalties := true
 
 var offside_team := -1     ## team with a delayed offside (linesman's arm up), -1 = none
 var offside_zone := -1     ## net index of that zone
+var offside_carrier: Skater = null ## who carried it in (onside, so exempt from tagging up)
 var icing_team := -1       ## team whose untouched clear could become icing
 var icing_net := -1        ## the net index whose goal line it must cross
 var pending := [null, null] ## per team: {offender: Skater, kind: StringName} delayed penalty
@@ -30,6 +34,7 @@ func _init(director: MatchDirector) -> void:
 func reset() -> void:
 	offside_team = -1
 	offside_zone = -1
+	offside_carrier = null
 	icing_team = -1
 	icing_net = -1
 	_puck_zone = _zone_of_puck()
@@ -48,6 +53,16 @@ func _zone_of_puck() -> int:
 	return zone_of(d.puck.global_position.z, RinkSpec.PUCK_RADIUS)
 
 
+## The puck's zone for the linesman, with the line's width as hysteresis (see OUT_OF_ZONE).
+func _puck_zone_now() -> int:
+	var z := d.puck.global_position.z
+	if _puck_zone == 0 and z > OUT_OF_ZONE:
+		return 0
+	if _puck_zone == 1 and z < -OUT_OF_ZONE:
+		return 1
+	return _zone_of_puck()
+
+
 func _attackers_in_zone(team: int, zone: int, except: Skater = null) -> bool:
 	for s in d.lineup(team).on_ice:
 		if s != except and zone_of(s.global_position.z, 0.2) == zone:
@@ -56,16 +71,19 @@ func _attackers_in_zone(team: int, zone: int, except: Skater = null) -> bool:
 
 
 func tick() -> void:
-	var pz := _zone_of_puck()
+	var pz := _puck_zone_now()
 	if offsides:
 		if pz != _puck_zone and pz != -1:
 			var att := 1 - d.rink.team_defending(pz)
-			var last: Skater = d.puck.carrier if d.puck.carrier else d.puck.last_touch
-			if last and last.team == att and _attackers_in_zone(att, pz, d.puck.carrier):
+			var c := d.puck.carrier
+			var last: Skater = c if c else d.puck.last_touch
+			if last and last.team == att and _attackers_in_zone(att, pz, c):
 				offside_team = att
 				offside_zone = pz
+				offside_carrier = c
 		if offside_team >= 0:
-			if pz != offside_zone or not _attackers_in_zone(offside_team, offside_zone):
+			# Whoever carried it in was onside and needn't tag up; everyone else must.
+			if pz != offside_zone or not _attackers_in_zone(offside_team, offside_zone, offside_carrier):
 				offside_team = -1 # puck left the zone, or everyone tagged up
 	_puck_zone = pz
 
@@ -88,12 +106,16 @@ func on_touched(s: Skater) -> void:
 	if pending[s.team] != null:
 		d.whistle(&"penalty", Vector2.ZERO, "")
 		return
-	if offside_team >= 0 and s.team == offside_team and _zone_of_puck() == offside_zone:
+	if offside_team >= 0 and s.team == offside_team and _puck_zone_now() == offside_zone:
 		var zone := offside_zone
 		offside_team = -1
-		var zsign := 1.0 if zone == 0 else -1.0
-		var x := RinkSpec.END_DOT_X * (signf(d.puck.global_position.x) if absf(d.puck.global_position.x) > 0.1 else 1.0)
-		d.whistle(&"offside", Vector2(x, zsign * RinkSpec.NEUTRAL_DOT_Z), "OFFSIDE")
+		_whistle_offside(zone)
+
+
+func _whistle_offside(zone: int) -> void:
+	var zsign := 1.0 if zone == 0 else -1.0
+	var x := RinkSpec.END_DOT_X * (signf(d.puck.global_position.x) if absf(d.puck.global_position.x) > 0.1 else 1.0)
+	d.whistle(&"offside", Vector2(x, zsign * RinkSpec.NEUTRAL_DOT_Z), "OFFSIDE")
 
 
 func on_released(by: Skater, at: Vector3) -> void:

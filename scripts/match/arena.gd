@@ -110,6 +110,19 @@ var _fan_start := PackedInt32Array()
 var _fan_slot := PackedInt32Array()
 var _ribbons := []                  ## [material, band height in meters]: everything showing the ribbon art
 var _ribbon_px := Vector2i(1, 1)    ## the ribbon atlas's size
+## Materials painted in the home color (a community rink's wall stripe), set by _recolor.
+var home_mats: Array[StandardMaterial3D] = []
+## A low roof (community rink): its nodes, hidden whenever the camera isn't under it
+## (roof_covers(camera position) is false), so the high game cameras see in.
+var roof_nodes: Array[Node3D] = []
+var roof_covers := Callable()
+## Undoes what the arena changed outside itself (an outdoor rink's sky and sun).
+var on_exit := Callable()
+## A wall or free-standing scoreboard (not center-hung): where its face is, and which end
+## it's at (+1 / -1), for the scoreboard cutaway. INF: none.
+var board_at := Vector3.INF
+## Where the crowd cutaway looks up into the stands: meters out from the side boards, height.
+var crowd_look := Vector2(9.0, 5.5)
 var _excite := CALM
 var _target := CALM
 var _hold := 0.0
@@ -130,31 +143,51 @@ func _ready() -> void:
 		var m := StandardMaterial3D.new()
 		m.roughness = 0.6
 		_seat_mats.append(m)
-	_build_bowl()
 	var gs := get_node_or_null("/root/GameSettings")
 	var was := low_detail
 	if gs and gs.has_method("performance") and gs.performance():
 		low_detail = true
-	_build_seating()
+	match style():
+		"community":
+			ArenaCommunity.build(self)
+		"outdoor":
+			ArenaOutdoor.build(self)
+		_:
+			_build_bowl()
+			_build_seating()
+			if spec.get("ribbon", true):
+				_build_ribbon()
+			else:
+				_build_fascia()
+			_build_roof()
+			_build_lights()
+			if spec.get("scoreboard", true):
+				_build_scoreboard()
+			if spec.get("banners", false):
+				_build_banners()
 	low_detail = was
-	if spec.get("ribbon", true):
-		_build_ribbon()
-	else:
-		_build_fascia()
-	_build_roof()
-	_build_lights()
-	if spec.get("scoreboard", true):
-		_build_scoreboard()
-	if spec.get("banners", false):
-		_build_banners()
 	_build_ribbon_texture()
-	for n: String in ["Roof", "Coffers", "Trusses", "Ribs", "Crown", "CrownRing", "LightHousings", "IceLights", "StandLights", "Scoreboard", "Banners"]:
+	for n: String in ["Roof", "Coffers", "Trusses", "Ribs", "Crown", "CrownRing", "LightHousings", "IceLights", "StandLights", "Scoreboard", "Banners", "Arches"]:
 		if has_node(n):
 			_to_rafters(get_node(n))
 	_recolor()
 	var sfx := get_node_or_null("/root/Sfx")
 	if sfx and sfx.has_signal("crowd_reacted"):
 		sfx.crowd_reacted.connect(_on_crowd)
+	# The crowd is as loud as the building and how full it is.
+	if sfx and sfx.has_method("set_venue"):
+		var filled := clampf(float(spec.get("attendance", 100)) / 100.0, 0.05, 1.0)
+		sfx.set_venue(float(Arenas.CROWD_DB.get(style(), 0.0)) + maxf(10.0 * log(filled) / log(10.0), -9.0))
+
+
+func _exit_tree() -> void:
+	if on_exit.is_valid():
+		on_exit.call()
+		on_exit = Callable()
+
+
+func style() -> String:
+	return str(spec.get("style", "modern"))
 
 
 # --- Heights and offsets of the levels ------------------------------------------
@@ -252,6 +285,11 @@ func _process(delta: float) -> void:
 	for r: Array in _ribbons:
 		var m: StandardMaterial3D = r[0]
 		m.uv1_offset.x = fposmod(m.uv1_offset.x + RIBBON_SPEED * delta * m.uv1_scale.x, 1.0)
+	if roof_covers.is_valid():
+		var cam := get_viewport().get_camera_3d()
+		var show := cam != null and bool(roof_covers.call(to_local(cam.global_position)))
+		for n in roof_nodes:
+			n.visible = show
 
 
 static func _to_rafters(n: Node) -> void:
@@ -541,10 +579,18 @@ func _build_seating() -> void:
 	for r in (2 if SUITES else 0):
 		for s in _row_spots(balcony_o() + 0.95 + r * 1.0, 0.75, low_aisles):
 			seats.append([2, _seat_xf(s, suite_y() + r * 0.25), _sector(s[0]), _chunk(2, s[0], 0)])
+	var sm := _seat_mesh()
+	seat_crowd(seats, [0.9, 0.82, 0.55], [sm, sm, sm])
 
+
+## Fills `seats` ([bowl, transform, look group, chunk] each) with fans: `occupancy` per
+## bowl when sold out, `seat_meshes` per bowl (null: no seat drawn, e.g. bleacher planks
+## or a snowbank). Bowl 0 fans get the detailed mesh up close; bowl 1 the simple one
+## (without shins past its front band); bowl 2 (suites) sits back, slow to stand.
+func seat_crowd(seats: Array, occupancy_full: Array, seat_meshes: Array) -> void:
 	# Attendance (an arena option) thins every level alike.
 	var filled := clampf(float(spec.get("attendance", 100)) / 100.0, 0.05, 1.0)
-	var occupancy := [0.9 * filled, 0.82 * filled, 0.55 * filled]
+	var occupancy := occupancy_full.map(func(o: float) -> float: return o * filled)
 	var groups := {}
 	for s: Array in seats:
 		var key: int = s[2] * 3 + s[0]
@@ -582,7 +628,6 @@ func _build_seating() -> void:
 			_fan_start.append(_fan_slot.size() / 2)
 			_fan_slot.resize(_fan_slot.size() + in_seat.size() * 2)
 
-	var seat_mesh := _seat_mesh()
 	var suite_mat := MeshUtil.material(Color(0.12, 0.1, 0.09), 0.4)
 	# Fan meshes: the full one up close, the 6-sided one far off. Upper-bowl fans behind
 	# the front row leave out their shins and shoes (behind the seat back in front).
@@ -595,19 +640,20 @@ func _build_seating() -> void:
 		var ch: Dictionary = chunks[c]
 		var bowl: int = ch.bowl
 		var tag := "%d_%d" % [bowl, c]
-		var mm := MultiMesh.new()
-		mm.transform_format = MultiMesh.TRANSFORM_3D
-		mm.mesh = seat_mesh
-		mm.instance_count = ch.seats.size()
-		for k in ch.seats.size():
-			mm.set_instance_transform(k, ch.seats[k])
-		var mmi := MultiMeshInstance3D.new()
-		mmi.name = "Seats_" + tag
-		mmi.multimesh = mm
-		mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-		mmi.material_override = _seat_mats[bowl] if bowl < 2 else suite_mat
-		mmi.set_meta("bowl", bowl)
-		add_child(mmi)
+		if seat_meshes[bowl] != null:
+			var mm := MultiMesh.new()
+			mm.transform_format = MultiMesh.TRANSFORM_3D
+			mm.mesh = seat_meshes[bowl]
+			mm.instance_count = ch.seats.size()
+			for k in ch.seats.size():
+				mm.set_instance_transform(k, ch.seats[k])
+			var mmi := MultiMeshInstance3D.new()
+			mmi.name = "Seats_" + tag
+			mmi.multimesh = mm
+			mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+			mmi.material_override = _seat_mats[bowl] if bowl < 2 else suite_mat
+			mmi.set_meta("bowl", bowl)
+			add_child(mmi)
 		var fans: Array = ch.fans
 		if fans.is_empty():
 			continue
@@ -859,6 +905,8 @@ func _recolor() -> void:
 	_color_banners()
 	_seat_mats[0].albedo_color = home_c.darkened(0.3)
 	_seat_mats[1].albedo_color = home_c.darkened(0.5)
+	for m in home_mats:
+		m.albedo_color = home_c
 	var away_colors: Dictionary = Teams.team(away_team).colors if away_team >= 0 else {}
 	_crowd_mat.set_shader_parameter("home_logo", _crest(home_team))
 	_crowd_mat.set_shader_parameter("away_logo", _crest(away_team))
@@ -1060,12 +1108,7 @@ func _build_banners() -> void:
 	var root := Node3D.new()
 	root.name = "Banners"
 	add_child(root)
-	_banner_mat = StandardMaterial3D.new()
-	_banner_mat.roughness = 0.85
-	_banner_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
-	# Lit a little from the light grid's spill (the roof is dark up there).
-	_banner_mat.emission_enabled = true
-	_banner_mat.emission_energy_multiplier = 0.35
+	banner_material()
 	var top := ROOF_Y - 3.0 if DOME_SPRING <= 0.0 else DOME_SPRING + 7.0
 	for end: float in [-1.0, 1.0]:
 		for i in 6:
@@ -1080,6 +1123,30 @@ func _build_banners() -> void:
 			mi.position = Vector3(x, top - BANNER_SIZE.y * 0.5, z)
 			mi.rotation.y = 0.0 if end < 0.0 else PI
 			root.add_child(mi)
+
+
+## The banners' material (home colors and crest, painted by _recolor).
+func banner_material() -> StandardMaterial3D:
+	if _banner_mat == null:
+		_banner_mat = StandardMaterial3D.new()
+		_banner_mat.roughness = 0.85
+		_banner_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+		# Lit a little from the light grid's spill (the roof is dark up there).
+		_banner_mat.emission_enabled = true
+		_banner_mat.emission_energy_multiplier = 0.35
+	return _banner_mat
+
+
+## A banner quad of `size` at `pos`, facing `normal`.
+func hang_banner(parent: Node3D, size: Vector2, pos: Vector3, normal: Vector3) -> void:
+	var mi := MeshInstance3D.new()
+	var q := QuadMesh.new()
+	q.size = size
+	mi.mesh = q
+	mi.material_override = banner_material()
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	mi.transform = Transform3D(Basis.looking_at(-normal, Vector3.UP), pos)
+	parent.add_child(mi)
 
 
 func _color_banners() -> void:
@@ -1339,7 +1406,7 @@ func _build_scoreboard() -> void:
 		_screen_quad(root, narrow, END_SCREEN, Vector3(0, b.y * 0.5, side * (b.z * 0.5 + 0.03)), Vector3(0, 0, side))
 
 
-func _screen_viewport(px: Vector2i, node_name: String) -> SubViewport:
+func _screen_viewport(px: Vector2i, node_name: String, classic := false) -> SubViewport:
 	var vp := SubViewport.new()
 	vp.name = node_name
 	vp.size = px
@@ -1348,6 +1415,7 @@ func _screen_viewport(px: Vector2i, node_name: String) -> SubViewport:
 	vp.render_target_update_mode = SubViewport.UPDATE_ALWAYS
 	var screen := ArenaScreen.new()
 	screen.arena = self
+	screen.classic = classic
 	screen.size = Vector2(px)
 	vp.add_child(screen)
 	add_child(vp)

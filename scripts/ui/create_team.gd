@@ -263,7 +263,7 @@ func _tab_rows(tab: String) -> Array:
 				{"key": "b_shape", "label": "SHAPE", "kind": "choice", "hint": "The badge's outline. None leaves the icon and letters on their own."},
 				{"key": "b_border", "label": "BORDER", "kind": "choice", "hint": "The edge round the shape."},
 				{"key": "b_pattern", "label": "PATTERN", "kind": "choice", "hint": "A band, sash or split across the shape."},
-				{"key": "b_icon", "label": "ICON", "kind": "choice", "hint": "The emblem."},
+				{"key": "b_icon", "label": "ICON", "kind": "choice", "hint": "The emblem: a simple shape, or a drawn logo (Wolverine to Donut) you can recolor under BADGE COLORS."},
 				{"key": "b_layout", "label": "LAYOUT", "kind": "choice", "hint": "Icon over letters, letters alone, or the icon alone."},
 				{"key": "b_text", "label": "LETTERS", "kind": "text", "max": BadgeLogo.TEXT_MAX,
 					"hint": "Up to %d letters. Empty uses the team's code." % BadgeLogo.TEXT_MAX},
@@ -276,8 +276,12 @@ func _tab_rows(tab: String) -> Array:
 				{"key": "b_edge", "label": "BORDER COLOR", "kind": "choice", "hint": "The border."},
 				{"key": "b_pattern_color", "label": "PATTERN COLOR", "kind": "choice", "hint": "The band, sash or split."},
 				{"key": "b_icon_color", "label": "ICON COLOR", "kind": "choice", "hint": "The emblem."},
+				{"key": "b_logo_navy", "label": "LOGO: NAVY", "kind": "choice", "hint": "The drawn logo's navy parts."},
+				{"key": "b_logo_red", "label": "LOGO: RED", "kind": "choice", "hint": "The drawn logo's red parts."},
+				{"key": "b_logo_gold", "label": "LOGO: GOLD", "kind": "choice", "hint": "The drawn logo's gold parts."},
+				{"key": "b_logo_white", "label": "LOGO: WHITE", "kind": "choice", "hint": "The drawn logo's white parts."},
 				{"key": "b_text_color", "label": "LETTER COLOR", "kind": "choice", "hint": "The letters."},
-				{"key": "b_outline", "label": "OUTLINE COLOR", "kind": "choice", "hint": "The thin edge round the icon and letters."},
+				{"key": "b_outline", "label": "OUTLINE COLOR", "kind": "choice", "hint": "The edge round the icon and letters, and the drawn logo's black lines."},
 			]
 	rows.append({"key": "save", "label": "SAVE TEAM", "kind": "action",
 		"hint": "Saves the team and its badge. It shows up in every team list."})
@@ -332,7 +336,7 @@ func _choices(key: String) -> Array:
 			return [r, r.map(func(i: int) -> String: return BadgeLogo.FONTS[i][0])]
 		"b_italic":
 			return [[true, false], ["Yes", "No"]]
-		"b_fill", "b_edge", "b_pattern_color", "b_icon_color", "b_text_color", "b_outline":
+		"b_fill", "b_edge", "b_pattern_color", "b_icon_color", "b_text_color", "b_outline", 				"b_logo_navy", "b_logo_red", "b_logo_gold", "b_logo_white":
 			return _slot_choices()
 	return [[], []]
 
@@ -358,7 +362,9 @@ func _row_off(key: String) -> bool:
 			return _t.badge.shape == "none" or (key == "b_edge" and _t.badge.border == "none") \
 					or (key == "b_pattern_color" and _t.badge.pattern == "none")
 		"b_icon_color":
-			return _t.badge.icon == "none" or _t.badge.layout == "text"
+			return _t.badge.icon == "none" or _t.badge.layout == "text" or BadgeLogo.is_mascot(_t.badge.icon)
+		"b_logo_navy", "b_logo_red", "b_logo_gold", "b_logo_white":
+			return not BadgeLogo.is_mascot(_t.badge.icon) or _t.badge.layout == "text"
 		"b_text", "b_font", "b_italic", "b_text_color":
 			return _t.badge.layout == "icon"
 		"fill", "delete":

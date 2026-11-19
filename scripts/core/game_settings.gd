@@ -63,6 +63,7 @@ static func default_options() -> Dictionary:
 		"graphics": "quality",   ## "quality" or "performance" (see performance())
 		"blood": true,           ## fights: blood sprays and drops once a fighter is under half health
 		"presentation": "full",  ## "full" (the TV extras) or "quick" (see quick_presentation())
+		"zamboni": "drive",      ## between periods: "drive" (the fan contest minigame) or "watch" (the crew)
 	}
 
 

@@ -1,6 +1,8 @@
 extends SceneTree
 ## Cuts the team logos out of the logo sheets into transparent PNGs:
 ##   godot --headless --path . -s res://tools/build_logos.gd [-- only=<sheet file>]
+## and the stock logos for created teams (MASCOTS, layered for recoloring):
+##   godot --headless --path . -s res://tools/build_logos.gd -- mascots [only=<file>]
 ##
 ## Each sheet (assets/images/) has one logo, or four, one per quadrant, on a dark background
 ## (or a light one, for sheets marked `light`: then the fill takes pale pixels).
@@ -64,6 +66,27 @@ const SHEETS := [
 	{"file": "res://assets/images/logo_mountaingoats.jfif", "teams": ["mountaingoats"], "lum": 0.8, "sat": 0.12, "light": true},
 	{"file": "res://assets/images/logo_axolotl.jfif", "teams": ["axolotls"], "lum": 0.8, "sat": 0.12, "light": true},
 ]   ## teams: quadrants TL, TR, BL, BR ("" = superseded); a one-team entry is the whole image
+## Stock logos for created teams (Create Team's badge icons), with `-- mascots`. Each is
+## drawn in the same navy / red / gold / white with a black outline, and is cut into a
+## strip of layers (see _save_layers) that BadgeLogo tints with the team's colors.
+const MASCOTS := [
+	{"file": "res://assets/images/mascot_wolverine.jfif", "teams": ["wolverine"], "lum": 0.8, "sat": 0.12, "light": true},
+	{"file": "res://assets/images/mascot_owl.jfif", "teams": ["owl"], "lum": 0.8, "sat": 0.12, "light": true},
+	{"file": "res://assets/images/mascot_crow.jfif", "teams": ["crow"], "lum": 0.8, "sat": 0.12, "light": true},
+	{"file": "res://assets/images/mascot_shark.jfif", "teams": ["shark"], "lum": 0.8, "sat": 0.12, "light": true},
+	{"file": "res://assets/images/mascot_narwhal.jfif", "teams": ["narwhal"], "lum": 0.8, "sat": 0.12, "light": true},
+	{"file": "res://assets/images/mascot_turtle.jfif", "teams": ["turtle"], "lum": 0.8, "sat": 0.12, "light": true},
+	{"file": "res://assets/images/mascot_sasquatch.jfif", "teams": ["sasquatch"], "lum": 0.8, "sat": 0.12, "light": true},
+	{"file": "res://assets/images/mascot_jackalope.jfif", "teams": ["jackalope"], "lum": 0.8, "sat": 0.12, "light": true},
+	{"file": "res://assets/images/mascot_viking.jfif", "teams": ["viking"], "lum": 0.8, "sat": 0.12, "light": true},
+	{"file": "res://assets/images/mascot_coffee.jfif", "teams": ["coffee"], "lum": 0.8, "sat": 0.12, "light": true, "holes": [[0.63, 0.57]]},
+	{"file": "res://assets/images/mascot_donut.jfif", "teams": ["donut"], "lum": 0.8, "sat": 0.12, "light": true, "holes": [[0.5, 0.47]]},
+]
+const MASCOT_OUT := "res://assets/ui/mascots/%s.png"
+const MASCOT_SIZE := 512
+## The stock logos' drawn colors, in layer order after the outline: navy, red, gold,
+## white. Refined per logo from its own pixels (_save_layers).
+const MASCOT_INKS := ["1f2a44", "c22033", "d9a441", "f5f2ea"]
 const OUT := "res://assets/characters/logo_%s.png"
 const MAX_SIZE := 768
 const KEEP_SHARE := 0.03    ## pieces smaller than this share of the biggest are dropped
@@ -76,6 +99,8 @@ var _light := false
 var _keep := KEEP_SHARE
 var _recolor: Array = []
 var _holes: Variant = false   ## see _clear_holes
+var _mascot := false
+var _max_size := MAX_SIZE
 
 
 func _init() -> void:
@@ -83,7 +108,9 @@ func _init() -> void:
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("only="):
 			only = a.substr(5)
-	for sheet: Dictionary in SHEETS:
+	_mascot = OS.get_cmdline_user_args().has("mascots")
+	_max_size = MASCOT_SIZE if _mascot else MAX_SIZE
+	for sheet: Dictionary in (MASCOTS if _mascot else SHEETS):
 		if only != "" and not (sheet.file as String).ends_with(only):
 			continue
 		var img := Image.new()
@@ -194,9 +221,12 @@ func _cut(img: Image, name: String) -> void:
 			first = false
 	box = box.grow(PAD).intersection(Rect2i(0, 0, w, h))
 	var out := img.get_region(box)
-	var s := minf(1.0, float(MAX_SIZE) / maxi(out.get_width(), out.get_height()))
+	var s := minf(1.0, float(_max_size) / maxi(out.get_width(), out.get_height()))
 	if s < 1.0:
 		out.resize(int(out.get_width() * s), int(out.get_height() * s), Image.INTERPOLATE_LANCZOS)
+	if _mascot:
+		_save_layers(out, name)
+		return
 	if not _recolor.is_empty():
 		_apply_recolor(out, _recolor)
 	var ring := keyline_color(name)
@@ -205,6 +235,76 @@ func _cut(img: Image, name: String) -> void:
 	var path := OUT % name
 	var err := out.save_png(path)
 	print("%s: %s  %s" % [path, error_string(err), out.get_size()])
+
+
+## A stock logo as a strip of five same-size layers, side by side, each white with the
+## layer's coverage in alpha: the whole silhouette (drawn first, in the outline color),
+## then the navy, red, gold and white areas (each drawn over it in a team color). A
+## pixel is matched to the ink it lies closest to on the line from black to that ink,
+## so the soft edge from a color into the black outline keeps its part-way coverage.
+func _save_layers(img: Image, name: String) -> void:
+	var w := img.get_width()
+	var h := img.get_height()
+	# The inks this logo actually came out in: a few rounds of k-means from MASCOT_INKS.
+	var inks: Array[Color] = [Color(0.06, 0.06, 0.07)]
+	for hx: String in MASCOT_INKS:
+		inks.append(Color.html(hx))
+	for _round in 4:
+		var sums: Array[Vector3] = []
+		var counts: Array[int] = []
+		for k in inks.size():
+			sums.append(Vector3.ZERO)
+			counts.append(0)
+		for y in h:
+			for x in w:
+				var c := img.get_pixel(x, y)
+				if c.a < 1.0:
+					continue
+				var best := 0
+				var best_d := 9.0
+				for k in inks.size():
+					var d := Vector3(c.r - inks[k].r, c.g - inks[k].g, c.b - inks[k].b).length_squared()
+					if d < best_d:
+						best = k
+						best_d = d
+				sums[best] += Vector3(c.r, c.g, c.b)
+				counts[best] += 1
+		for k in inks.size():
+			if counts[k] > 0:
+				var m := sums[k] / counts[k]
+				# An ink the logo doesn't use (no white on the wolverine) would wander off
+				# to the nearest other color: it stays put instead.
+				var start := inks[0] if k == 0 else Color.html(MASCOT_INKS[k - 1])
+				if Vector3(m.x - start.r, m.y - start.g, m.z - start.b).length() < 0.16:
+					inks[k] = Color(m.x, m.y, m.z)
+	print("  %s inks: %s" % [name, inks.map(func(c: Color) -> String: return c.to_html(false))])
+	var out := Image.create(w * 5, h, false, Image.FORMAT_LA8)
+	var black := Vector3(inks[0].r, inks[0].g, inks[0].b)
+	for y in h:
+		for x in w:
+			var c := img.get_pixel(x, y)
+			if c.a <= 0.0:
+				continue
+			out.set_pixel(x, y, Color(1, 1, 1, c.a))
+			var v := Vector3(c.r, c.g, c.b)
+			var best := -1
+			var best_d := 9.0
+			var best_t := 0.0
+			for k in range(1, inks.size()):
+				var p := Vector3(inks[k].r, inks[k].g, inks[k].b) - black
+				var t := clampf((v - black).dot(p) / p.length_squared(), 0.0, 1.0)
+				var d := (v - (black + p * t)).length_squared()
+				if d < best_d:
+					best = k
+					best_d = d
+					best_t = t
+			var wt := clampf((best_t - 0.12) / 0.76, 0.0, 1.0)
+			if wt > 0.0:
+				out.set_pixel(x + w * best, y, Color(1, 1, 1, wt * c.a))
+	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(MASCOT_OUT.get_base_dir()))
+	var path := MASCOT_OUT % name
+	var err := out.save_png(path)
+	print("%s: %s  %s" % [path, error_string(err), Vector2i(w, h)])
 
 
 ## The keyline color for a team's logo: whichever of white and the team's trim, number

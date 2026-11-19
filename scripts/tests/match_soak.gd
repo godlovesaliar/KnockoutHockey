@@ -1,6 +1,6 @@
 extends Node
 ## Plays full AI-vs-AI games headlessly and checks the game loop holds together. Run:
-##   godot --headless --fixed-fps 120 --path . res://scenes/tests/MatchSoak.tscn [-- games=3 period=45 linger=20]
+##   godot --headless --fixed-fps 120 --path . res://scenes/tests/MatchSoak.tscn [-- games=3 period=45 linger=20 teams=NBW,NYR]
 ## Exits 0 on pass, 1 on failure.
 
 const MATCH_SCENE := preload("res://scenes/match/Match.tscn")
@@ -30,7 +30,7 @@ func _ready() -> void:
 	_check(totals.changes > 0, "lines change on the fly (%d)" % totals.changes)
 	await _shootout_test()
 	var pct := float(totals.saves) / maxf(1.0, totals.saves + totals.goals)
-	_check(pct > 0.6 and pct < 0.97, "save percentage is hockey-like (%.3f)" % pct)
+	_check(pct > 0.72 and pct < 0.97, "save percentage is hockey-like (%.3f)" % pct)
 	print("SOAK %s — %d failure(s), %.1f s" % ["PASS" if failures == 0 else "FAIL", failures, (Time.get_ticks_msec() - t0) / 1000.0])
 	get_tree().quit(1 if failures > 0 else 0)
 
@@ -50,6 +50,13 @@ func _play(n: int, period: float, totals: Dictionary) -> void:
 	m.period_length = period
 	m.ot_length = period
 	m.rng_seed = 1000 + n
+	for a in OS.get_cmdline_user_args():   # teams=NBW,NYR: home and away by abbr
+		if a.begins_with("teams="):
+			var ab := a.substr(6).split(",")
+			for t in 2:
+				for i in Teams.count():
+					if Teams.team(i).abbr == ab[t]:
+						m.team_ids[t] = i
 	m.show_hud = false
 	add_child(m)
 	var done := {"finished": false} # lambdas capture locals by value, so use a container
@@ -66,7 +73,29 @@ func _play(n: int, period: float, totals: Dictionary) -> void:
 	if OS.get_cmdline_user_args().has("trace"):
 		m.phase_changed.connect(func(ph: int) -> void:
 			print("  [%.1fs] phase %s  P%d clock %.1f  score %s" % [Time.get_ticks_msec() / 1000.0, MatchDirector.Phase.keys()[ph], m.period, m.clock, m.score]))
-	var limit := int((period * 4 + 240) * 120)
+	if OS.get_cmdline_user_args().has("goals"):
+		var rel := {"pos": Vector3.ZERO, "t": 0, "flight": -1, "by": null}
+		m.puck.released.connect(func(by: Skater, at: Vector3) -> void:
+			rel.pos = at
+			rel.t = Time.get_ticks_msec()
+			rel.flight = m.puck.flight
+			rel.by = by)
+		m.rink.goal_scored.connect(func(ni: int) -> void:
+			var net: Net = m.rink.nets[ni]
+			var gk: Goalie = null
+			for g in get_tree().get_nodes_in_group("goalies"):
+				if g.net == net:
+					gk = g
+			var lp := net.to_local(rel.pos)
+			var info := "GOALDBG net %d  shot from local (%.1f, %.1f) dist %.1f  flights since release %d  puck spd %.1f carrier %s" % [
+				ni, lp.x, lp.z, Vector2(lp.x, lp.z).length(), m.puck.flight - int(rel.flight), m.puck.speed(), m.puck.carrier != null]
+			if gk:
+				var gl := net.to_local(gk.global_position)
+				info += "  goalie at (%.2f, %.2f) state %d  last_try %s same_flight %s" % [gl.x, gl.z, gk.g, gk.last_try, gk.last_try.get("flight", -9) == m.puck.flight]
+			else:
+				info += "  EMPTY NET"
+			print(info))
+	var limit := int((period * 5 + 360) * 120) # room for overtime and a shootout
 	var escapes := 0
 	var carried_ticks := 0
 	var longest_carry := 0

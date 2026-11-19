@@ -6,11 +6,14 @@ extends Control
 ##     (visitors first, as on the TV scorebug);
 ##   - after a goal: GOAL! in the scorers' colors with their crest, pulsing;
 ##   - with no game (menus): the home crest, or the game's name.
+## A `classic` screen is an old lamp scoreboard instead (a community rink's or an outdoor
+## rink's): HOME and GUEST scores and the clock in seven-segment digits, the period, shots.
 
 const AMBER := Color(1.0, 0.72, 0.18)
 const BG := Color(0.015, 0.015, 0.025)
 
 var arena: Arena
+var classic := false
 var _key := ""
 
 
@@ -38,6 +41,9 @@ func _draw() -> void:
 	if arena == null:
 		return
 	var now := Time.get_ticks_msec() / 1000.0
+	if classic:
+		_draw_classic(now)
+		return
 	if arena.flash_until > now:
 		_draw_goal(now)
 		return
@@ -163,3 +169,93 @@ func _draw_idle() -> void:
 	else:
 		_text("KNOCKOUT", Vector2(0, h * 0.45), w, int(minf(h * 0.24, w * 0.17)), Color.WHITE)
 		_text("HOCKEY", Vector2(0, h * 0.75), w, int(minf(h * 0.24, w * 0.17)), AMBER)
+
+
+# --- The classic lamp board ---
+
+const LAMP_RED := Color(1.0, 0.16, 0.1)
+const LAMP_OFF := Color(0.09, 0.07, 0.06)
+## Lit segments of each digit (a top, b top right, c bottom right, d bottom, e bottom left,
+## f top left, g middle).
+const SEGMENTS := {"0": "abcdef", "1": "bc", "2": "abged", "3": "abgcd", "4": "fgbc", "5": "afgcd",
+	"6": "afgedc", "7": "abc", "8": "abcdefg", "9": "abcdfg", " ": ""}
+
+
+func _draw_classic(now: float) -> void:
+	var w := size.x
+	var h := size.y
+	draw_rect(Rect2(Vector2.ZERO, size), Color(0.02, 0.02, 0.025))
+	var d := arena.match_ref
+	var live := d != null and is_instance_valid(d)
+	var score := [0, 0]
+	var clock := "20:00"
+	var per := "1"
+	var shots := [0, 0]
+	if live:
+		score = [int(d.score[0]), int(d.score[1])]
+		clock = _clock(d)
+		per = _period(d)
+		shots = [int(d.stats.shots[0]), int(d.stats.shots[1])]
+	var goal := arena.flash_until > now
+	var blink := goal and fmod(now, 0.5) < 0.25
+	var white := Color(0.92, 0.92, 0.88)
+	for t in 2:
+		var x := 0.0 if t == 0 else w * 0.68
+		var cw := w * 0.32
+		var id := -1
+		if live:
+			id = _team_id(d, t)
+		elif t == 0:
+			id = arena.home_team
+		_text("HOME" if t == 0 else "GUEST", Vector2(x, h * 0.17), cw, int(h * 0.12), white)
+		if id >= 0:
+			draw_rect(Rect2(x + cw * 0.18, h * 0.21, cw * 0.64, h * 0.035), MenuStyle.team_color(id))
+		var lit := not (blink and arena.flash_team == t)
+		_digits("%2d" % score[t], Rect2(x + cw * 0.14, h * 0.3, cw * 0.72, h * 0.42), LAMP_RED if lit else LAMP_OFF)
+		_text("SHOTS %d" % shots[t], Vector2(x, h * 0.9), cw, int(h * 0.08), Color(0.7, 0.7, 0.66))
+	# The clock in the middle, the period under it.
+	if clock != "":
+		var parts := clock.split(":")
+		var r := Rect2(w * 0.35, h * 0.1, w * 0.3, h * 0.32)
+		_digits("%2s" % parts[0], Rect2(r.position, Vector2(r.size.x * 0.42, r.size.y)), AMBER)
+		var cx := r.position.x + r.size.x * 0.5
+		for dy: float in [0.3, 0.7]:
+			draw_rect(Rect2(cx - r.size.y * 0.04, r.position.y + r.size.y * dy - r.size.y * 0.04, r.size.y * 0.08, r.size.y * 0.08), AMBER)
+		_digits(parts[1], Rect2(r.position.x + r.size.x * 0.58, r.position.y, r.size.x * 0.42, r.size.y), AMBER)
+	if goal:
+		if not blink:
+			_text("GOAL", Vector2(w * 0.3, h * 0.84), w * 0.4, int(h * 0.26), LAMP_RED)
+	else:
+		_text("PERIOD", Vector2(w * 0.35, h * 0.56), w * 0.3, int(h * 0.09), white)
+		_text(per, Vector2(w * 0.35, h * 0.86), w * 0.3, int(h * 0.26), AMBER)
+
+
+## A row of seven-segment digits filling `r` (unlit segments show faintly).
+func _digits(s: String, r: Rect2, col: Color) -> void:
+	var n := s.length()
+	var cw := r.size.x / n
+	for i in n:
+		var cell := Rect2(r.position.x + cw * i + cw * 0.1, r.position.y, cw * 0.8, r.size.y)
+		_digit(s[i], cell, col)
+
+
+func _digit(ch: String, r: Rect2, col: Color) -> void:
+	var on: String = SEGMENTS.get(ch, "")
+	var t := minf(r.size.x * 0.18, r.size.y * 0.1)
+	var g := t * 0.25
+	var x0 := r.position.x
+	var x1 := r.position.x + r.size.x
+	var y0 := r.position.y
+	var ym := r.position.y + r.size.y * 0.5
+	var y1 := r.position.y + r.size.y
+	var segs := {
+		"a": Rect2(x0 + t + g, y0, r.size.x - 2 * (t + g), t),
+		"g": Rect2(x0 + t + g, ym - t * 0.5, r.size.x - 2 * (t + g), t),
+		"d": Rect2(x0 + t + g, y1 - t, r.size.x - 2 * (t + g), t),
+		"f": Rect2(x0, y0 + t * 0.5 + g, t, ym - y0 - t - g * 2),
+		"b": Rect2(x1 - t, y0 + t * 0.5 + g, t, ym - y0 - t - g * 2),
+		"e": Rect2(x0, ym + t * 0.5 + g, t, y1 - ym - t - g * 2),
+		"c": Rect2(x1 - t, ym + t * 0.5 + g, t, y1 - ym - t - g * 2),
+	}
+	for k: String in segs:
+		draw_rect(segs[k], col if on.contains(k) else LAMP_OFF)

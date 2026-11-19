@@ -2,7 +2,7 @@
 
 The in-game credits screen (`scripts/ui/credits.gd`, `ROLL`) lists the same assets; update both together.
 
-Everything below from outside the project is in the game. The male and female character bases are used for every player's body (rigged through Mixamo). The goalie masks are turned into game meshes by tools/build_gear.gd; the hair by tools/build_hair.gd. The skater helmets, sticks, skates, skater gloves, fists and the goalie's pads, boots, thigh rises, blocker and catcher are the project's own models (tools/blender/). The rink and arena are built in code.
+Everything below from outside the project is in the game. The male and female character bases are used for every player's body (rigged through Mixamo). The hair is turned into game meshes by tools/build_hair.gd. The skater helmets, the goalie masks, sticks, skates, skater gloves, fists and the goalie's pads, boots, thigh rises, blocker and catcher are the project's own models (tools/blender/). The rink and arena are built in code.
 
 ## Models
 
@@ -13,8 +13,9 @@ Everything below from outside the project is in the game. The male and female ch
 | Hair and Beard Pubg Mobile 3D Model (`assets/player/hair_and_beard__pubg_mobile_3d_model.glb`; five hairstyles and the beard, tinted per player) | BilloXD | CC-BY-4.0 | https://sketchfab.com/3d-models/hair-and-beard-pubg-mobile-3d-model-844243e11ccf40f8902385fe2fddd428 |
 | MOSTACHE (`assets/player/mostache.glb`) | vajidkm | CC-BY-4.0 | https://sketchfab.com/3d-models/mostache-61f34dcad95b450d9cc95456f3b93072 |
 | ported hair (`assets/player/ported_hair.glb`; the long braid / ponytail) | bbb59149 | CC-BY-4.0 | https://sketchfab.com/3d-models/ported-hair-e8eb76ad3c8f46f8aee7ceb076f05972 |
-| Helmet for Puck (goalie mask; texture with real team/brand logos dropped, recolored per team) | Domenico (@K31THUZ4D) | CC-BY-4.0 | Sketchfab (https://sketchfab.com/K31THUZ4D) |
-| Hockey Goalie Mask (alt mask, `GMask.obj`) | matýsek (@matyprokop09), remade by Mat3ssZ3Dd | CC-BY-4.0 | https://sketchfab.com/3d-models/hockey-goalie-mask-12fe01ffe0d4443b96292815bb79958a |
+| Snow Trees Pack LOWPOLY (`assets/snow-trees-pack-lowpoly/`; the outdoor rink's woods, bushes and far treeline) | sixonetwo (@evan4129) | CC-BY-4.0 | https://sketchfab.com/3d-models/snow-trees-pack-lowpoly-8927ca8abbfc4871a029323480d1ad05 |
+| Forest cabin low poly (`assets/forest_cabin_low_poly.glb`; the outdoor rink's warming hut) | POLYSCAN (@POLYSCAN3D) | CC-BY-4.0 | https://sketchfab.com/3d-models/forest-cabin-low-poly-557e8b5d4a364031b88148cb51c215e1 |
+| Zamboni (`assets/ZAMBONI5.stl`; cleaned up into `assets/zamboni/zamboni.glb` by `tools/blender/zamboni.py`: one steering wheel kept and mounted, the other and the loose bar dropped, wheels split out to spin and steer, decimated, recolored) | marsmodels | CC BY | https://www.thingiverse.com/thing:5555849 |
 
 ## Fonts
 

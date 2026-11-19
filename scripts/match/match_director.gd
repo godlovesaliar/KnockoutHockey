@@ -105,6 +105,8 @@ var teams: Array[Dictionary] = []    ## {lineup: Lineup, goalie: Goalie, ai: Tea
 var rules: MatchRules
 var shootout := {}
 var _intermission: Intermission
+var _zamboni: Zamboni          ## the resurfacer, during its between-periods pass
+var _zamboni_auto := false     ## (testing) the fan contest, driven by its autopilot
 var _stinger: Stinger          ## the league stinger covering a cut, while it plays
 var _audio: MatchAudio
 var _bug: BroadcastBug         ## the league's on-screen bug, top right (monogram / belt)
@@ -288,6 +290,10 @@ func _parse_cmdline() -> void:
 		catch_up = args["catchup"] != "0"
 	if args.has("injurytest"):   # a few seconds in: a home skater is hurt (stays down, whistle, helped off)
 		_injury_demo.call_deferred()
+	if args.has("zambonidrive"):   # (testing) the Zamboni pass is the fan contest, on autopilot
+		_zamboni_auto = true
+	if args.has("zambonitest"):   # after zambonitest=<s> of live play (default 30; under 5: on a pre-worn sheet): the Zamboni's pass, then play on
+		_zamboni_demo.call_deferred(float(args["zambonitest"]) if str(args["zambonitest"]) != "" else 30.0)
 	if args.has("glasstest"):    # a few seconds in: a pane breaks behind a skater (cutscene, repair)
 		_glass_demo.call_deferred()
 	if args.has("pulltest"):     # the away team pulls its goalie a few seconds in (pulltest=late: down a goal late)
@@ -424,6 +430,9 @@ func _build_teams() -> void:
 			if int(humans[i].get("team", 0)) == t:
 				brains.append(HumanBrain.from_spec(humans[i], i))
 		teams[t]["control"] = TeamControl.new(t, lu.on_ice, lu.all_skaters(), brains, puck, g) if not brains.is_empty() else null
+		# A computer team's goalie plays to the difficulty; a human team's stays middling, so
+		# turning the difficulty up never hands the player a leakier goalie of their own.
+		g.sharpness = difficulty if brains.is_empty() else 0.5
 
 
 const FEMALE_SHARE := [0.5, 0.4]
@@ -503,7 +512,7 @@ func _setup_player(s: Skater, t: int, number: int, left: bool, p := {}) -> void:
 		# Generated rosters are mixed; body has no effect on stats.
 		s.body_type = "female" if _rng.randf() < FEMALE_SHARE[t] else "male"
 		s.skin_tone = SkaterVisual.SKIN_TONES[_rng.randi() % SkaterVisual.SKIN_TONES.size()]
-		s.gear_style = _rng.randi() % 2
+		s.gear_style = SkaterVisual.gear_roll(_rng.randi())
 		_set_look(s, SkaterVisual.random_look(_rng, s.body_type, s.skin_tone))
 		s.visor = Skater.visor_for("%s %d" % [info.get("abbr", ""), number])
 	elif p.has("custom"):
@@ -525,7 +534,7 @@ func _setup_player(s: Skater, t: int, number: int, left: bool, p := {}) -> void:
 		var look := RandomNumberGenerator.new()
 		look.seed = hash("%s %s %s" % [p.abbr, p.first, p.last])
 		s.skin_tone = SkaterVisual.SKIN_TONES[look.randi() % SkaterVisual.SKIN_TONES.size()]
-		s.gear_style = look.randi() % 2
+		s.gear_style = SkaterVisual.gear_roll(look.randi())
 		_set_look(s, SkaterVisual.random_look(look, s.body_type, s.skin_tone))
 		s.visor = Skater.visor_for("%s %s %s" % [p.abbr, p.first, p.last])
 	s.puck = puck
@@ -627,7 +636,8 @@ func _physics_process(delta: float) -> void:
 	if puck.in_play and RinkSpec.sdf(puck.global_position.x, puck.global_position.z) < 0.0:
 		_last_in_play = puck.global_position
 	if _bug:
-		_bug.shown = phase != Phase.INTRO and _intermission == null
+		_bug.shown = phase != Phase.INTRO and _intermission == null and _zamboni == null
+	_tick_ice(delta)
 	match phase:
 		Phase.FIGHT:
 			# The Fight node runs itself. The scorebug stays up through the lead-in and
@@ -828,7 +838,7 @@ func _finish(text := "", team := -1) -> void:
 ## Esc / Start: the pause menu (not over the matchup intro or a stats screen, which use
 ## those buttons to continue).
 func _open_pause() -> void:
-	if _pause != null or phase == Phase.INTRO or _intermission != null or _stinger != null:
+	if _pause != null or phase == Phase.INTRO or _intermission != null or _stinger != null or _zamboni != null:
 		return
 	_pause = PauseMenu.new()
 	_pause.camera_host = self
@@ -1138,9 +1148,193 @@ func _open_intermission(final: bool) -> void:
 	else:
 		_intermission.continued.connect(func() -> void:
 			_intermission = null
-			if _hud:
-				_hud.visible = true
-			_next_period())
+			_resurface(func() -> void:
+				if _hud:
+					_hud.visible = true
+				_next_period()))
+
+
+# --- The ice ---------------------------------------------------------------------------
+
+## Everyone on the ice wears it down: blade cuts, snow, and the shine going as the period
+## runs (IceWear).
+func _tick_ice(delta: float) -> void:
+	var wear := rink.wear
+	if wear == null or _zamboni != null or _intermission != null:
+		return
+	if phase in [Phase.INTRO, Phase.FINAL, Phase.PERIOD_END]:
+		return
+	var on_ice: Array = []
+	for t in teams.size():
+		on_ice.append_array(lineup(t).all_skaters())
+		if teams[t].goalie:
+			on_ice.append(teams[t].goalie)
+	wear.tick(on_ice, delta)
+	var plen := ot_length if period > periods else period_length
+	if plen > 0.0:
+		wear.dull = clampf(1.0 - clock / plen, 0.0, 1.0)
+
+
+## Between periods: the Zamboni lays a fresh sheet. With Full presentation, either a fan
+## contest winner drives it (ZamboniGame; the "zamboni" option on "drive", with someone
+## playing) or the crew does (a short cutscene: it rolls in along the end boards, a
+## time-lapse of the laps, then the last of the middle at speed). Both skippable. Quick,
+## or no HUD (tests), just resets the ice. `done` runs after.
+const ZAMBONI_SPEED := 4.5       ## m/s, at real speed
+const ZAMBONI_IN := 3.4          ## seconds at real speed, rolling in
+const ZAMBONI_LAPSE := 6.0       ## seconds of time-lapse
+const ZAMBONI_OUT := 3.2         ## seconds at real speed, finishing
+
+func _resurface(done: Callable) -> void:
+	if rink.wear == null or not show_hud or _hud == null or _quick():
+		if rink.wear:
+			rink.wear.reset()
+		done.call()
+		return
+	var gs := get_node_or_null("/root/GameSettings")
+	var fan_drives := _zamboni_auto or (humans.size() > 0 and (gs == null or str(gs.options.get("zamboni", "drive")) == "drive"))
+	_zamboni = Zamboni.new()
+	_zamboni.name = "Zamboni"
+	_zamboni.wear = rink.wear
+	rink.add_child(_zamboni)
+	_zamboni.set_trim(MenuStyle.team_color(team_ids[0]))
+	var who := _zamboni_driver()
+	_zamboni.set_driver(who)
+	rink.wear.begin_sweep()
+	_clear_ice_for_zamboni(true)
+	if _hud:
+		_hud.visible = false
+	if fan_drives:
+		_fan_contest(who, done)
+		return
+	Sfx.announce_after("zamboni_crew", 1.0, 2)
+	var z := _zamboni
+	var d_in := ZAMBONI_SPEED * ZAMBONI_IN
+	var d_out := maxf(d_in, z.length - ZAMBONI_SPEED * ZAMBONI_OUT)
+	var clock_ := [0.0]
+	var drive := func(delta: float) -> void:
+		if not is_instance_valid(z):
+			return
+		clock_[0] += delta
+		var t: float = clock_[0]
+		var d: float
+		if t < ZAMBONI_IN:
+			d = ZAMBONI_SPEED * t
+		elif t < ZAMBONI_IN + ZAMBONI_LAPSE:
+			var u := (t - ZAMBONI_IN) / ZAMBONI_LAPSE
+			# Ease into and out of the time-lapse from the real-speed shots.
+			var k := u * u * (3.0 - 2.0 * u)
+			d = lerpf(d_in, d_out, lerpf(u, k, 0.6))
+		else:
+			d = d_out + ZAMBONI_SPEED * (t - ZAMBONI_IN - ZAMBONI_LAPSE)
+		z.place(d, true)
+	var ticker := Timer.new()
+	add_child(ticker)
+	var last := [Time.get_ticks_usec()]
+	var tick := func() -> void:
+		var now := Time.get_ticks_usec()
+		drive.call((now - last[0]) / 1000000.0)
+		last[0] = now
+	ticker.wait_time = 1.0 / 60.0
+	ticker.timeout.connect(tick)
+	ticker.start()
+
+	var cs := Cutscene.new()
+	cs.name = "Resurface"
+	# Low by the end boards, ahead of it as it comes round the corner toward us.
+	var p0 := z.point_at(d_in + 3.0)
+	var c0 := Vector3(p0.x - 2.0, 0.9, p0.y - 3.0)
+	cs.shots.append({"len": ZAMBONI_IN, "fov": 42.0, "frame": func(_t: float) -> Array:
+		return [c0, z.global_position + Vector3(0, 1.1, 0)]})
+	# High over the end boards, the whole sheet: the laps go round in a time-lapse.
+	cs.shots.append({"len": ZAMBONI_LAPSE, "fov": 60.0, "steady": true, "frame": func(_t: float) -> Array:
+		return [Vector3(0.0, 13.0, RinkSpec.HALF_L + 1.6), Vector3(0.0, 0.0, -5.0)]})
+	# Down at ice level across the fresh sheet as it finishes the middle.
+	var p1 := z.point_at(z.length)
+	var c1 := Vector3(4.5, 0.6, p1.y + 4.0)
+	cs.shots.append({"len": ZAMBONI_OUT, "fov": 40.0, "frame": func(_t: float) -> Array:
+		return [c1, z.global_position + Vector3(0, 0.9, 0)]})
+	var finish := func(_skipped: bool) -> void:
+		ticker.queue_free()
+		_end_resurface(done)
+	cs.finished.connect(finish)
+	add_child(cs)
+	cs.play()
+
+
+## The fan contest: `fan` drives (ZamboniGame) with the first player's controls.
+func _fan_contest(fan: Skater, done: Callable) -> void:
+	var game := ZamboniGame.new()
+	game.name = "FanContest"
+	game.zamboni = _zamboni
+	game.wear = rink.wear
+	game.brain = HumanBrain.from_spec(humans[0], 0) if not humans.is_empty() else null
+	game.autopilot = _zamboni_auto
+	game.fan_name = "%s %s" % [fan.first_name, fan.last_name]
+	game.fan_seat = "SECTION %d, ROW %s" % [_rng.randi_range(101, 228), "ABCDEFGHJKLMNPQRST"[_rng.randi() % 18]]
+	game.team_color = MenuStyle.team_color(team_ids[0])
+	add_child(game)
+	game.finished.connect(func(_skipped: bool) -> void: _end_resurface(done))
+	game.start()
+
+
+## The Zamboni leaves: a fresh sheet, everyone back.
+func _end_resurface(done: Callable) -> void:
+	if is_instance_valid(_zamboni):
+		if is_instance_valid(_zamboni.driver):
+			_zamboni.driver.queue_free()
+		_zamboni.queue_free()
+	_zamboni = null
+	rink.wear.reset()
+	_clear_ice_for_zamboni(false)
+	done.call()
+
+
+## Whoever drives the Zamboni: a fan in the home jersey (a helmet on: house rules), with
+## a name made from the league's rosters.
+func _zamboni_driver() -> Skater:
+	var s: Skater = SKATER_SCENE.instantiate()
+	_setup_player(s, 0, _rng.randi_range(1, 99), true)   # (adds it: the look is built now)
+	s.name = "ZamboniDriver"
+	var names := _fan_names(s.body_type == "female")
+	s.first_name = names[0]
+	s.last_name = names[1]
+	return s
+
+
+## A first and last name from two different players around the league.
+func _fan_names(female: bool) -> Array:
+	var firsts: Array = []
+	var lasts: Array = []
+	for i in 6:
+		var abbr := str(Teams.team(_rng.randi() % Teams.count()).get("abbr", ""))
+		for p: Dictionary in Rosters.for_team(abbr):
+			if str(p.get("last", "")) == "":
+				continue
+			lasts.append(str(p.last))
+			if (str(p.get("gender", "")) == "Female") == female:
+				firsts.append(str(p.get("first", "")))
+	var first: String = firsts[_rng.randi() % firsts.size()] if not firsts.is_empty() else ("Jess" if female else "Mike")
+	var last: String = lasts[_rng.randi() % lasts.size()] if not lasts.is_empty() else "Kowalski"
+	return [first, last]
+
+
+## The ice to itself while the Zamboni is out: players, officials, puck and nets off.
+func _clear_ice_for_zamboni(clear: bool) -> void:
+	for t in teams.size():
+		var lu := lineup(t)
+		for s in lu.all_skaters():
+			s.frozen = clear
+			s.visual.visible = not clear
+		if lu.goalie:
+			lu.goalie.frozen = clear
+			lu.goalie.visual.visible = not clear
+	if referee:
+		referee.frozen = clear
+		referee.visual.visible = not clear
+	puck.visible = not clear
+	for n in rink.nets:
+		n.visible = not clear
 
 
 func _debug_look(from: Vector3, at: Vector3) -> void:
@@ -2136,6 +2330,13 @@ func _injury_demo() -> void:
 			return
 
 
+func _zamboni_demo(after: float) -> void:
+	await _wait_live(after)
+	if rink.wear and after < 5.0:
+		rink.wear.prewear(0.9)   # (a short wait: start from a period's worth of wear)
+	_resurface(func() -> void: pass)
+
+
 func _glass_demo() -> void:
 	await _wait_live(1.5)
 	# Along the far side boards, where there's glass: someone gets put through it.
@@ -2408,8 +2609,8 @@ func _regroup_cut(d3: Vector3, plan: Array) -> void:
 ##   jumbotron  up at the scoreboard over center ice (the score, the clock)
 func _dead_time_shot(subj: Skater, d3: Vector3, plan: Array) -> Dictionary:
 	var kinds := {"player": 4.0 if subj else 0.0, "goalie": 2.0, "bench": 2.0, "crowd": 1.5, "jumbotron": 1.0}
-	if rink.arena == null or not rink.arena.has_node("Scoreboard"):
-		kinds.jumbotron = 0.0   # (an arena without the center-hung board)
+	if rink.arena == null or (not rink.arena.has_node("Scoreboard") and rink.arena.board_at == Vector3.INF):
+		kinds.jumbotron = 0.0   # (an arena without a scoreboard)
 	var g: Goalie = null
 	for t in 2:
 		var gg: Goalie = teams[t].goalie
@@ -2474,11 +2675,19 @@ func _dead_time_shot(subj: Skater, d3: Vector3, plan: Array) -> Dictionary:
 		"crowd":
 			var sx := RinkSpec.BOX_SIDE if randf() < 0.5 else RinkSpec.BENCH_SIDE
 			var z0 := randf_range(-12.0, 12.0)
+			var look: Vector2 = rink.arena.crowd_look if rink.arena else Vector2(9.0, 5.5)
 			var dz := 1.0 if randf() < 0.5 else -1.0
 			return {"card": null, "tag": "", "shot": {"len": 2.3, "fov": 36.0, "frame": func(t: float) -> Array:
 				var pos := Vector3(sx * (RinkSpec.HALF_W - 3.0), 1.0, z0 + dz * t * 0.4)
-				return [pos, Vector3(sx * (RinkSpec.HALF_W + 9.0), 5.5, z0 + dz * (2.0 + t * 1.1))]}}
+				return [pos, Vector3(sx * (RinkSpec.HALF_W + look.x), look.y, z0 + dz * (2.0 + t * 1.1))]}}
 		_:
+			if rink.arena.board_at != Vector3.INF:
+				# A wall or post scoreboard past one end: from center ice, a slow push toward it.
+				var board := rink.arena.board_at
+				var bz := signf(board.z)
+				var from2 := Vector3(randf_range(-3.0, 3.0), 1.4, bz * 3.0)
+				return {"card": null, "tag": "", "shot": {"len": 2.3, "fov": 22.0, "frame": func(t: float) -> Array:
+					return [from2 + Vector3(0.0, 0.0, bz * t * 0.6), board]}}
 			# From deep in one end, up at the scoreboard's end screen over center ice; a slow push.
 			var sz := 1.0 if randf() < 0.5 else -1.0
 			var from := Vector3(randf_range(-4.0, 4.0), 1.4, sz * (RinkSpec.HALF_L - 5.0))

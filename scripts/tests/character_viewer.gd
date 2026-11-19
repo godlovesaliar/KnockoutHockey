@@ -97,6 +97,7 @@ func _ready() -> void:
 	goalie.stats = PlayerStats.new()
 	goalie.body_type = _arg("body", "female")
 	goalie.gear_style = int(_arg("style", "0"))
+	GoalieVisual.paint_override = _arg("paint", "")   # `paint=<design>|plain`: the goalie's mask paint
 	goalie.skin_tone = SkaterVisual.SKIN_TONES[int(_arg("gskin", "1")) % SkaterVisual.SKIN_TONES.size()]
 	var grng := RandomNumberGenerator.new()
 	grng.seed = int(_arg("seed", "3")) * 31 + 99
@@ -165,6 +166,10 @@ func _process(_delta: float) -> void:
 			var h: Node3D = s.visual.find_child("Helmet", true, false)
 			if h:
 				h.visible = false
+	if _arg("nocap", "") != "":   # without the hair-colored scalp cap under the head gear
+		for s in skaters + [goalie]:
+			for c in s.visual.find_children("HairCap", "", true, false):
+				(c as Node3D).visible = false
 	if _arg("nohelmet", "") != "":
 		for s in skaters:
 			if s.visual.helmet_on():
@@ -174,7 +179,7 @@ func _process(_delta: float) -> void:
 		return
 	var s: Skater = goalie if f >= skaters.size() else skaters[f]
 	var p := s.visual.global_position
-	# `view=face|face_side|face_back|face_quarter`: squared up to the head bone itself
+	# `view=face|face_side|face_back|face_quarter|face_top`: squared up to the head bone itself
 	# (the stance leans the head forward, so body-relative views look up at the face).
 	if _arg("view", "").begins_with("face"):
 		var helm: Node3D = s.visual.find_child("Helmet", true, false)
@@ -185,8 +190,9 @@ func _process(_delta: float) -> void:
 			"face_side": dir = hb.x
 			"face_back": dir = -hb.z
 			"face_quarter": dir = (hb.z + hb.x).normalized()
+			"face_top": dir = (hb.y * 2.0 + hb.z).normalized()   # down onto the crown
 		cam.fov = 30.0
-		cam.look_at_from_position(mid + dir * float(_arg("dist", "0.8")), mid, hb.y)
+		cam.look_at_from_position(mid + dir * float(_arg("dist", "0.8")), mid, hb.y if _arg("view", "") != "face_top" else -hb.z)
 		return
 	# `view=glove|glove_r` (`glove_side=<k>` turns around it): close-up of a glove.
 	if _arg("view", "").begins_with("glove"):

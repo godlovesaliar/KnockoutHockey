@@ -156,7 +156,7 @@ var weight_kg := 0.0
 var uniform := {}                ## team palette (Teams.LIST colors); empty = derived from team_color
 var crest: Texture2D             ## team logo on the jersey front (null = none)
 var skin_tone := Color(0.91, 0.73, 0.60)   ## sRGB; see SkaterVisual.SKIN_TONES
-var gear_style := 0              ## helmet model (goalies: mask model); see SkaterVisual.HELMETS / GoalieVisual.MASKS
+var gear_style := 0              ## helmet model (goalies: mask model): an index, or a roll (SkaterVisual.gear_roll); see SkaterVisual.HELMETS / GoalieVisual.MASKS
 var visor := true                ## a visor on the helmet (skaters); see Skater.visor_for
 var hair_style := ""              ## SkaterVisual.HAIR_STYLES / "braid"; "" = none showing
 var facial_hair := ""             ## "beard", "moustache" or ""

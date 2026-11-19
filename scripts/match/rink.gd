@@ -29,6 +29,7 @@ const AD_GAP := 1.6        ## meters of plain board between ads (stretched to fi
 @export var build_arena := true
 
 var ice_material: ShaderMaterial
+var wear: IceWear   ## the ice's cuts, snow and shine over a period (not in the editor)
 var arena: Arena   ## null when build_arena is off (or in the editor)
 ## The arena to build (Arenas format). Empty: the game's (Arenas.for_game, from the
 ## settings' home team). Set before the rink enters the tree, or use rebuild_arena.
@@ -160,6 +161,11 @@ func _build_ice() -> void:
 	mi.mesh = mesh
 	mi.material_override = ice_material
 	add_child(mi)
+	if not Engine.is_editor_hint():
+		wear = IceWear.new()
+		wear.name = "IceWear"
+		add_child(wear)
+		wear.setup(ice_material)
 
 	# Ground plane for skaters (the puck handles the ice analytically).
 	var body := StaticBody3D.new()

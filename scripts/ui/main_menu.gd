@@ -100,13 +100,13 @@ func _ready() -> void:
 	_title = Control.new()
 	_title.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_canvas.add_child(_title)
-	var w1 := MenuStyle.chrome_text("KNOCKOUT", 120)
+	var w1 := MenuStyle.chrome_text("KNOCKOUT", 120, 0.0, _arg("knockoutfont", ""))   # `knockoutfont=<file>`: compare faces
 	w1.position = Vector2(70, 26)
 	_title.add_child(w1)
-	var w2 := MenuStyle.chrome_text("HOCKEY", 120)
-	w2.position = Vector2(150, 156)
+	var w2 := MenuStyle.chrome_text("HOCKEY", 120, 0.0, _arg("hockeyfont", ""))   # `hockeyfont=<file>`: compare faces
+	w2.position = Vector2(150, 111 + float(_arg("hockeyy", "0")))   # `hockeyy=<px>`: nudge for faces that sit higher
 	_title.add_child(w2)
-	_title.pivot_offset = Vector2(420, 190)
+	_title.pivot_offset = Vector2(330, 120)
 
 	_heading = Label.new()
 	_heading.add_theme_font_override("font", MenuStyle.font(0.2))

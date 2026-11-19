@@ -16,8 +16,14 @@ const BORDERS := ["none", "thin", "thick", "double"]
 const BORDER_NAMES := ["None", "Thin", "Thick", "Double"]
 const PATTERNS := ["none", "band", "sash", "split", "chevron", "chief", "hoops", "quarters"]
 const PATTERN_NAMES := ["None", "Band", "Sash", "Split", "Chevron", "Top Bar", "Hoops", "Quarters"]
-const ICONS := ["none", "star", "three_stars", "bolt", "crown", "sticks", "puck", "mountains", "wave", "claws"]
-const ICON_NAMES := ["None", "Star", "Three Stars", "Lightning", "Crown", "Crossed Sticks", "Puck", "Mountains", "Wave", "Claws"]
+## Stock logos (drawn art, cut by `tools/build_logos.gd -- mascots`): each is a strip of
+## five layers in res://assets/ui/mascots/<id>.png, the silhouette (in `outline`) and then
+## the art's navy, red, gold and white areas, each tinted with the slot in MASCOT_KEYS.
+const MASCOTS := ["wolverine", "owl", "crow", "shark", "narwhal", "turtle", "sasquatch", "jackalope", "viking", "coffee", "donut"]
+const MASCOT_NAMES := ["Wolverine", "Owl", "Crow", "Shark", "Narwhal", "Snapping Turtle", "Sasquatch", "Jackalope", "Viking", "Coffee Cup", "Donut"]
+const MASCOT_KEYS := ["logo_navy", "logo_red", "logo_gold", "logo_white"]
+const ICONS := ["none", "star", "three_stars", "bolt", "crown", "sticks", "puck", "mountains", "wave", "claws"] + MASCOTS
+const ICON_NAMES := ["None", "Star", "Three Stars", "Lightning", "Crown", "Crossed Sticks", "Puck", "Mountains", "Wave", "Claws"] + MASCOT_NAMES
 const LAYOUTS := ["icon_text", "text", "icon"]
 const LAYOUT_NAMES := ["Icon and Letters", "Letters Only", "Icon Only"]
 ## [name, font file under res://assets/fonts/ or system font names].
@@ -40,13 +46,45 @@ static func blank() -> Dictionary:
 		"text": "", "font": 0, "italic": true,
 		"fill": "primary", "edge": "secondary", "pattern_color": "accent",
 		"icon_color": "accent", "text_color": "secondary", "outline": "black",
+		"logo_navy": "primary", "logo_red": "secondary", "logo_gold": "accent", "logo_white": "white",
 	}
 
 
-## JSON numbers come back as floats.
+## JSON numbers come back as floats; badges saved before a setting existed get its default.
 static func fix_types(b: Dictionary) -> void:
 	b.font = int(b.get("font", 0))
 	b.italic = bool(b.get("italic", true))
+	var d := blank()
+	for k: String in d:
+		if not b.has(k):
+			b[k] = d[k]
+
+
+static func is_mascot(icon: String) -> bool:
+	return icon in MASCOTS
+
+
+static var _mascot_tex := {}
+
+static func mascot_texture(id: String) -> Texture2D:
+	if not _mascot_tex.has(id):
+		var path := "res://assets/ui/mascots/%s.png" % id
+		_mascot_tex[id] = load(path) if ResourceLoader.exists(path) else null
+	return _mascot_tex[id]
+
+
+## A stock logo fitted into `r` (kept to its own proportions): the silhouette in the
+## outline color, then each color area over it. `tints`: outline, navy, red, gold, white.
+static func _mascot(ci: CanvasItem, id: String, r: Rect2, tints: Array[Color]) -> void:
+	var tex := mascot_texture(id)
+	if tex == null:
+		return
+	var lw := tex.get_width() / 5.0
+	var lh := float(tex.get_height())
+	var k := minf(r.size.x / lw, r.size.y / lh)
+	var dst := Rect2(r.get_center() - Vector2(lw, lh) * k * 0.5, Vector2(lw, lh) * k)
+	for layer in 5:
+		ci.draw_texture_rect_region(tex, dst, Rect2(lw * layer, 0, lw, lh), tints[layer])
 
 
 static func font(index: int, italic: bool) -> Font:
@@ -119,14 +157,35 @@ static func draw(ci: CanvasItem, r: Rect2, b: Dictionary, colors: Array[Color], 
 	var outline: Color = col.call("outline")
 	var line_w := maxf(1.0, s * 0.012)
 	var top := 0.0 if shape_name in ["round", "diamond", "hexagon", "square", "none"] else -0.04
+	var mascot := is_mascot(icon)
+	var tints: Array[Color] = [outline]
+	for k: String in MASCOT_KEYS:
+		tints.append(col.call(k))
+	var draw_icon := func(ir: Rect2) -> void:
+		if mascot:
+			_mascot(ci, icon, ir, tints)
+		else:
+			_icon(ci, icon, ir, col.call("icon_color"), outline, line_w)
 	match layout:
 		"icon":
-			_icon(ci, icon, Rect2(o + Vector2(0.2, 0.2 + top) * s, Vector2(0.6, 0.6) * s), col.call("icon_color"), outline, line_w)
+			# A stock logo on its own fills the badge; inside a shape it sits a bit larger
+			# than a plain icon, since it has its own outline and shape.
+			var ir := Rect2(0.2, 0.2 + top, 0.6, 0.6)
+			if mascot:
+				ir = Rect2(0.02, 0.02, 0.96, 0.96) if shape_name == "none" else Rect2(0.15, 0.15 + top, 0.7, 0.7)
+			draw_icon.call(Rect2(o + ir.position * s, ir.size * s))
 		"text":
 			_text(ci, text, Rect2(o + Vector2(0.17, 0.3 + top) * s, Vector2(0.66, 0.36) * s), b, col.call("text_color"), outline)
 		"icon_text":
-			_icon(ci, icon, Rect2(o + Vector2(0.31, 0.13 + top) * s, Vector2(0.38, 0.38) * s), col.call("icon_color"), outline, line_w)
-			_text(ci, text, Rect2(o + Vector2(0.2, 0.53 + top) * s, Vector2(0.6, 0.22) * s), b, col.call("text_color"), outline)
+			var ir := Rect2(0.31, 0.13 + top, 0.38, 0.38)
+			var tr := Rect2(0.2, 0.53 + top, 0.6, 0.22)
+			if mascot and shape_name == "none":
+				ir = Rect2(0.08, 0.0, 0.84, 0.66)
+				tr = Rect2(0.12, 0.7, 0.76, 0.26)
+			elif mascot:
+				ir = Rect2(0.24, 0.1 + top, 0.52, 0.44)
+			draw_icon.call(Rect2(o + ir.position * s, ir.size * s))
+			_text(ci, text, Rect2(o + tr.position * s, tr.size * s), b, col.call("text_color"), outline)
 
 
 ## The shape's outline in a unit box (y down).

@@ -8,7 +8,7 @@ extends Node
 ## The white, red and navy rims and the drop shadow are grown from the letter mask (exact
 ## distance transform); the chrome fill covers letters and specks alike.
 ##   -> res://assets/ui/title/<word>_<size>.png   (chrome_text uses it when it exists)
-## Rerun after changing MenuStyle.TITLE_FONT, TITLE_SPACING or the words below.
+## Rerun after changing MenuStyle.TITLE_FONT, TITLE_WORD_FONTS, TITLE_SPACING or the words below.
 
 const WORDS := [["KNOCKOUT", 120], ["HOCKEY", 120], ["VS", 110]]
 const OUT_DIR := "res://assets/ui/title/"
@@ -39,7 +39,7 @@ func _bake(text: String, size: int) -> void:
 	var m := MenuStyle.bake_margin(size)
 	var holder := MenuStyle.chrome_size(text, size)
 	var big := size * SCALE
-	var f := MenuStyle.title_font(big)
+	var f := MenuStyle.title_font(big, 0.0, MenuStyle.word_font(text))
 	var w := int(ceil((holder.x + m * 2.0) * SCALE))
 	var h := int(ceil((holder.y + m * 2.0) * SCALE))
 	var vp := SubViewport.new()

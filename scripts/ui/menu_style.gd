@@ -51,9 +51,11 @@ void fragment() {
 "
 
 ## The game title's typeface (chrome_text), upright, with TITLE_SPACING extra pixels
-## between letters per 100 px of size. `-- titlefont=<file in assets/fonts>` and
+## between letters per 100 px of size; TITLE_WORD_FONTS gives single words their own face
+## (files in assets/fonts). `-- titlefont=<file in assets/fonts>` (every word) and
 ## `-- titlespacing=<n>` override them for a run, to compare.
-const TITLE_FONT := "res://assets/fonts/Baron Kuffner.otf"
+const TITLE_FONT := "res://assets/fonts/sprayme.ttf"
+const TITLE_WORD_FONTS := {"HOCKEY": "RussoOne-Regular.ttf"}
 const TITLE_SPACING := 12.0
 const FONT_DIR := "res://assets/fonts/"
 
@@ -76,7 +78,7 @@ static func font(slant := 0.2) -> Font:
 
 ## The title face at `size` (TITLE_FONT, or the `titlefont=` override), letter-spaced,
 ## leaned by `slant` if it's above 0 (a synthetic oblique). Falls back to font().
-static func title_font(size: int, slant := 0.0) -> Font:
+static func title_font(size: int, slant := 0.0, font_file := "") -> Font:
 	var path := TITLE_FONT
 	var spacing := TITLE_SPACING
 	for a in OS.get_cmdline_user_args():
@@ -84,6 +86,8 @@ static func title_font(size: int, slant := 0.0) -> Font:
 			path = FONT_DIR + a.substr(10)
 		elif a.begins_with("titlespacing="):
 			spacing = float(a.substr(13))
+	if font_file != "":
+		path = FONT_DIR + font_file
 	var key := "%s|%d|%.2f|%.1f" % [path, size, slant, spacing]
 	if not _title_fonts.has(key):
 		var base := load(path) as FontFile if ResourceLoader.exists(path) else null
@@ -113,9 +117,18 @@ const CHROME_PAD := 0.2
 const TITLE_BAKED := "res://assets/ui/title/"
 
 
+## The font file (in assets/fonts) TITLE_WORD_FONTS gives `text`, or "" for TITLE_FONT
+## (always "" while `titlefont=` is comparing faces).
+static func word_font(text: String) -> String:
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("titlefont="):
+			return ""
+	return TITLE_WORD_FONTS.get(text, "")
+
+
 ## The Control size chrome_text gives `text` at `size`.
 static func chrome_size(text: String, size: int) -> Vector2:
-	var ts := title_font(size).get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, size)
+	var ts := title_font(size, 0.0, word_font(text)).get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, size)
 	return Vector2(ts.x + size * CHROME_PAD * 2.0, ts.y)
 
 
@@ -139,12 +152,17 @@ static func chrome_color(t: float) -> Color:
 ## When tools/BuildTitle.tscn has baked the word (TITLE_BAKED/<word>_<size>.png) the image
 ## is used: its rims go round the letters only, not the font's splatter specks. Otherwise
 ## it's built live from layered Labels (rims round everything).
-static func chrome_text(text: String, size: int, slant := 0.0) -> Control:
+## `font_file` (a file in assets/fonts) sets this word's face on its own, built live;
+## otherwise it's TITLE_WORD_FONTS' face for the word, or TITLE_FONT.
+static func chrome_text(text: String, size: int, slant := 0.0, font_file := "") -> Control:
 	var baked := TITLE_BAKED + "%s_%d.png" % [text.to_lower(), size]
 	var titlefont_override := false   # comparing faces from the command line: build live
 	for a in OS.get_cmdline_user_args():
 		titlefont_override = titlefont_override or a.begins_with("titlefont=") or a.begins_with("titlespacing=")
-	if slant == 0.0 and not titlefont_override and ResourceLoader.exists(baked):
+	var live := font_file != ""
+	if font_file == "":
+		font_file = word_font(text)
+	if slant == 0.0 and not titlefont_override and not live and ResourceLoader.exists(baked):
 		var box := Control.new()
 		box.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		box.size = chrome_size(text, size)
@@ -159,7 +177,7 @@ static func chrome_text(text: String, size: int, slant := 0.0) -> Control:
 		tr.size = tr.texture.get_size() / 2.0
 		box.add_child(tr)
 		return box
-	var f := title_font(size, slant)
+	var f := title_font(size, slant, font_file)
 	var holder := Control.new()
 	holder.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var layers := [

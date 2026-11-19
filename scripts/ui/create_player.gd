@@ -346,7 +346,9 @@ func _choices(key: String) -> Array:
 		"facial_hair":
 			return [CustomPlayers.FACIAL_HAIR, CustomPlayers.FACIAL_HAIR_NAMES]
 		"helmet":
-			return [[0, 1], CustomPlayers.MASK_NAMES if CustomPlayers.is_goalie(_p) else CustomPlayers.HELMET_NAMES]
+			if CustomPlayers.is_goalie(_p):
+				return [range(CustomPlayers.MASK_NAMES.size()), CustomPlayers.MASK_NAMES]
+			return [[0, 1], CustomPlayers.HELMET_NAMES]
 		"visor":
 			return [[true, false], ["Yes", "No"]]
 		"stick":

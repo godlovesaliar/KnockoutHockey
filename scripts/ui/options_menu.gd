@@ -46,6 +46,8 @@ const VIDEO := [
 		"hint": "Fights: a hurt fighter bleeds on the big shots. Off: spit only."},
 	{"key": "presentation", "label": "PRESENTATION", "values": ["full", "quick"], "names": ["Full", "Quick"],
 		"hint": "Quick: shorter stoppages: no cutaways, no going-to-break shot, one replay angle."},
+	{"key": "zamboni", "label": "ZAMBONI", "values": ["drive", "watch"], "names": ["Drive It", "Watch"],
+		"hint": "Between periods: drive the Zamboni yourself as the fan contest winner, or watch the crew. Quick presentation skips it."},
 ]
 
 const ROW_POS := Vector2(80, 178)

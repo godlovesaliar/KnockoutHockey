@@ -418,6 +418,11 @@ const DESIGN_OF := {
 	"axolotls": "classic",
 }
 
+## Teams whose players wear a mask instead of a helmet, by `call` (SkaterVisual.MASKS):
+## "lucha" a luchador hood (a few cuts and patterns, in the team's colors), "vintage" an
+## old-school fiberglass goalie face mask (goalies too).
+const HEADGEAR_OF := {"luchadores": "lucha", "campers": "vintage"}
+
 
 static func count() -> int:
 	return LIST.size() + CustomTeams.all().size()
@@ -501,6 +506,14 @@ static func uniform_vs(i: int, opponent: int, away: bool) -> Dictionary:
 
 ## uniform_vs for team dictionaries (Create Team previews a team that isn't saved yet).
 static func uniform_of(mine_team: Dictionary, their_team: Dictionary, away: bool) -> Dictionary:
+	var u := _uniform_of(mine_team, their_team, away).duplicate()
+	var gear: String = mine_team.get("headgear", HEADGEAR_OF.get(mine_team.get("call", ""), ""))
+	if gear != "":
+		u["headgear"] = gear
+	return u
+
+
+static func _uniform_of(mine_team: Dictionary, their_team: Dictionary, away: bool) -> Dictionary:
 	var mine: Dictionary = mine_team.colors.duplicate()
 	mine["design"] = mine_team.get("design", DESIGN_OF.get(mine_team.get("call", ""), "classic"))
 	if mine_team.has("design_params"):

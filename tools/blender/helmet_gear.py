@@ -41,7 +41,9 @@ COLLECTION = "HelmetGear"
 HEAD_CENTER = (0.0, 1.6953, 0.0003)
 CROWN_Y = 0.145      # top of the male head above HEAD_CENTER
 CHIN_Y = -0.095      # bottom of the male chin
-HEAD_OBJ = "male_male_muscle_13290Mesh_s0"   # reference head (tools/_dump_heads.gd), if loaded
+# The reference head (tools/dump_heads.gd), if loaded: its name depends on how it was imported.
+HEAD_OBJ = next((n for n in ("male_male_muscle_13290Mesh_s0", "male_muscle_13290Mesh_s0")
+                 if bpy.data.objects.get(n) is not None), "male_male_muscle_13290Mesh_s0")
 
 
 def g(x, y, z):
@@ -692,18 +694,23 @@ def build_a(offset=Vector()):
         solidify(o, 0.0032)
         apply_all(o)
     # Vents: a long slot in the channel either side of the spine, shorter ones outboard,
-    # two at the brow and two at the back.
-    cutters = []
+    # two at the brow and two at the back. They go through the liner too (below), so the
+    # hair shows in them.
     up, fwd, left = Vector((0, 1, 0)), Vector((0, 0, 1)), Vector((1, 0, 0))
-    for s in (1.0, -1.0):
-        cutters.append(stadium_cutter("cut", Vector((s * 0.042, 0.2, -0.006)), fwd, left, 0.15, 0.012, 0.11))
-        cutters.append(stadium_cutter("cut", Vector((s * 0.074, 0.2, -0.045)), fwd, left, 0.07, 0.01, 0.11))
-        # Side slot on the crown above the temple, along its edge.
-        p, n = surf_pt(sh, s * 72.0, 0.098, 0.0045)
-        cutters.append(stadium_cutter("cut", p, Vector((0, -0.25, 1)), up, 0.045, 0.009, 0.03))
-        cutters.append(stadium_cutter("cut", Vector((s * 0.05, 0.112, 0.12)), left, up, 0.026, 0.008, 0.05))
-        cutters.append(stadium_cutter("cut", Vector((s * 0.046, 0.09, -0.14)), left, up, 0.028, 0.008, 0.05))
-    cut(crown, cutters)
+
+    def vents():
+        cutters = []
+        for s in (1.0, -1.0):
+            cutters.append(stadium_cutter("cut", Vector((s * 0.042, 0.2, -0.006)), fwd, left, 0.15, 0.012, 0.11))
+            cutters.append(stadium_cutter("cut", Vector((s * 0.074, 0.2, -0.045)), fwd, left, 0.07, 0.01, 0.11))
+            # Side slot on the crown above the temple, along its edge.
+            p, n = surf_pt(sh, s * 72.0, 0.098, 0.0045)
+            cutters.append(stadium_cutter("cut", p, Vector((0, -0.25, 1)), up, 0.045, 0.009, 0.03))
+            cutters.append(stadium_cutter("cut", Vector((s * 0.05, 0.112, 0.12)), left, up, 0.026, 0.008, 0.05))
+            cutters.append(stadium_cutter("cut", Vector((s * 0.046, 0.09, -0.14)), left, up, 0.028, 0.008, 0.05))
+        return cutters
+
+    cut(crown, vents())
     # The raised spine down the middle (front to back over the top): its edges and the
     # channels beside it give the top its angular look.
     spine = new_object("a_spine", lambda bm: spine_patch(
@@ -740,6 +747,7 @@ def build_a(offset=Vector()):
     lin = new_object("a_liner", lambda bm: shell_patch(
         bm, sh, lambda a: keyed(A_RIM, a) + 0.005, None, nu=48, nv=12, grow=-0.0035), offset)
     solidify(lin, 0.009, bevel=0.0)
+    cut(lin, vents())   # the vents are open: the hair under the helmet shows in them
 
     def dark(bm):
         for s in (1.0, -1.0):
@@ -824,13 +832,18 @@ def build_b(offset=Vector()):
                 out.append(stadium_cutter("cut", p, u, t, 0.016, 0.0036, 0.03))
         return out
 
-    cutters = brim_vents()
-    for s in (1.0, -1.0):
-        # Top: a slot either side of the raised panel.
-        cutters.append(stadium_cutter("cut", Vector((s * 0.07, 0.2, -0.03)), fwd, left, 0.065, 0.0095, 0.1))
-        # Back: an upright slot either side of the panel.
-        p, n, u, sd = _surface_frame(sh, 180.0 - s * 24.0, 0.086)
-        cutters.append(stadium_cutter("cut", p, u, sd, 0.028, 0.008, 0.02))
+    def vents():
+        """The open vents (through the liner too, so the hair shows in them)."""
+        out = []
+        for s in (1.0, -1.0):
+            # Top: a slot either side of the raised panel.
+            out.append(stadium_cutter("cut", Vector((s * 0.07, 0.2, -0.03)), fwd, left, 0.065, 0.0095, 0.1))
+            # Back: an upright slot either side of the panel.
+            p, n, u, sd = _surface_frame(sh, 180.0 - s * 24.0, 0.086)
+            out.append(stadium_cutter("cut", p, u, sd, 0.028, 0.008, 0.02))
+        return out
+
+    cutters = brim_vents() + vents()
     ez, ey, el, eh = B_EAR
     for s in (1.0, -1.0):
         cutters.append(stadium_cutter("cut", Vector((s * 0.115, ey, ez)), fwd, up, el, eh, 0.06))
@@ -873,6 +886,7 @@ def build_b(offset=Vector()):
     lin = new_object("b_liner", lambda bm: shell_patch(
         bm, sh, lambda a: keyed(B_RIM, a) + 0.005, None, nu=48, nv=12, grow=-0.0036), offset)
     solidify(lin, 0.009, bevel=0.0)
+    cut(lin, vents())
 
     def dark(bm):
         rim = []

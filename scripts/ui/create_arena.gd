@@ -224,23 +224,34 @@ func _tab_rows(tab: String) -> Array:
 			{"key": "editing", "label": "EDITING", "kind": "choice",
 				"hint": "Make a new arena, or pick a saved one to change."},
 			{"key": "name", "label": "NAME", "kind": "text", "max": 24, "hint": "What the arena's called."},
-			{"key": "style", "label": "STYLE", "kind": "choice", "hint": "The kind of building. More styles are on the way."},
+			{"key": "style", "label": "STYLE", "kind": "choice", "hint": "The kind of building: Modern Arena, Retro Dome, Community Rink or Outdoor Rink."},
 			{"key": "home", "label": "HOME TEAM", "kind": "choice",
 				"hint": "Make it a team's home. Outdoor rinks can only be home to created teams."},
 		]
 	else:
+		var style := str(_a.style)
+		var small := style in ["community", "outdoor"]
 		rows = [
-			{"key": "seats", "label": "SEATS", "kind": "choice", "hint": "Seat color: the home team's, or one of its own."},
+			{"key": "time", "label": "TIME OF DAY", "kind": "choice", "hint": "Afternoon sun, a sunset, or a night game under the lights."},
+			{"key": "snow", "label": "SNOW", "kind": "choice", "hint": "Snow coming down during the game."},
+			{"key": "seats", "label": "SEATS", "kind": "choice",
+				"hint": "Bleacher seat color: the home team's, or one of its own." if small else "Seat color: the home team's, or one of its own."},
 			{"key": "boards", "label": "BOARDS", "kind": "choice", "hint": "The dasher boards' color."},
-			{"key": "lights", "label": "LIGHTS", "kind": "choice", "hint": "The light over the ice: cool, neutral or warm."},
+			{"key": "lights", "label": "LIGHTS", "kind": "choice",
+				"hint": "The floodlights' color: cool, neutral or warm." if style == "outdoor" else "The light over the ice: cool, neutral or warm."},
 			{"key": "attendance", "label": "CROWD", "kind": "choice", "hint": "How full the seats are."},
 			{"key": "ribbon", "label": "RIBBON BOARD", "kind": "choice", "hint": "The LED band round the upper bowl."},
-			{"key": "scoreboard", "label": "SCOREBOARD", "kind": "choice", "hint": "The scoreboard hung over center ice."},
-			{"key": "banners", "label": "BANNERS", "kind": "choice", "hint": "Banners in the home team's colors over each end."},
+			{"key": "scoreboard", "label": "SCOREBOARD", "kind": "choice",
+				"hint": {"community": "The old lamp scoreboard over the Zamboni door.", "outdoor": "The lamp scoreboard on posts past one end."}.get(style, "The scoreboard hung over center ice.")},
+			{"key": "banners", "label": "BANNERS", "kind": "choice",
+				"hint": {"community": "Banners in the home team's colors on the end wall.", "outdoor": "Banners in the home team's colors on poles behind each end."}.get(style, "Banners in the home team's colors over each end.")},
 			{"key": "center", "label": "CENTER ICE", "kind": "choice", "hint": "The logo painted at center ice."},
 			{"key": "preview_team", "label": "PREVIEW AS", "kind": "choice",
 				"hint": "Only for this screen: see the arena dressed for a team."},
 		]
+		# Only the options this style has.
+		var has: Array = Arenas.STYLE_OPTIONS.get(style, Arenas.STYLE_OPTIONS.modern)
+		rows = rows.filter(func(d: Dictionary) -> bool: return d.key == "preview_team" or d.key in has)
 	rows.append({"key": "save", "label": "SAVE ARENA", "kind": "action", "hint": "Saves the arena. Pick it on the rules screen before a game."})
 	if tab == "arena" and _edit_index >= 0:
 		rows.append({"key": "delete", "label": "DELETE ARENA", "kind": "action",
@@ -290,6 +301,10 @@ func _choices(key: String) -> Array:
 			return [v, n]
 		"lights":
 			return [Arenas.LIGHTS, Arenas.LIGHT_NAMES]
+		"time":
+			return [Arenas.TIMES, Arenas.TIME_NAMES]
+		"snow":
+			return [Arenas.SNOWS, Arenas.SNOW_NAMES]
 		"attendance":
 			return [Arenas.ATTENDANCE, Arenas.ATTENDANCE.map(func(p: int) -> String: return "Sold Out" if p == 100 else "%d%%" % p)]
 		"ribbon", "scoreboard", "banners":
