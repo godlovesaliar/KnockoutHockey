@@ -20,6 +20,7 @@ signal penalty_expired(team: int)   ## a minor ran out (not a goal against, not 
 signal goalie_pulled(team: int)     ## a team's goalie heads for the bench (extra attacker)
 signal player_injured(s: Skater)    ## hurt: out for the rest of the game
 signal glass_broken(at: Vector3)    ## a big hit put someone through a pane of glass
+signal intro_cue(what: StringName)  ## the broadcast open reached a team's beat (&"home" / &"away"; &"both": Quick): the booth's line
 
 enum Phase { PREGAME, FACEOFF, LIVE, STOPPAGE, PERIOD_END, SHOOTOUT, FINAL, INTRO, FIGHT }
 
@@ -47,8 +48,7 @@ const FIGHT_MAJOR := 300.0       ## 5:00 offsetting majors
 const FIGHT_AFTER_HIT := 0.9     ## s after the hit that set it off before a fight starts (it plays out first)
 const FIGHT_COOLDOWN := 60.0    ## sitting out instead, when penalties are off
 const MOMENTUM_TIME := 75.0
-const INTRO_MIN := 3.5            ## the matchup screen shows at least this long...
-const INTRO_MAX := 20.0           ## ...and at most this long (the intro line normally ends it)
+const INTRO_MAX := 40.0           ## the broadcast open ends itself; past this it's cut off (a safety net)
 ## Injuries (DESIGN §4.8): a big hit or a lost fight can put a skater out for the game.
 const INJURY_HIT := 0.035        ## chance a big hit hurts the player hit (average durability)...
 const INJURY_BOARDS := 1.6       ## ...this much more into the boards
@@ -99,12 +99,15 @@ var clock := 0.0
 var score := [0, 0]
 var stats := {"shots": [0, 0], "saves": [0, 0], "hits": [0, 0], "big_hits": [0, 0], "faceoffs": [0, 0],
 		"penalties": [0, 0], "pp_goals": [0, 0], "offsides": 0, "icings": 0, "changes": [0, 0],
-		"period_goals": [[0, 0, 0, 0], [0, 0, 0, 0]], "fights": 0, "injuries": [0, 0]}   ## per team: goals in periods 1-3 and OT
+		"period_goals": [[0, 0, 0, 0], [0, 0, 0, 0]], "fights": 0, "injuries": [0, 0],   ## per team: goals in periods 1-3 and OT
+		"fight_wins": [0, 0], "fight_kos": [0, 0], "glass": [0, 0]}   ## per team: fights won (and by knockout), panes broken
 var box := BoxScore.new()     ## per-player stats (hot / cold players, three stars)
 var teams: Array[Dictionary] = []    ## {lineup: Lineup, goalie: Goalie, ai: TeamAI, control: TeamControl}
 var rules: MatchRules
 var shootout := {}
 var _intermission: Intermission
+var payout := {}               ## the pucks this game paid (a Pucks receipt, banked at the final horn); empty = none
+var _payout_screen: PayoutScreen
 var _zamboni: Zamboni          ## the resurfacer, during its between-periods pass
 var _zamboni_auto := false     ## (testing) the fan contest, driven by its autopilot
 var _stinger: Stinger          ## the league stinger covering a cut, while it plays
@@ -118,7 +121,7 @@ var _stat_seen := {}
 var _stat_log := false
 var _cutaways: Array[String] = []   ## the last dead-time cutaway kinds (no repeats)
 var _cut_force := ""            ## always this cutaway (`-- cutaway=<kind>`, layout checks)         ## print each stat card (`-- statlog`)           ## team-stat key -> _stat_count when it was last shown
-var _intro_stage: Node3D
+var _open: BroadcastOpen       ## the broadcast open (the matchup screen), while it plays
 var _pause: PauseMenu
 var _fight: Fight
 var tension := [0.0, 0.0]     ## per team: built by hits taken (see FIGHT_TENSION)
@@ -149,8 +152,16 @@ var _cmd_cam := false         ## `-- cam=…` picked the angle (it wins over the
 var _debug_fight := ""        ## `-- fight` / `fight=prompt`: start a fight at the first chance (testing)
 var _showcase: Array[Skater] = []
 var _no_intro := false
+var _open_at := -1.0
 var knockout := false        ## Knockout Mode: a card of fights instead of a game (KnockoutMode)
 var knockout_mode: KnockoutMode
+## The store extras on for this game (Store.extras_on keys: "bighead", "rainbow", "bigpuck",
+## "glass", "retro"). Real games read them from the profile; tests set them before _ready.
+var extras: Array = []
+const BIG_HEAD := 2.0        ## Big Head Mode: head size
+const BIG_PUCK := 4.0        ## Big Puck: Puck.visual_scale (twice the usual)
+const RETRO_SHADER := preload("res://scenes/match/retro_tv.gdshader")
+var challenge := -1          ## a challenge game (Store): the Teams index of the locked team to beat, the home team; -1 = not one
 
 var _phase_time := 0.0
 var _stoppage_len := 0.0
@@ -176,6 +187,10 @@ func _ready() -> void:
 	if use_game_settings:
 		_apply_settings(GameSettings.config, GameSettings.humans)
 		knockout = GameSettings.mode == "knockout"
+		if GameSettings.mode == "challenge":
+			challenge = GameSettings.challenge
+			difficulty = maxf(difficulty, Store.CHALLENGE_DIFFICULTY)
+		extras = Store.extras_on()
 	_parse_cmdline()
 	if rng_seed != 0:
 		_rng.seed = rng_seed
@@ -185,6 +200,7 @@ func _ready() -> void:
 			else clampf(lerpf(0.85, 1.1, difficulty) + _rng.randfn(0.0, 0.12), 0.65, 1.35)
 	if OS.get_cmdline_user_args().has("reflog"):
 		print("[ref] strictness %.2f" % ref_strictness)
+	_apply_extras()
 	sun.rotation = Vector3(deg_to_rad(-62.0), deg_to_rad(25.0), 0.0)
 	GameSettings.sun_shadow_mode(sun)
 	rules = MatchRules.new(self)
@@ -203,6 +219,9 @@ func _ready() -> void:
 	if rink.arena:
 		rink.arena.set_teams(team_ids[0], team_ids[1])
 		rink.arena.bind_match(self)
+		# (the people for the fan close-ups: built now, so the first one doesn't hitch)
+		if show_hud:
+			rink.arena.warm_close_fans.call_deferred()
 	replay = Replay.new()
 	replay.name = "Replay"
 	add_child(replay)
@@ -304,6 +323,13 @@ func _parse_cmdline() -> void:
 		team_ids[0] = int(args["home"])
 	if args.has("away"):
 		team_ids[1] = int(args["away"])
+	if args.has("challenge"):   # a challenge game against this team (a Teams index): they're at home, the player away
+		challenge = int(args["challenge"])
+		team_ids[0] = challenge
+		humans = [{"kind": "any", "pad": 0, "team": 1}]
+		difficulty = maxf(difficulty, Store.CHALLENGE_DIFFICULTY)
+	if args.has("extras"):   # store extras for this run (bighead, rainbow, bigpuck, glass, retro), owned or not
+		extras = Store.extras_on()
 	if args.has("ot"):
 		overtime_mode = str(args["ot"])
 	if args.has("norules"):
@@ -317,6 +343,12 @@ func _parse_cmdline() -> void:
 			_cmd_cam = true
 	if args.has("nointro"):
 		_no_intro = true
+	if args.has("openskip"):   # skip the broadcast open openskip=<s> in (testing the skip)
+		get_tree().create_timer(float(args["openskip"]), false).timeout.connect(func() -> void:
+			if _open:
+				_open._skip())
+	if args.has("openat"):   # a still of the broadcast open at openat=<seconds into the theme> (layout checks)
+		_open_at = float(args["openat"])
 	if args.has("knockout"):   # Knockout Mode straight away (testing)
 		knockout = true
 	if args.has("fight"):
@@ -325,6 +357,8 @@ func _parse_cmdline() -> void:
 		_open_pause_for_shot.call_deferred(args["pausemenu"] == "controls")
 	if args.has("statscreen"):   # open the stats screen (screenshots / layout checks); statwait=<s> plays a while first
 		_open_stats_for_shot.call_deferred(args["statscreen"] == "final", float(args.get("statwait", "0")))
+	if args.has("payout"):   # the payout screen at once, for a made-up home win (layout checks; nothing is banked)
+		_payout_demo.call_deferred()
 	if args.has("look"):   # a fixed camera for layout checks: look=x,y,z,tx,ty,tz
 		var v := str(args["look"]).split_floats(",")
 		if v.size() == 6:
@@ -354,7 +388,7 @@ func _parse_cmdline() -> void:
 	if args.has("statlog"):
 		_stat_log = true
 	if args.has("stinger"):   # a still of the league stinger at progress stinger=<0..1> (layout checks)
-		var st := Stinger.play(self)
+		var st := Stinger.play(self, Callable(), false)
 		st._t = float(args["stinger"]) * Stinger.LEN
 		st.set_process(false)
 		st.ready.connect(func() -> void: st._canvas.queue_redraw())
@@ -537,6 +571,7 @@ func _setup_player(s: Skater, t: int, number: int, left: bool, p := {}) -> void:
 		s.gear_style = SkaterVisual.gear_roll(look.randi())
 		_set_look(s, SkaterVisual.random_look(look, s.body_type, s.skin_tone))
 		s.visor = Skater.visor_for("%s %s %s" % [p.abbr, p.first, p.last])
+		s.headgear = Rosters.signature_gear(p)   # (Dwayne Robertson's cowboy hat)
 	s.puck = puck
 	s.rink = rink
 	add_child(s)
@@ -619,6 +654,37 @@ func human_team() -> int:
 	return t
 
 
+## Switches on this game's store extras (`extras`). Big heads are a setting on every rig,
+## put back when the match leaves the tree.
+func _apply_extras() -> void:
+	SkaterRig.head_scale = BIG_HEAD if "bighead" in extras else 1.0
+	if "bigpuck" in extras:
+		puck.set_look(BIG_PUCK)
+	if "rainbow" in extras:
+		var trail := PuckTrail.new()
+		add_child(trail)
+		trail.setup(puck)
+	if "retro" in extras:
+		# Over the game and its TV graphics (the bug 4, fights 5, Knockout cards 6), under
+		# the stats screens (10), replays' frame (15) and the pause menu (20).
+		var layer := CanvasLayer.new()
+		layer.name = "RetroTV"
+		layer.layer = 9
+		add_child(layer)
+		var screen := ColorRect.new()
+		screen.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		screen.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		var mat := ShaderMaterial.new()
+		mat.shader = RETRO_SHADER
+		screen.material = mat
+		layer.add_child(screen)
+
+
+## A challenge game the humans (the away team) won: the home team is unlocked.
+func challenge_won() -> bool:
+	return challenge >= 0 and team_ids[0] == challenge and human_team() == 1 and score[1] > score[0]
+
+
 func _process(_delta: float) -> void:
 	# The close camera keeps the player you control in frame too.
 	var t := human_team()
@@ -645,8 +711,8 @@ func _physics_process(delta: float) -> void:
 			if _hud and _hud.visible and is_instance_valid(_fight) and _fight.stage != Fight.Stage.LEAD_IN:
 				_hud.visible = false
 		Phase.INTRO:
-			# The intro line ends the matchup screen (a silent booth gets INTRO_MIN).
-			if _phase_time > INTRO_MAX or (_phase_time > INTRO_MIN and not Sfx.announcing()):
+			# (the open closes itself: BroadcastOpen.closing)
+			if _phase_time > INTRO_MAX:
 				_close_intro()
 		Phase.PREGAME:
 			if _phase_time > 1.2 and _opener == null:
@@ -683,14 +749,6 @@ func _physics_process(delta: float) -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
-	if phase == Phase.INTRO and _phase_time > 0.6:
-		var skip: bool = (event is InputEventKey and event.pressed and not event.echo and event.physical_keycode in [KEY_ENTER, KEY_KP_ENTER, KEY_SPACE]) \
-				or (event is InputEventJoypadButton and event.pressed and event.button_index in [JOY_BUTTON_A, JOY_BUTTON_START])
-		if skip:
-			get_viewport().set_input_as_handled()
-			Sfx.stop_voice()
-			_close_intro()
-			return
 	if event is InputEventKey and event.pressed and not event.echo:
 		match event.physical_keycode:
 			KEY_R:
@@ -832,13 +890,14 @@ func _finish(text := "", team := -1) -> void:
 	match_finished.emit(score)
 	_period_highlights()
 	if show_hud and not humans.is_empty():
+		payout = Pucks.bank(Pucks.game_receipt(self))
 		_open_final.call_deferred()
 
 
 ## Esc / Start: the pause menu (not over the matchup intro or a stats screen, which use
 ## those buttons to continue).
 func _open_pause() -> void:
-	if _pause != null or phase == Phase.INTRO or _intermission != null or _stinger != null or _zamboni != null:
+	if _pause != null or phase == Phase.INTRO or _intermission != null or _stinger != null or _zamboni != null 			or _payout_screen != null:
 		return
 	_pause = PauseMenu.new()
 	_pause.camera_host = self
@@ -963,6 +1022,9 @@ func _on_fight_over(winner: Skater, loser: Skater) -> void:
 	_since_fight = 0.0
 	stats.fights += 1
 	if winner:
+		stats.fight_wins[winner.team] += 1
+		if _fight_ko:
+			stats.fight_kos[winner.team] += 1
 		momentum[winner.team] = MOMENTUM_TIME
 		_bench_react(winner.team, "cheer", 0.8)
 		_bench_react(1 - winner.team, "groan", 0.5)
@@ -991,15 +1053,12 @@ func _on_fight_over(winner: Skater, loser: Skater) -> void:
 
 # --- Matchup intro ---------------------------------------------------------------
 
-## The matchup screen: at center ice, each team's logo on a board with one of its
-## players standing in front of it in uniform, while the announcer reads the intro.
-## Everyone else is hidden. Enter / A skips it.
+## The matchup screen is the broadcast open (BroadcastOpen): the league title over the
+## arena, each team's panel with its star, then the lockup, cut to the broadcast theme
+## while the booth reads the intro. Everyone but the two stars is hidden. Accept / Start
+## skips it. Quick presentation plays the lockup alone.
 func _start_intro() -> void:
 	_set_phase(Phase.INTRO)
-	_intro_stage = Node3D.new()
-	_intro_stage.name = "IntroStage"
-	add_child(_intro_stage)
-	_showcase.clear()
 	if referee:
 		referee.frozen = true
 		referee.visual.visible = false
@@ -1011,37 +1070,20 @@ func _start_intro() -> void:
 		if lu.goalie:
 			lu.goalie.frozen = true
 			lu.goalie.visual.visible = false
-		# Home on the left of the screen (camera looks down -Z, so left is -X).
-		var side := -1.0 if t == 0 else 1.0
-		var star: Skater = lu.forwards[0] if not lu.forwards.is_empty() else lu.all_skaters()[0]
-		star.place(Vector3(side * 1.55, 0, 0.6), Vector3.BACK)
-		star.visual.visible = true
-		star.visual.snap()
-		star.visual.play_clip("idle", Vector3.ONE, -1.0, 1.0, 0.05)
-		_showcase.append(star)
-		if Teams.logo(team_ids[t]):
-			var logo := Sprite3D.new()
-			logo.texture = Teams.logo(team_ids[t])
-			logo.pixel_size = 3.0 / float(logo.texture.get_width())   # 3 m wide
-			logo.shaded = false
-			logo.alpha_cut = SpriteBase3D.ALPHA_CUT_DISABLED
-			logo.position = Vector3(side * 1.9, 2.35, -1.6)
-			_intro_stage.add_child(logo)
-	var vs := Label3D.new()
-	vs.text = "VS"
-	vs.font_size = 160
-	vs.pixel_size = 0.006
-	vs.outline_size = 36
-	vs.modulate = Color(1.0, 0.85, 0.2)
-	vs.outline_modulate = Color(0.05, 0.05, 0.08)
-	vs.position = Vector3(0, 2.35, -1.4)
-	_intro_stage.add_child(vs)
-	var c := Camera3D.new()
-	c.fov = 52.0
-	c.physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_OFF
-	_intro_stage.add_child(c)
-	c.look_at_from_position(Vector3(0, 1.75, 6.4), Vector3(0, 1.55, -0.6))
-	c.make_current()
+	_open = BroadcastOpen.new()
+	_open.name = "BroadcastOpen"
+	add_child(_open)
+	_open.setup(self, _quick())
+	if _open_at >= 0.0:
+		_open.freeze_at(_open_at)
+	_showcase.assign(_open.stars)
+	_open.cue.connect(func(what: StringName) -> void: intro_cue.emit(what))
+	_open.closing.connect(_close_intro)
+	_open.skipped.connect(func() -> void:
+		if _stinger == null:
+			Sfx.stop_voice()
+			Sfx.theme_level(-30.0, 0.3)   # (it comes back as the bed, under the stinger)
+			_close_intro())
 	if _hud:
 		_hud.visible = false
 
@@ -1109,6 +1151,8 @@ func _end_intro() -> void:
 		return
 	for s in _showcase:
 		s.visual.stop_clip(0.2)
+		if s.visual.face != null:
+			s.visual.face.look_at_camera = false
 	_showcase.clear()
 	if referee:
 		referee.frozen = false
@@ -1121,10 +1165,11 @@ func _end_intro() -> void:
 		if lu.goalie:
 			lu.goalie.frozen = false
 			lu.goalie.visual.visible = true
-	if _intro_stage:
-		_intro_stage.queue_free()
-		_intro_stage = null
+	if _open:
+		_open.queue_free()
+		_open = null
 	cam.make_current()
+	Sfx.theme_to_bed()   # the theme plays on quietly under the booth's welcome
 	if _hud:
 		_hud.visible = true
 	_set_phase(Phase.PREGAME)
@@ -1142,9 +1187,19 @@ func _open_intermission(final: bool) -> void:
 	add_child(_intermission)
 	_intermission.open(self, final)
 	if final:
+		# (a challenge game goes back to the shop it was started from)
+		var next_scene := "res://scenes/ui/Store.tscn" if challenge >= 0 else "res://scenes/ui/TeamSelect.tscn"
+		var leave := func() -> void:
+			if ResourceLoader.exists(next_scene):
+				get_tree().change_scene_to_file(next_scene)
+		# The pucks the game paid get their own screen before leaving; the stinger covers
+		# the cut out of whichever screen is last.
+		_intermission.cut = payout.is_empty()
 		_intermission.continued.connect(func() -> void:
-			if ResourceLoader.exists("res://scenes/ui/TeamSelect.tscn"):
-				get_tree().change_scene_to_file("res://scenes/ui/TeamSelect.tscn"))
+			if payout.is_empty():
+				leave.call()
+			else:
+				open_payout("Back to the Pro Shop." if challenge >= 0 else "Back to team select.", leave))
 	else:
 		_intermission.continued.connect(func() -> void:
 			_intermission = null
@@ -1152,6 +1207,18 @@ func _open_intermission(final: bool) -> void:
 				if _hud:
 					_hud.visible = true
 				_next_period()))
+
+
+## The payout screen for `payout` (PayoutScreen); `done` runs when the player moves on.
+## `cut`: the league stinger covers the way out.
+func open_payout(hint: String, done: Callable, cut := true) -> void:
+	if _hud:
+		_hud.visible = false
+	_payout_screen = PayoutScreen.new()
+	add_child(_payout_screen)
+	_payout_screen.cut = cut and show_hud
+	_payout_screen.open(payout, hint, not humans.is_empty())
+	_payout_screen.continued.connect(done)
 
 
 # --- The ice ---------------------------------------------------------------------------
@@ -1198,6 +1265,7 @@ func _resurface(done: Callable) -> void:
 	_zamboni.wear = rink.wear
 	rink.add_child(_zamboni)
 	_zamboni.set_trim(MenuStyle.team_color(team_ids[0]))
+	_zamboni.set_logo(Teams.logo(team_ids[0]))
 	var who := _zamboni_driver()
 	_zamboni.set_driver(who)
 	rink.wear.begin_sweep()
@@ -1263,14 +1331,15 @@ func _resurface(done: Callable) -> void:
 
 
 ## The fan contest: `fan` drives (ZamboniGame) with the first player's controls.
-func _fan_contest(fan: Skater, done: Callable) -> void:
+func _fan_contest(fan: Node3D, done: Callable) -> void:
 	var game := ZamboniGame.new()
 	game.name = "FanContest"
 	game.zamboni = _zamboni
 	game.wear = rink.wear
 	game.brain = HumanBrain.from_spec(humans[0], 0) if not humans.is_empty() else null
 	game.autopilot = _zamboni_auto
-	game.fan_name = "%s %s" % [fan.first_name, fan.last_name]
+	var names: Array = fan.get_meta("fan_names", ["A Lucky", "Fan"])
+	game.fan_name = "%s %s" % [names[0], names[1]]
 	game.fan_seat = "SECTION %d, ROW %s" % [_rng.randi_range(101, 228), "ABCDEFGHJKLMNPQRST"[_rng.randi() % 18]]
 	game.team_color = MenuStyle.team_color(team_ids[0])
 	add_child(game)
@@ -1290,15 +1359,21 @@ func _end_resurface(done: Callable) -> void:
 	done.call()
 
 
-## Whoever drives the Zamboni: a fan in the home jersey (a helmet on: house rules), with
-## a name made from the league's rosters.
-func _zamboni_driver() -> Skater:
+## Whoever drives the Zamboni: a fan out of the stands, in a sweatshirt in the home colors
+## with the crest on it (a Fan; without the fan bodies, tools/build_fans.gd, a skater in
+## the home jersey), with a name made from the league's rosters (meta "fan_names").
+func _zamboni_driver() -> Node3D:
+	if Fan.available():
+		var look := Fan.random_look(_rng)
+		var c: Dictionary = Teams.team(team_ids[0]).colors
+		var f := Fan.create(Fan.in_colors(look, c.jersey, c.trim, Teams.logo(team_ids[0])))
+		f.name = "ZamboniDriver"
+		f.set_meta("fan_names", _fan_names(str(look.body_type) == "female"))
+		return f
 	var s: Skater = SKATER_SCENE.instantiate()
 	_setup_player(s, 0, _rng.randi_range(1, 99), true)   # (adds it: the look is built now)
 	s.name = "ZamboniDriver"
-	var names := _fan_names(s.body_type == "female")
-	s.first_name = names[0]
-	s.last_name = names[1]
+	s.set_meta("fan_names", _fan_names(s.body_type == "female"))
 	return s
 
 
@@ -1459,6 +1534,22 @@ func _hud_demo() -> void:
 	await t.create_timer(2.2, true, false, true).timeout
 	_hud.penalty_card(1, lineup(1).all_skaters()[2], "Tripping", "2:00", 3.0)
 	lineup(1).send_to_box(lineup(1).all_skaters()[2])
+
+
+func _payout_demo() -> void:
+	await get_tree().process_frame
+	var t := 1 if challenge >= 0 else 0   # (with `challenge=<team>`: the away side, winning the challenge)
+	score[t] = 5
+	stats.period_goals[t] = [2, 1, 2, 0]
+	stats.big_hits[t] = 13
+	stats.fight_wins[t] = 1
+	stats.fight_kos[t] = 1
+	stats.glass[t] = 1
+	box.add(lineup(t).all_skaters()[0], "g", 3)
+	payout = Pucks.game_receipt(self)
+	payout.before = Profile.pucks()
+	payout.after = Profile.pucks() + int(payout.total)
+	open_payout("Back to team select.", func() -> void: get_tree().quit())
 
 
 func _open_stats_for_shot(final: bool, wait: float) -> void:
@@ -2240,20 +2331,24 @@ func _injure(s: Skater, card_delay := 0.0) -> void:
 ## A big hit into the boards: hard enough (and lucky enough) to put the victim through
 ## the glass? At most GLASS_CHANCE.size() a game.
 func _try_break_glass(attacker: Skater, victim: Skater) -> bool:
-	if phase != Phase.LIVE or knockout or _glass_at != Vector3.INF or _glass_breaks >= GLASS_CHANCE.size():
+	if phase != Phase.LIVE or knockout or _glass_at != Vector3.INF:
 		return false
-	if victim.last_impact < GLASS_IMPACT or _rng.randf() >= GLASS_CHANCE[_glass_breaks]:
+	# (the Breakaway Glass extra: every big hit into the boards, however many)
+	if not ("glass" in extras) and (_glass_breaks >= GLASS_CHANCE.size() or victim.last_impact < GLASS_IMPACT \
+			or _rng.randf() >= GLASS_CHANCE[_glass_breaks]):
 		return false
 	return _break_glass(victim.global_position, attacker.team)
 
 
 ## Shatters the pane nearest `near` (if there's glass there) and blows the whistle a
 ## moment later; the stoppage plays the repair.
-func _break_glass(near: Vector3, _team := -1) -> bool:
+func _break_glass(near: Vector3, team := -1) -> bool:
 	var at := rink.shatter_glass(near)
 	if at == Vector3.INF:
 		return false
 	_glass_breaks += 1
+	if team >= 0:
+		stats.glass[team] += 1
 	_glass_at = at
 	glass_broken.emit(at)
 	get_tree().create_timer(1.1, false).timeout.connect(func() -> void:
@@ -2585,7 +2680,7 @@ func _regroup_cut(d3: Vector3, plan: Array) -> void:
 	cs.shots.append(cut.shot)
 	# Behind one team's defense, whichever way has more room.
 	var og := Vector3.BACK if absf(d3.z + 9.0) < absf(d3.z - 9.0) else Vector3.FORWARD
-	cs.shots.append({"len": 999.0, "fov": 46.0, "frame": func(t: float) -> Array:
+	cs.shots.append({"len": 999.0, "fov": 46.0, "start": _crowd_back, "frame": func(t: float) -> Array:
 		var back := 10.0 - minf(t, 5.0) * 0.35
 		var pos := d3 + og * back + Vector3(1.2, 3.4, 0.0)
 		var c := RinkSpec.clamp_inside(pos.x, pos.z, 0.6)
@@ -2593,10 +2688,17 @@ func _regroup_cut(d3: Vector3, plan: Array) -> void:
 	cs.on_skip = func() -> void:
 		if phase == Phase.STOPPAGE and not _regroup.is_empty():
 			_finish_regroup()
+	cs.finished.connect(func(_skipped: bool) -> void: _crowd_back())
 	_regroup.cut = cs
 	add_child(cs)
 	cs.play()
 	_stoppage_stat(cut.card, cut.tag)
+
+
+## A close-up into the stands is over: the crowd's own fans back in their seats.
+func _crowd_back() -> void:
+	if rink.arena != null:
+		rink.arena.hide_close_fans()
 
 
 ## Dead-time cutaways, so a game's dozens of stoppages don't all look alike. Each is a
@@ -2606,9 +2708,15 @@ func _regroup_cut(d3: Vector3, plan: Array) -> void:
 ##   goalie     in front of the crease nearest the faceoff, on the goalie
 ##   bench      along a bench from the ice: the players sitting, the next line going over
 ##   crowd      up into the stands from the ice, panning along the rows
+##   fans       a long lens on a few rows of fans: real people for the shot (Arena.show_close_fans)
 ##   jumbotron  up at the scoreboard over center ice (the score, the clock)
 func _dead_time_shot(subj: Skater, d3: Vector3, plan: Array) -> Dictionary:
-	var kinds := {"player": 4.0 if subj else 0.0, "goalie": 2.0, "bench": 2.0, "crowd": 1.5, "jumbotron": 1.0}
+	var kinds := {"player": 4.0 if subj else 0.0, "goalie": 2.0, "bench": 2.0, "crowd": 1.0, "fans": 2.0, "jumbotron": 1.0}
+	var fan_seat: Variant = null
+	if rink.arena != null and rink.arena.has_close_fans():
+		fan_seat = rink.arena.close_up_seat(RinkSpec.BOX_SIDE if randf() < 0.5 else RinkSpec.BENCH_SIDE, randf_range(-14.0, 14.0))
+	if fan_seat == null:
+		kinds.fans = 0.0
 	if rink.arena == null or (not rink.arena.has_node("Scoreboard") and rink.arena.board_at == Vector3.INF):
 		kinds.jumbotron = 0.0   # (an arena without a scoreboard)
 	var g: Goalie = null
@@ -2634,6 +2742,8 @@ func _dead_time_shot(subj: Skater, d3: Vector3, plan: Array) -> Dictionary:
 		kind = _cut_force
 		if (kind == "player" and subj == null) or (kind == "goalie" and g == null):
 			kind = "bench"
+		if kind == "fans" and fan_seat == null:
+			kind = "crowd"
 	_cutaways.append(kind)
 	if _cutaways.size() > 2:
 		_cutaways.pop_front()
@@ -2672,6 +2782,18 @@ func _dead_time_shot(subj: Skater, d3: Vector3, plan: Array) -> Dictionary:
 				# From the ice past one end of the bench, looking down the row; a slow slide.
 				var pos := a - along * 2.2 + inward * (2.6 + t * 0.15) + Vector3.UP * 1.25
 				return [pos, a.lerp(b, 0.55) + Vector3.UP * 1.0]}}
+		"fans":
+			# From over the ice, level with a few rows of the lower stands.
+			var seat: Transform3D = fan_seat
+			var toward := seat.basis.z.normalized()
+			var row := toward.cross(Vector3.UP)
+			var heads := seat.origin + Vector3.UP * 1.1
+			var lens := heads + toward * 12.0 + Vector3.UP * 2.2
+			var drift := 1.0 if randf() < 0.5 else -1.0
+			return {"card": null, "tag": "", "shot": {"len": 2.6, "fov": 8.0,
+				"start": func() -> void: rink.arena.show_close_fans(lens, heads),
+				"frame": func(t: float) -> Array:
+					return [lens + row * drift * (t * 0.25 - 0.3), heads + row * drift * (t * 0.35 - 0.45)]}}
 		"crowd":
 			var sx := RinkSpec.BOX_SIDE if randf() < 0.5 else RinkSpec.BENCH_SIDE
 			var z0 := randf_range(-12.0, 12.0)
@@ -3230,3 +3352,4 @@ func _slowmo(real_seconds: float) -> void:
 
 func _exit_tree() -> void:
 	Engine.time_scale = 1.0
+	SkaterRig.head_scale = 1.0

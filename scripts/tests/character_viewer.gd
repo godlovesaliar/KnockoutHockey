@@ -7,6 +7,18 @@ extends Node3D
 ## Looks: `seed=<n>` reshuffles hair; `hair=<style>` / `facial=<beard|moustache|>` force one;
 ## Faces: `expr=` `talk=1` `lookcam=1` `lids=<0..1>` `eyes=<html>` (see FaceRig).
 ## Size: `sizes=<in>x<lb>,...` per skater (BodyBuild); `lineup=1 view=lineup` stands all six in a row.
+## Body comparisons: `bodies=male,female` gives the skaters those bodies in turn, `same=1` dresses
+## and styles every skater like the first, `bare=1` leaves only skin, face and hair;
+## `lineup=1 view=pair|pair_back|pair_quarter|pair_side` frames the first two (`gap=<m>` apart,
+## `span=<m>` and `look_y=<m>` to close in), both from the same side.
+## The Old-Time Set: `old=1` puts all of it on everyone; or one piece at a time, `gloves=old`
+## `skates=old` `pads=old` (the goalie) `stick=oldtime` `headgear=none`; `kit=old` dresses them as
+## a team in the old-time kit does. `tape=<white|black|team|none>`.
+## Legs: `socks=taped|old` `pants=old|long` (each player's own), `sockpat=<Teams.SOCK_PATTERNS name>`
+## and `teampants=long` (the team's); `stripes=<n>` and `alt=1` change the design's sock stripes.
+## Cosmetics: `crest=spines` `eyefx=red` `dangler=fangs` (each on its own).
+## Helmets: `style=<0|1|2>` (2: the '80s bucket); `face=cage|shield` in place of the visor;
+## `tint=smoke|amber|mirror|gold` on the visor or the shield.
 ## `nohelmet=1` takes helmets off (hair fit checks); `helmetoff=<s>` plays skater 4 taking it off; `pose=<id>` menu display poses; `gripdbg=1` draws the stick grip axes.
 
 const SKATER_SCENE := preload("res://scenes/actors/Skater.tscn")
@@ -51,7 +63,9 @@ func _ready() -> void:
 		func(_s: Skater, i: SkaterIntent, t: float) -> void:
 			i.move = Vector3(sin(t * 1.3) * 0.4, 0, -0.3) if t > 0.3 else Vector3.ZERO,
 	]
-	for k in plans.size():
+	var bodies := _arg("bodies", "").split(",", false)
+	for i in plans.size():
+		var k := 0 if _arg("same", "") != "" else i   # (`same=1`: everyone dressed and styled like the first)
 		var s: Skater = SKATER_SCENE.instantiate()
 		s.team = k % 2
 		s.number = [19, 4, 88, 27, 11, 91][k]
@@ -65,6 +79,8 @@ func _ready() -> void:
 		s.rink = rink
 		s.fatigue_enabled = false
 		s.body_type = _arg("body", ["male", "female"][k % 2])
+		if not bodies.is_empty():
+			s.body_type = bodies[i % bodies.size()]
 		# `sizes=<in>x<lb>,...`: each skater's height (inches) and weight (BodyBuild).
 		var sizes := _arg("sizes", "").split(",", false)
 		if k < sizes.size() and "x" in sizes[k]:
@@ -73,6 +89,7 @@ func _ready() -> void:
 		s.skin_tone = SkaterVisual.SKIN_TONES[k % SkaterVisual.SKIN_TONES.size()]
 		s.gear_style = int(_arg("style", str(k / 2)))
 		s.visor = _arg("visor", str(k % 2 if k < 4 else 1)) != "0"   # `visor=0|1`; default: a mix
+		_old_time(s)
 		var rng := RandomNumberGenerator.new()
 		rng.seed = int(_arg("seed", "3")) * 31 + k
 		var look := SkaterVisual.random_look(rng, s.body_type, s.skin_tone)
@@ -83,8 +100,8 @@ func _ready() -> void:
 		add_child(s)
 		# `lineup=1`: all six standing side by side, doing nothing (size comparisons).
 		var lineup := _arg("lineup", "") != ""
-		s.brain = ScriptBrain.new(plans[0] if lineup else plans[k])
-		s.place(Vector3(-2.75 + k * 1.1, 0, 2.0) if lineup else Vector3(-5.0 + k * 2.0, 0, 2.0), Vector3.BACK)
+		s.brain = ScriptBrain.new(plans[0] if lineup else plans[i])
+		s.place(Vector3(-2.75 + i * float(_arg("gap", "1.1")), 0, 2.0) if lineup else Vector3(-5.0 + i * 2.0, 0, 2.0), Vector3.BACK)
 		skaters.append(s)
 	for s in skaters:
 		s.teammates = skaters
@@ -97,6 +114,7 @@ func _ready() -> void:
 	goalie.stats = PlayerStats.new()
 	goalie.body_type = _arg("body", "female")
 	goalie.gear_style = int(_arg("style", "0"))
+	_old_time(goalie)
 	GoalieVisual.paint_override = _arg("paint", "")   # `paint=<design>|plain`: the goalie's mask paint
 	goalie.skin_tone = SkaterVisual.SKIN_TONES[int(_arg("gskin", "1")) % SkaterVisual.SKIN_TONES.size()]
 	var grng := RandomNumberGenerator.new()
@@ -140,6 +158,19 @@ func _set_view(v: String) -> void:
 			cam.look_at_from_position(Vector3(0, 1.25, 8.2), Vector3(0, 1.0, 2.0))
 		"top":
 			cam.look_at_from_position(Vector3(0, 18, 12), Vector3(0, 0, 2.0))
+		"pair", "pair_back", "pair_quarter", "pair_side":
+			# The first two of a lineup, whole bodies (`look_y=<m>`), through a flat camera
+			# (`span=<m>` tall): both are seen from the same side, where a camera standing
+			# between them sees one from its left and the other from its right.
+			cam.projection = Camera3D.PROJECTION_ORTHOGONAL
+			cam.size = float(_arg("span", "2.2"))
+			var at := Vector3(-2.75 + float(_arg("gap", "1.1")) * 0.5, float(_arg("look_y", "0.98")), 2.0)
+			var dir := Vector3.BACK
+			match v:
+				"pair_back": dir = Vector3.FORWARD
+				"pair_quarter": dir = Vector3(0.6, 0, 1).normalized()
+				"pair_side": dir = Vector3(1, 0, 0.12).normalized()
+			cam.look_at_from_position(at + dir * 6.0, at)
 		_:
 			cam.look_at_from_position(Vector3(0, 1.7, 10.5), Vector3(0, 0.9, 2.0))
 
@@ -170,6 +201,23 @@ func _process(_delta: float) -> void:
 		for s in skaters + [goalie]:
 			for c in s.visual.find_children("HairCap", "", true, false):
 				(c as Node3D).visible = false
+	if _arg("bare", "") != "":   # `bare=1`: the bodies alone (skin, face, hair): no uniform, gear or stick
+		for s in skaters:
+			for n: Node in s.visual.find_children("*", "VisualInstance3D", true, false):
+				var mat: ShaderMaterial = null
+				if n is MeshInstance3D:
+					mat = (n as MeshInstance3D).material_override as ShaderMaterial
+				var skin := mat != null and mat.shader != null and mat.shader.resource_path.ends_with("/skin.gdshader")
+				var face := s.visual.face != null and s.visual.face.is_ancestor_of(n)
+				(n as VisualInstance3D).visible = skin or face or n.name == "Eyes" or n.name.begins_with("Hair")
+				# (the skin shader leaves out what the uniform covers: here nothing is worn)
+				if skin and not n.has_meta("bared"):
+					var m := mat.duplicate() as ShaderMaterial
+					m.set_shader_parameter("wear", Vector4.ZERO)
+					m.set_shader_parameter("wear_skates", 0.0)
+					(n as MeshInstance3D).material_override = m
+					(n as MeshInstance3D).set_instance_shader_parameter("gloves_worn", 0.0)
+					n.set_meta("bared", true)
 	if _arg("nohelmet", "") != "":
 		for s in skaters:
 			if s.visual.helmet_on():
@@ -183,8 +231,10 @@ func _process(_delta: float) -> void:
 	# (the stance leans the head forward, so body-relative views look up at the face).
 	if _arg("view", "").begins_with("face"):
 		var helm: Node3D = s.visual.find_child("Helmet", true, false)
+		if helm == null:   # bare-headed: the hair sits on the crown, about 0.14 above where a helmet's middle would
+			helm = s.visual.find_child("Hair_*", true, false)
 		var hb := helm.global_transform.basis.orthonormalized()
-		var mid := helm.global_position - hb.y * float(_arg("face_drop", "0.04"))
+		var mid := helm.global_position - hb.y * float(_arg("face_drop", "0.04" if helm.name == "Helmet" else "0.18"))
 		var dir := hb.z
 		match _arg("view", ""):
 			"face_side": dir = hb.x
@@ -202,6 +252,26 @@ func _process(_delta: float) -> void:
 		var dir := (s.heading.rotated(Vector3.UP, around) + Vector3(0, 0.45, 0)).normalized()
 		cam.fov = 30.0
 		cam.look_at_from_position(at + dir * float(_arg("dist", "0.5")), at)
+		return
+	# `view=skate|skate_r` (`skate_side=<rad>` turns around it, `skate_up=<k>` raises the
+	# camera): close-up of a skate.
+	if _arg("view", "").begins_with("skate"):
+		var sks: Skeleton3D = s.visual.skel
+		var fb := sks.find_bone(("Right" if _arg("view", "") == "skate_r" else "Left") + "Foot")
+		var at := sks.global_transform * sks.get_bone_global_pose(fb).origin + Vector3(0, 0.03, 0)
+		var dir := (s.heading.rotated(Vector3.UP, float(_arg("skate_side", "1.2"))) + Vector3(0, float(_arg("skate_up", "0.25")), 0)).normalized()
+		cam.fov = 30.0
+		cam.look_at_from_position(at + dir * float(_arg("dist", "1.0")), at)
+		return
+	# `view=stick|stick_top` (`stick_side=<rad>` turns around it): close-up of the stick's
+	# blade, or of its butt end.
+	if _arg("view", "").begins_with("stick"):
+		var st: MeshInstance3D = s.visual.shaft
+		var end := Vector3(0, float(st.mesh.get_meta("shaft", 1.5)) - 0.05, 0) if _arg("view", "") == "stick_top" else Vector3(st.mesh.get_meta("blade", Vector3.ZERO)) * 0.5
+		var at := st.global_transform * end
+		var dir := (s.heading.rotated(Vector3.UP, float(_arg("stick_side", "0.9"))) + Vector3(0, 0.5, 0)).normalized()
+		cam.fov = 30.0
+		cam.look_at_from_position(at + dir * float(_arg("dist", "0.9")), at)
 		return
 	var off := Vector3(3.6, 1.2, 0.0)
 	match _arg("view", "side"):
@@ -327,6 +397,41 @@ func _pose_dump(v: SkaterVisual, path: String) -> void:
 			"y": fd.call(gt.basis.y.normalized()), "z": fd.call(gt.basis.z.normalized())}
 	var data := {"bones": bones, "gloves": gloves, "stick_top": f.call(v.rig.stick_top_world),
 		"blade": f.call(v.rig.blade_world), "height": float(v.body.get_meta("height", 1.8))}
+	# `skindump=1`: the skin's vertices too, as posed (for comparing two bodies' shapes), and
+	# the jersey's ("jersey" / "jersey_tris": the modelled jersey the skater is wearing).
+	if _arg("skindump", "") != "":
+		for mi: MeshInstance3D in v.skel.find_children("*", "MeshInstance3D", false, false):
+			var key := "skin"
+			if mi.name in ["Outfit_Jersey", "Outfit_GoalieJersey"] and mi.visible:
+				key = "jersey"
+			elif mi.name == "Eyes" or mi.name.begins_with("Outfit_"):
+				continue
+			if mi.skin == null or data.has(key):
+				continue
+			var arr := mi.mesh.surface_get_arrays(0)
+			var vs: PackedVector3Array = arr[Mesh.ARRAY_VERTEX]
+			if vs.size() < 5000:
+				continue
+			var bi: PackedInt32Array = arr[Mesh.ARRAY_BONES]
+			var bw: PackedFloat32Array = arr[Mesh.ARRAY_WEIGHTS]
+			var per := bi.size() / vs.size()
+			var mats: Array[Transform3D] = []
+			for k in mi.skin.get_bind_count():
+				var b := mi.skin.get_bind_bone(k)
+				if mi.skin.get_bind_name(k) != &"":
+					b = v.skel.find_bone(mi.skin.get_bind_name(k))
+				mats.append(v.skel.get_bone_global_pose(b) * mi.skin.get_bind_pose(k))
+			var pts := PackedFloat32Array()
+			for i in vs.size():
+				var p := Vector3.ZERO
+				for k in per:
+					var w := bw[i * per + k]
+					if w > 0.0:
+						p += (mats[bi[i * per + k]] * vs[i]) * w
+				var q: Array = f.call(sk * p)
+				pts.append_array(PackedFloat32Array([q[0], q[1], q[2]]))
+			data[key] = Array(pts)
+			data["tris" if key == "skin" else key + "_tris"] = Array(arr[Mesh.ARRAY_INDEX])
 	var file := FileAccess.open(path, FileAccess.WRITE)
 	file.store_string(JSON.stringify(data, "  "))
 
@@ -380,6 +485,13 @@ func _run() -> void:
 			fc.look_at_camera = true
 		if _arg("lids", "") != "":
 			fc.lid_override = float(_arg("lids", "0"))
+	if _arg("view", "").begins_with("pair"):   # (only the two being compared in the picture,
+		for k in range(2, skaters.size()):     # on a plain backdrop: a flat camera draws the far crowd full size)
+			skaters[k].visible = false
+		rink.visible = false
+		goalie.visible = false
+		puck.visible = false
+		(get_viewport().get_camera_3d().get_parent().find_children("*", "WorldEnvironment", false, false)[0] as WorldEnvironment).environment.background_color = Color(0.3, 0.33, 0.38)
 	if _arg("pose", "") != "":   # `pose=side|middle|hips|across`: menu display poses
 		for sk in skaters:
 			sk.visual.display_pose = _arg("pose", "")
@@ -403,6 +515,37 @@ func _run() -> void:
 
 
 ## Team uniform and crest (Teams.LIST index), as MatchDirector dresses players.
+## The Old-Time Set's arguments (see the top), onto one skater.
+func _old_time(s: Skater) -> void:
+	var all := "old" if _arg("old", "") != "" else ""
+	s.glove_style = _arg("gloves", all)
+	s.skate_style = _arg("skates", all)
+	s.pad_style = _arg("pads", all)
+	s.headgear = _arg("headgear", SkaterVisual.NO_HELMET if all != "" else "")
+	s.stick_style = _arg("stick", SkaterVisual.STICK_OLD if all != "" else s.stick_style)
+	s.stick_tape = _arg("tape", "black" if all != "" else s.stick_tape)
+	s.face_gear = _arg("face", "")
+	s.visor_tint = _arg("tint", "")
+	s.helmet_crest = _arg("crest", "")
+	s.eye_fx = _arg("eyefx", "")
+	s.dangler = _arg("dangler", "")
+	if _arg("kit", "") != "":
+		s.uniform["kit"] = _arg("kit", "")
+	s.sock_style = _arg("socks", "")
+	s.pants_style = _arg("pants", "")
+	if _arg("sockpat", "") != "":
+		s.uniform["socks"] = _arg("sockpat", "")
+	if _arg("teampants", "") != "":
+		s.uniform["pants_style"] = _arg("teampants", "")
+	if _arg("stripes", "") != "" or _arg("alt", "") != "":
+		var d: Dictionary = Teams.DESIGNS.get(s.uniform.get("design", "classic"), {}).duplicate()
+		if _arg("stripes", "") != "":
+			d["sock_stripes"] = int(_arg("stripes", "1"))
+		if _arg("alt", "") != "":
+			d["alternate"] = true
+		s.uniform["design_params"] = d
+
+
 func _dress(s: Skater, team: int) -> void:
 	var info := Teams.team(team)
 	s.uniform = Teams.uniform_vs(team, team, false)

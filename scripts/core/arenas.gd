@@ -8,6 +8,8 @@ class_name Arenas
 ## Teams play at home in their home arena (`user://arena_homes.json`: abbr -> arena id;
 ## Modern Arena when unset). Outdoor arenas can only be a created team's home. A game's
 ## arena is the rules screen's ARENA pick, or the home team's (for_game).
+## The Community and Outdoor rinks are bought in the store: until then their built-in
+## arenas aren't offered (pickable) and Create Arena can't build in those styles.
 
 const SAVE_PATH := "user://arenas.json"
 const HOMES_PATH := "user://arena_homes.json"
@@ -92,6 +94,14 @@ static func all() -> Array:
 	return built_in() + _list
 
 
+## The arenas a game or a team may be given: every one but the built-in rinks still
+## locked in the store (Store.rink_open). `keep`: an arena id that stays on the list
+## anyway (what's already picked).
+static func pickable(keep := "") -> Array:
+	return all().filter(func(a: Dictionary) -> bool:
+		return not a.get("built_in", false) or Store.rink_open(str(a.style)) or str(a.id) == keep)
+
+
 static func created() -> Array:
 	_load()
 	return _list
@@ -116,11 +126,17 @@ static func style_name(style: String) -> String:
 ## The team's home arena.
 static func home_of(team: int) -> Dictionary:
 	_load()
-	var id := str(_homes.get(str(Teams.team(team).abbr), ""))
+	var id := str(_homes.get(str(Teams.team(team).abbr), default_home(team)))
 	var a: Dictionary = find(id) if id != "" else built_in()[0]
 	if not can_be_home(a, team):
 		return built_in()[0]
 	return a
+
+
+## The arena a team plays in until one is picked for it: the Modern Arena, or the team's
+## own `home` (the classic teams: the Retro Dome).
+static func default_home(team: int) -> String:
+	return str(Teams.base_team(team).get("home", "modern"))
 
 
 static func home_id(team: int) -> String:
@@ -135,7 +151,7 @@ static func can_be_home(a: Dictionary, team: int) -> bool:
 static func set_home(team: int, id: String) -> void:
 	_load()
 	var abbr := str(Teams.team(team).abbr)
-	if id == "" or id == "modern":
+	if id == "" or id == default_home(team):
 		_homes.erase(abbr)
 	else:
 		_homes[abbr] = id

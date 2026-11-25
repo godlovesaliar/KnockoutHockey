@@ -121,11 +121,8 @@ static func _player(rng: RandomNumberGenerator, pos: String, n: int, names: Dict
 	if rng.randf() < 0.05:
 		p.hair_color = CustomPlayers.HAIR_COLOR_NAMES.size() - 1   # gray
 	p.eyes = rng.randi() % 2 if dark else rng.randi() % CustomPlayers.EYE_NAMES.size()
-	var hair := ["messy", "buzz", "shaggy", "mop", "quiff"]
-	if female:
-		hair.append_array(["braid", "braid", "shaggy"])
-	p.hair_style = hair[rng.randi() % hair.size()]
-	p.facial_hair = "" if female or rng.randf() < 0.55 else CustomPlayers.FACIAL_HAIR[1 + rng.randi() % 3]
+	p.hair_style = SkaterVisual.pick_hair(rng.randi(), "female" if female else "male", dark)
+	p.facial_hair = "" if female or rng.randf() < 0.55 else CustomPlayers.FACIAL_HAIR[1 + rng.randi() % (CustomPlayers.FACIAL_HAIR.size() - 1)]
 	p.helmet = rng.randi() % 2
 	p.visor = rng.randf() < 0.75
 	p.stick = SkaterVisual.STICK_STYLES[rng.randi() % SkaterVisual.STICK_STYLES.size()]

@@ -17,8 +17,11 @@ var options := default_options()
 ## Who plays: [{kind: "any"|"kb1"|"kb2"|"pad", pad: int, team: 0|1}]
 var humans: Array = [{"kind": "any", "pad": 0, "team": 0}]
 
-## What the setup screens lead to: "exhibition" (a game) or "knockout" (Knockout Mode). Not saved.
+## What the setup screens lead to: "exhibition" (a game), "knockout" (Knockout Mode) or
+## "challenge" (a game against the locked team `challenge`, started from the shop). Not saved.
 var mode := "exhibition"
+## Challenge games: the Teams index of the locked team to beat (the home team). Not saved.
+var challenge := -1
 
 ## The main menu item to land on when coming back to it (-1: the first). Not saved.
 var menu_select := -1

@@ -3,6 +3,8 @@
 # goalie_stick) turns them into assets/characters/stick.res and goalie_stick.res.
 #
 # Run in Blender:  exec(open(r"<project>/tools/blender/stick_gear.py").read()); build_all(True)
+# The Old-Time Set's wooden stick (OLD) alone: build_old_stick(True) -> stick_old.glb
+# (build_gear.gd only=old).
 #
 # Real senior dimensions (the game body is 1.8 m, so no scaling):
 #   skater  heel to butt 1.50 m; shaft 28 x 19 mm; blade ~32 cm long, 5.5 cm tall at the
@@ -50,6 +52,12 @@ GOALIE = dict(shaft=1.55, sw=0.029, st=0.022, lie=120.0, heel_r=0.13, blade=0.40
               bh=(0.09, 0.09), bt=(0.013, 0.009), toe_r=0.028, toe_low=0.2, rocker=(0.06, 6.0),
               hook=0.008, hosel=(0.0, 0.016),
               paddle=dict(w=0.085, top=0.70, shoulder=0.045, t=(0.016, 0.019)))
+# The old-time wooden stick (the Old-Time Set): a thicker, squarer ash shaft that barely
+# thins into the blade, a tight heel, and a short, tall, dead straight blade with a blunt
+# toe. Exported as stick_old.glb (the skater stick's nodes).
+OLD = dict(shaft=1.50, sw=0.030, st=0.021, lie=135.0, heel_r=0.07, blade=0.31,
+           bh=(0.062, 0.067), bt=(0.012, 0.009), toe_r=0.034, toe_low=0.45, rocker=(0.05, 5.0),
+           hook=0.0, hosel=(0.16, 0.017))
 
 
 def g(x, y, z):
@@ -300,8 +308,9 @@ def body_rings(spec, segs, grow=0.0, s_from=None):
     return rings, s_blade, d
 
 
-def build_stick(offset=Vector()):
-    s = SKATER
+def build_stick(offset=Vector(), s=SKATER, knob=(0.11, 0.0012, 0.003)):
+    """The skater stick from spec `s`. knob: (length taped down from the butt end, the
+    tape's thickness, how much more the knob swells)."""
     segs = 24
 
     def shaft(bm):
@@ -316,7 +325,7 @@ def build_stick(offset=Vector()):
         rings, _, _ = body_rings(s, segs, 0.0007, s_blade - 0.01)
         loft(bm, rings)
         hook(bm, s, d, 0.06)
-        wrap(bm, s, s["shaft"] - 0.11, s["shaft"] + 0.002, 0.0012, 0.003)
+        wrap(bm, s, s["shaft"] - knob[0], s["shaft"] + 0.002, knob[1], knob[2])
     tp = make_object("tape", tape, offset)
     sh.data.materials.append(material("StickShaft", (0.05, 0.05, 0.06, 1), 0.5))
     tp.data.materials.append(material("StickTape", (0.92, 0.92, 0.9, 1), 0.8))
@@ -360,7 +369,7 @@ def export(objs, filename):
         o.select_set(True)
     bpy.context.view_layer.objects.active = objs[0]
     path_ = os.path.join(OUT, filename)
-    bpy.ops.export_scene.gltf(filepath=path_, export_format="GLB", use_selection=True,
+    bpy.ops.export_scene.gltf(filepath=path_, export_format="GLB", use_selection=True, use_active_scene=True,
                               export_yup=True, export_apply=True, export_normals=True,
                               export_texcoords=False, export_materials="NONE")
     for o, k in zip(objs, keep):
@@ -372,7 +381,7 @@ def export(objs, filename):
 def build_all(do_export=False):
     # Both sticks have a "tape" node, so the skater stick is exported under its glTF
     # names first and then renamed out of the goalie stick's way.
-    for name in ("skater_shaft", "skater_tape"):
+    for name in ("skater_shaft", "skater_tape", "goalie_body", "goalie_grip", "goalie_tape"):
         if bpy.data.objects.get(name) is not None:
             bpy.data.meshes.remove(bpy.data.objects[name].data)
     stick = build_stick()
@@ -384,6 +393,25 @@ def build_all(do_export=False):
     goalie = build_goalie_stick(Vector((0.5, 0, 0)))
     if do_export:
         export(goalie, "goalie_stick.glb")
-    print("blade metas: skater %s  goalie %s" % (tuple(round(v, 4) for v in blade_vector(SKATER)),
-                                                   tuple(round(v, 4) for v in blade_vector(GOALIE))))
-    return stick, goalie
+    for o in goalie:
+        o.name = "goalie_" + o.name
+        o.data.name = o.name
+    old = build_old_stick(do_export)
+    print("blade metas: skater %s  goalie %s  old %s" % (tuple(round(v, 4) for v in blade_vector(SKATER)),
+                                                          tuple(round(v, 4) for v in blade_vector(GOALIE)),
+                                                          tuple(round(v, 4) for v in blade_vector(OLD))))
+    return stick, goalie, old
+
+
+def build_old_stick(do_export=False, offset=Vector((1.0, 0, 0))):
+    """The old-time wooden stick alone (OLD): a short taped grip under a fat wound knob."""
+    for name in ("old_shaft", "old_tape"):
+        if bpy.data.objects.get(name) is not None:
+            bpy.data.meshes.remove(bpy.data.objects[name].data)
+    old = build_stick(offset, OLD, (0.06, 0.0014, 0.0065))
+    if do_export:
+        export(old, "stick_old.glb")
+    for o in old:
+        o.name = "old_" + o.name
+        o.data.name = o.name
+    return old

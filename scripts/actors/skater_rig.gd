@@ -84,6 +84,13 @@ var bottom_back_up := 0.8
 var bottom_back_ahead := -1.02
 var top_rock := 0.05            ## m the top hand rocks fore-aft and side to side with the stride
 var free_arm := 0.0             ## 0..1: the bottom hand lets go of the stick and swings with the stride
+## Body checks. The top hand's spot moved by `top_shift` (skeleton space: the stick pulled
+## in tight). The freed bottom hand held at `free_at` (from its own shoulder, skeleton
+## space) with the elbow toward `free_pole`, by `free_hold` 0..1, instead of swinging.
+var top_shift := Vector3.ZERO
+var free_hold := 0.0
+var free_at := Vector3.ZERO
+var free_pole := Vector3(0, -1, 0)
 ## Fights: 0..1 curls the fingers into fists (the clips carry no finger tracks).
 var fist := 0.0
 ## Folds the body's own fingers and thumb away (scaled to nothing at their roots) when
@@ -116,6 +123,10 @@ var right_hand_world := Vector3.ZERO
 var grip_debug: Array = [[], []]
 
 var ankle_height := 0.105         ## from the body's rest pose
+
+## Big Head Mode (a store extra; MatchDirector sets it for a game and puts it back):
+## every rig's head bone is drawn this many times its size, with everything worn on it.
+static var head_scale := 1.0
 
 var _ok := false
 var _b := {}            ## bone name -> index
@@ -234,6 +245,8 @@ func _process_modification_with_delta(_delta: float) -> void:
 			return
 	var to_skel := sk.global_transform.affine_inverse()
 	_breath_t += _delta
+	if head_scale != 1.0 and _b.has("Head"):
+		sk.set_bone_pose_scale(_b["Head"], Vector3.ONE * head_scale)
 
 	# --- Pelvis -------------------------------------------------------------------
 	var hi: int = _b["Hips"]
@@ -347,7 +360,7 @@ func _process_modification_with_delta(_delta: float) -> void:
 			var reach: float = (_len[side + "Upper"] + _len[side + "Fore"]) * top_reach
 			var rock := Vector3(sin(stride_phase), 0.0, cos(stride_phase)) * top_rock * stride_amt
 			var dir := Vector3(stick_side * (top_out - _top_lift * top_lift_across), -top_drop + _top_lift * top_lift_up, top_ahead - _top_lift * 0.1).normalized()
-			target = shoulder + dir * reach + rock
+			target = shoulder + dir * reach + rock + top_shift
 		if arm_mode == Arms.STICK and k == 1:
 			# Bottom hand slides down the shaft from wherever the top hand gripped it (its
 			# own grip, not its wrist, lands on the shaft)...
@@ -363,8 +376,12 @@ func _process_modification_with_delta(_delta: float) -> void:
 				var fz := -cos(stride_phase + (0.0 if s == 0 else PI))
 				var a := clampf(stride_amt, 0.4, 1.0)
 				var swing := shoulder + Vector3(sx * (0.14 - 0.16 * maxf(fz, 0.0) * a), -0.5 + 0.14 * maxf(fz, 0.0) * a, 0.1 + 0.36 * fz * a)
+				var swing_pole := Vector3(sx * 0.4, -0.2, -1.0)
+				if free_hold > 0.0:
+					swing = swing.lerp(shoulder + free_at, free_hold)
+					swing_pole = swing_pole.lerp(free_pole, free_hold)
 				target = target.lerp(swing, free_arm)
-				pole = pole.lerp(Vector3(sx * 0.4, -0.2, -1.0), free_arm)
+				pole = pole.lerp(swing_pole, free_arm)
 		var r := _two_bone(shoulder, target, pole, _len[side + "Upper"], _len[side + "Fore"])
 		var elbow: Vector3 = r[0]
 		var hand: Vector3 = r[1]

@@ -4,8 +4,14 @@
 # Run in Blender:  exec(open(r"<project>/tools/blender/mask_gear.py").read()); build_all(True)
 # Needs both heads in the scene: dump them with
 #   godot --headless --path . -s res://tools/dump_heads.gd -- out=<dir>
-# and import <dir>/head_male.obj, then <dir>/head_female.obj (forward -Z, up Y), so the
-# objects named in HEADS exist.
+# import <dir>/head_male.obj and <dir>/head_female.obj (forward -Z, up Y), and name each
+# one's skin and eyes objects as HEADS says ("head_male", "eyes_male", ...; the helmets that
+# come with them can go).
+# build_body(<body>, True) builds one more body's set beside those (its hoods, and its own
+# vintage mask as vintage_mask_<body>), for a body given its own entry in HEADS: the fit
+# the game uses (by eyes-to-crown height) can make the male's masks the wrong size on
+# another head. The male head has to be in the scene too: every hood starts from the male
+# one.
 #
 #   lucha_a  luchador hood: a stretch-fabric hood over the whole head, eye and mouth holes
 #   lucha_b  the same, open below the nose (mouth and chin bare)
@@ -39,15 +45,25 @@ OUT = os.path.join(PROJECT, "assets", "equip")
 TEX_OUT = os.path.join(PROJECT, "assets", "characters", "masks")
 COLLECTION = "MaskGear"
 
-HEAD_CENTER = (0.0, 1.6953, 0.0003)
-# The dumped heads (tools/dump_heads.gd; the female one imported after the male, so its eyes
-# object got the ".001"), and each body's head box (skeleton space, from the dump's
-# printout) for fitting them as the game does.
+HEAD_CENTER = (0.0, 1.7025, 0.0746)   # where the finished masks stand in the scene: on the male head
+# The dumped heads (tools/dump_heads.gd, imported and named as above), and each body's head
+# box (skeleton space, from the dump's printout) for fitting them as the game does.
+# The frame's numbers (CROWN, HEAD_W, MASK_EYE) were measured on the downloaded male body
+# the game began with. Our own male's eyes sit 6 mm nearer the crown, so the game's fit (by
+# eyes-to-crown height) scales his masks to 95% in height and depth: they are modelled
+# through that fit here (body_fit), and come out that much larger in the frame.
+# "v_clear": more room under the vintage shell (m: everywhere, and more again at the top
+# of the forehead). Set while the hair was still the meshes shaped on the first male's
+# head: the game sets hair by the head box, not the eyes, and against the eyes our male's
+# forehead lies 3 to 5 mm further back, so the fringe came through a shell laid 9 mm off
+# the skin. The hair has since been rebuilt on his own head (hair_gear.py); the mask was
+# checked with this room and it has not been tried without.
 HEADS = {
-    "male": {"obj": "male_muscle_13290Mesh_s0", "eyes": "Eyes_s0",
-             "box": ((-0.096931, 1.550604, -0.119257), (0.193861, 0.289396, 0.239142))},
-    "female": {"obj": "female_genericMesh_s0", "eyes": "Eyes_s0.001",
-               "box": ((-0.093388, 1.494648, -0.121553), (0.186776, 0.255352, 0.23085))},
+    "male": {"obj": "head_male", "eyes": "eyes_male",
+             "box": ((-0.095738, 1.553988, -0.049997), (0.191476, 0.286012, 0.237688)),
+             "v_clear": (0.003, 0.003)},
+    "female": {"obj": "head_female", "eyes": "eyes_female",
+               "box": ((-0.092633, 1.49781, -0.054504), (0.185266, 0.25219, 0.228945))},
 }
 # SkaterVisual's fitting constants: HELMET_CROWN, HELMET_HEAD_W, MASK_EYE.
 CROWN = 0.1447
@@ -804,11 +820,13 @@ def v_field():
     xs = np.linspace(-0.09, 0.09, 91)
     ys = np.linspace(-0.13, 0.135, 133)
     C = np.full((len(ys), len(xs)), -1.0)
+    more, more_top = HEADS[BODY].get("v_clear", (0.0, 0.0))
     for j, y in enumerate(ys):
+        clear = V_CLEAR + more + more_top * smooth(0.03, 0.11, y)
         for i, x in enumerate(xs):
             hit, _ = first_hit(Vector((x, y, 0.4)), Vector((0, 0, -1)))
             if hit is not None and hit.z > 0.0:
-                C[j, i] = hit.z + V_CLEAR
+                C[j, i] = hit.z + clear
     F = np.where(C > 0, C, np.nan)
     F = np.where(np.isnan(F), np.nanmax(C) * 0.5, F)
 
@@ -1017,8 +1035,19 @@ def v_straps(name, offset):
     return obj
 
 
-def build_vintage(offset):
-    shell = v_shell("vintage_shell", offset)
+def build_vintage(offset, body="male"):
+    global BODY, _vfield
+    BODY = body
+    _vfield = None
+    try:
+        return _build_vintage(offset, "" if body == "male" else "_" + body)
+    finally:
+        BODY = "male"
+        _vfield = None
+
+
+def _build_vintage(offset, tag):
+    shell = v_shell("vintage_shell" + tag, offset)
     cutters = [prism_cutter("cut_veye_l", v_eye(1), "z", 0.0, 0.25),
                prism_cutter("cut_veye_r", v_eye(-1), "z", 0.0, 0.25)]
     holes = bmesh.new()
@@ -1043,8 +1072,8 @@ def build_vintage(offset):
     apply_all(shell)
     for p in shell.data.polygons:
         p.use_smooth = True
-    marks = v_marks("vintage_marks", offset)
-    straps = v_straps("vintage_straps", offset)
+    marks = v_marks("vintage_marks" + tag, offset)
+    straps = v_straps("vintage_straps" + tag, offset)
     shell.data.materials.append(material("VintageShell", (0.9, 0.88, 0.8), 0.35))
     marks.data.materials.append(material("VintageMarks", (0.7, 0.1, 0.08), 0.4))
     straps.data.materials.append(material("VintageStraps", (0.06, 0.06, 0.06), 0.6))
@@ -1070,7 +1099,7 @@ def export(parts, roles, filename, uvs=False):
         o.select_set(True)
     bpy.context.view_layer.objects.active = objs[0]
     path = os.path.join(OUT, filename)
-    bpy.ops.export_scene.gltf(filepath=path, export_format="GLB", use_selection=True,
+    bpy.ops.export_scene.gltf(filepath=path, export_format="GLB", use_selection=True, use_active_scene=True,
                               export_yup=True, export_apply=True, export_normals=True,
                               export_texcoords=uvs, export_materials="NONE")
     for o, name, loc in keep:
@@ -1101,4 +1130,25 @@ def build_all(do_export=False):
     out["vintage"] = build_vintage(g(*HEAD_CENTER))
     if do_export:
         export(out["vintage"], ["shell", "marks", "straps"], "vintage_mask.glb")
+    return out
+
+
+def build_body(body, do_export=False, row=2):
+    """One more body's masks, beside what build_all made (which it leaves alone): its three
+    hoods and its vintage mask."""
+    tag = "_" + body
+    for o in list(bpy.data.objects):
+        if o.name.startswith("cut_") or (o.name.startswith(("lucha_", "vintage_")) and (tag + "_" in o.name or o.name.endswith(tag))):
+            bpy.data.objects.remove(o, do_unlink=True)
+    _grids.pop(body, None)
+    _heads.pop(body, None)
+    out = {}
+    for k, kind in enumerate("abc"):
+        key = kind + tag
+        out[key] = build_lucha(kind, g(*HEAD_CENTER) + g(0.3 * (k + 1), 0.0, -0.4 * row), body)
+        if do_export:
+            export(out[key], ["hood", "extras"], "lucha_%s.glb" % key, uvs=True)
+    out["vintage"] = build_vintage(g(*HEAD_CENTER) + g(0.0, 0.0, -0.4 * row), body)
+    if do_export:
+        export(out["vintage"], ["shell", "marks", "straps"], "vintage_mask%s.glb" % tag)
     return out

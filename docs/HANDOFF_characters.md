@@ -88,7 +88,7 @@ The procedural glove reads as a hockey glove, but it's crude. The user wants one
 - The `GLOVES` path *curls the fingers* of a flat-fingered glove, so a glove modeled already gripping should skip that. Add a "prebent" path that only moves, scales and orients the model, or set `curl` to ~0.
 - Or simpler: write `glove.res` straight from Blender's export, using a small import function in build_gear.
 - Set `GLOVE` to the new key, then run `godot --headless --path . -s res://tools/build_gear.gd -- only=glove`.
-- Better still: in Blender, import our male body (`assets/player/male_character_base_-_rigged.glb`, or the built `assets/characters/body_male.scn`) and model the glove around its right hand, so the cuff and wrist fit for real.
+- Better still: in Blender, import our male body (`assets/player/mpfb_male.glb`, or the built `assets/characters/body_male.scn`) and model the glove around its right hand, so the cuff and wrist fit for real.
 
 **What's in `GLOVES` now:**
 - `srg`: the armored moto scan, at `assets/equip/srg_glove.glb`. It's welded and simplified to 9k triangles, with the thumb folded in. It came out jagged with holes and isn't used.
@@ -121,12 +121,8 @@ The procedural glove reads as a hockey glove, but it's crude. The user wants one
 - `scripts/ui/menu_arena.gd`: the menu players get the same seeded looks.
 
 **`tools/build_hair.gd` (new)**
-- Takes the PUBG file (`assets/player/hair_and_beard__pubg_mobile_3d_model.glb`):
-  - Five hair pieces: rip_7 messy, rip_8 buzz, rip_9 shaggy, rip_10 mop, rip_11 quiff.
-  - Each is fitted to its display head (rip_2..6), which sits `HAIR_DROP` 0.5 m above it.
-  - The beard is rip_1.
-  - Faces look +X in the source.
-- Also takes `mostache.glb` and `ported_hair.glb`. The braid's head is a placeholder sphere.
+- Since 2026-11-19 it takes `assets/equip/hair.glb`, the project's own hair, built in Blender by `tools/blender/hair_gear.py`.
+- The downloaded sources it first used (`hair_and_beard__pubg_mobile_3d_model.glb` and its pictures, `mostache.glb`, `ported_hair.glb` in `assets/player/`) were deleted on 2026-11-21. They are still in git history, last in commit 8df5e56.
 - Output goes to `assets/characters/hair/<id>.res` and `.png`, in head space: the top of the head at the origin, +Z toward the face, one unit = one head width.
 - `_tuck()` pulls hair above the helmet rim inside a shell ellipsoid (`SHELL_C` / `SHELL_R` / `RIM`). Hair that hangs below the head is pushed back (`NAPE_PUSH`) and shortened (`HANG_SQUASH`).
 

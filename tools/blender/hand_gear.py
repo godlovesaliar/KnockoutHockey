@@ -4,6 +4,8 @@
 #
 # Run it in Blender's Python console or text editor:
 #   exec(open(r"<project>/tools/blender/hand_gear.py").read())
+# then build_all(True); or build_old(True) for the Old-Time Set's leather gauntlet alone
+# (hockey_glove_old.glb and hockey_glove_cuff_old.glb; build_gear.gd only=old).
 #
 # Both models are right hands, sized for a 1.8 m body, in game coordinates (glTF +Y up):
 # the wrist at the origin, fingers up +Y and curled toward the palm (-Z), the back of
@@ -178,9 +180,17 @@ def material(name, color):
 # --- The glove ---------------------------------------------------------------------
 #
 # Built like the jersey (build_jersey.py): overlapping volumes fused into one skin by a
-# voxel remesh and smoothed, so it reads as one padded glove rather than parts; then the
-# construction is carved back in as stitched grooves (backhand pad seams, the breaks
-# between finger rolls, the thumb joint, the cuff's panels) and the result decimated.
+# voxel remesh and smoothed, then the construction carved back in as stitched lines and
+# the result decimated.
+#
+# Second version. The first was assembled from many small pillows (five on the back of
+# the hand, a knuckle roll, four separate finger tubes each cut into three links by deep
+# grooves) under a white ring of a cuff, and it read as that: small parts joined
+# together. This one is laid out the way a glove is sewn: three broad rolls right across
+# the back of the hand, split only by stitching; the four fingers one padded block
+# (webbing between them, shallow lines where they flex); a fat thumb growing out of the
+# side of the hand; and a wide flared cuff in the glove's own color that swallows the
+# end of the sleeve, the hand turning inside it on a rounded wrist.
 
 # Fingers: index (thumb side, -X) to pinky, wrapped over and around the stick.
 # [x, roll radius around the stick, width, depth, start height]
@@ -198,9 +208,12 @@ def _smoothstep(e0, e1, x):
     return t * t * (3 - 2 * t)
 
 
-def add_sweep(bm, pts, radii, segs=20, across=Vector((1, 0, 0))):
+def add_sweep(bm, pts, radii, segs=20, across=Vector((1, 0, 0)), sq=2.0):
     """A closed tube along points `pts` (Blender), cross-section ellipses (half width,
-    half depth) from `radii`, its width kept on `across`; round end caps."""
+    half depth) from `radii`, its width kept on `across`; round end caps. `sq` above 2
+    squares the section off (a superellipse: flatter faces, fuller corners)."""
+    def se(v):
+        return math.copysign(abs(v) ** (2.0 / sq), v)
     tmp = bmesh.new()
     loops = []
     n = len(pts)
@@ -209,7 +222,7 @@ def add_sweep(bm, pts, radii, segs=20, across=Vector((1, 0, 0))):
         x = (across - t * across.dot(t)).normalized()
         y = t.cross(x)
         rx, ry = radii[i]
-        loops.append([tmp.verts.new(p + (x * math.cos(math.tau * k / segs) * rx + y * math.sin(math.tau * k / segs) * ry))
+        loops.append([tmp.verts.new(p + (x * se(math.cos(math.tau * k / segs)) * rx + y * se(math.sin(math.tau * k / segs)) * ry))
                       for k in range(segs)])
     for i in range(n - 1):
         for k in range(segs):
@@ -239,16 +252,16 @@ def _ellipsoid(bm, center, frame_cols, radii, squareness=1.0):
 PAD = 0.45   # squareness of the padded pillows
 
 
-def _tube(bm, pts, radii, across=Vector((1, 0, 0)), segs=20):
+def _tube(bm, pts, radii, across=Vector((1, 0, 0)), segs=20, sq=2.0):
     """Swept tube with ellipsoid end caps (Blender coords)."""
-    add_sweep(bm, pts, radii, segs=segs, across=across)
+    add_sweep(bm, pts, radii, segs=segs, across=across, sq=sq)
     n = len(pts)
     for i, d in ((0, -1.0), (n - 1, 1.0)):
         t = (pts[min(i + 1, n - 1)] - pts[max(i - 1, 0)]).normalized() * d
         x = (across - t * across.dot(t)).normalized()
         y = t.cross(x)
         rx, ry = radii[i]
-        _ellipsoid(bm, pts[i], (x, y, t), (rx, ry, min(rx, ry) * 0.9))
+        _ellipsoid(bm, pts[i], (x, y, t), (rx, ry, min(rx, ry) * 0.9), 2.0 / sq)
 
 
 def _finger_path(x, r, y0, steps=18):
@@ -301,6 +314,7 @@ def _decimate(obj, tris):
     dec = obj.modifiers.new("Decimate", "DECIMATE")
     dec.ratio = min(1.0, tris / max(1, faces))
     _apply_all(obj)
+    obj.data.validate()          # (decimating can leave a degenerate face the exporter warns about)
     obj.data.shade_smooth()
 
 
@@ -383,38 +397,67 @@ def _groove(dist, width, depth):
     return depth * math.exp(-(dist / width) ** 2 * 2.5)
 
 
-def build_glove_cuff(voxel=0.0016, tris=3200):
+CUFF_LEN = 0.086     # the cuff: from the wrist this far down the forearm
+CUFF_Z = 0.875       # the cuff's oval: its depth against its width at the wrist...
+CUFF_Z_OPEN = 0.95   # ...and at its open end, rounder: the sleeve going into it is round
+CUFF_RIM = -(CUFF_LEN - 0.012)    # the bound rim at its open end starts here (trim color)
+
+
+GAUNTLET_LEN = 0.15  # the old-time gauntlet's cuff: this far down the forearm
+GAUNTLET_RIBS = 16   # padded ribs round it (they fade out on the palm side)
+
+
+def build_glove_cuff(voxel=0.0016, tris=3200, old=False):
     """The cuff, a separate piece: the game hangs it on the forearm so it stays on the
-    arm while the hand part turns at the wrist. One profile spun around the wrist (an
-    oval): inner wall, a padded roll tucked up under the glove at the top, the outer wall
-    with a raised strap band, a rolled rim flaring at the open end."""
+    arm while the hand part turns at the wrist. One profile spun around the wrist (a
+    squared-off oval): a thin inner wall, a roll at the top tucked up under the glove's
+    first backhand roll, and an outer wall of two padded rolls flaring out to a wide
+    bound opening, wide enough to take the end of the sleeve. The padding is on the back
+    and sides; the palm side is thin.
+    old: the Old-Time Set's gauntlet, a long stiff leather cone nearly twice as far up
+    the forearm, flaring wider, with padded ribs running its length in place of the two
+    rolls."""
     cz = -0.002
-    # profile (radius scale, game y): goes up the inside, over the top, down the outside
-    prof = []
-    for k in range(6):                        # inner wall, bottom to top
-        t = k / 5.0
-        prof.append((0.050 - 0.004 * (1 - t), -0.074 + t * 0.074))
+    length = GAUNTLET_LEN if old else CUFF_LEN
+    wall = length - 0.006
+    rim_y = -(length - 0.012)                 # the bound rim at the open end starts here
+    r_open, r_out, flare, fexp, rim_c = (0.076, 0.057, 0.027, 1.2, 0.0802) if old else (0.0665, 0.058, 0.016, 1.5, 0.0703)
+    prof = []                                 # (radius, game y, padding swell)
+    for k in range(7):                        # inner wall, open end to top
+        t = k / 6.0
+        prof.append((r_open - (r_open - 0.049) * t, -length + 0.004 + t * (length - 0.004), 0.0))
     for k in range(1, 8):                     # top roll, tucked up under the glove
         a = math.pi * k / 8.0
-        prof.append((0.05375 - 0.00375 * math.cos(a), 0.009 * math.sin(a)))
-    for k in range(17):                       # outer wall, top to bottom
-        t = k / 16.0
-        y = 0.0 - t * 0.072
-        f = t ** 2                            # flare toward the open end
-        r = 0.0575 + 0.009 * f
-        band = math.exp(-((y + 0.036) / 0.011) ** 4) * 0.0035   # raised strap band
-        prof.append((r + band, y))
-    for k in range(1, 8):                     # rolled rim at the open end, back inside
+        prof.append((0.0535 - 0.0045 * math.cos(a), 0.008 * math.sin(a), 0.0))
+    for k in range(25):                       # outer wall, top to the open end: two rolls
+        t = k / 24.0
+        if old:                               # (ribs: the same swell all the way down)
+            swell = 0.0046 * _smoothstep(0.07, 0.17, t) * (1.0 - _smoothstep(0.86, 0.95, t))
+        else:
+            swell = 0.0034 * math.sin(math.pi * ((t * 2.0) % 1.0)) ** 0.7 if t < 1.0 else 0.0
+        prof.append((r_out + flare * t ** fexp, -t * wall, swell))
+    for k in range(1, 8):                     # bound rim at the open end, back inside
         a = math.pi * k / 8.0
-        prof.append((0.05625 + 0.01025 * math.cos(a), -0.073 - 0.007 * math.sin(a)))
+        prof.append((rim_c + 0.0052 * math.cos(a), -wall - 0.001 - 0.005 * math.sin(a), 0.0))
+
+    def se(v):
+        return math.copysign(abs(v) ** (2.0 / 2.5), v)
+
+    def rib(a):
+        """How far a rib stands at angle `a` round the cuff (0 in the valley between two)."""
+        return (0.5 + 0.5 * math.cos(GAUNTLET_RIBS * (a - math.pi / 2))) ** 0.7
+
     bm = bmesh.new()
-    segs = 48
+    segs = 128 if old else 64
     rows = []
-    for r, y in prof:
+    for r, y, swell in prof:
         row = []
+        zs = CUFF_Z + (CUFF_Z_OPEN - CUFF_Z) * max(0.0, min(1.0, -y / wall))
         for s in range(segs):
             a = math.tau * s / segs
-            row.append(bm.verts.new(g(math.cos(a) * r, y, cz + math.sin(a) * r * 0.875)))
+            back = _smoothstep(-0.35, 0.25, math.sin(a))
+            rr = r + swell * ((0.12 + 0.88 * back) * rib(a) if old else 0.3 + 0.7 * back)
+            row.append(bm.verts.new(g(se(math.cos(a)) * rr, y, cz + se(math.sin(a)) * rr * zs)))
         rows.append(row)
     for i in range(len(rows)):
         a, b = rows[i], rows[(i + 1) % len(rows)]
@@ -422,29 +465,34 @@ def build_glove_cuff(voxel=0.0016, tris=3200):
             s2 = (s + 1) % segs
             bm.faces.new((a[s], a[s2], b[s2], b[s]))
     bmesh.ops.recalc_face_normals(bm, faces=list(bm.faces))
-    obj = make_object("GloveCuff", bm)
-    _fuse(obj, voxel, 6, 0.5)
+    obj = make_object("GloveCuffOld" if old else "GloveCuff", bm)
+    _fuse(obj, voxel, 3 if old else 5, 0.5)
 
     def cuff_grooves(p, n):
         out = n.dot(Vector((p.x, 0, p.z - cz)).normalized()) > 0.3
         if not out:
             return 0.0
         d = 0.0
-        # stitching along both edges of the strap band and above the rim roll
-        for y in (-0.0255, -0.0465, -0.066):
-            d += _groove(abs(p.y - y), 0.0012, 0.0008)
-        # a few vertical panel seams below the band (sides and back only)
-        ang = math.atan2(p.z - cz, p.x)
-        for a in (0.0, math.pi, math.pi * 0.5, -math.pi * 0.5):
-            da = abs((ang - a + math.pi) % math.tau - math.pi) * 0.058
-            if -0.064 < p.y < -0.047:
-                d += _groove(da, 0.0012, 0.0007)
+        d += _groove(abs(p.y - rim_y), 0.0012, 0.0015)                # the binding's edge
+        if old:
+            # a stitched line round the wrist where the ribs begin, and one down each
+            # valley between two ribs (the angle is the profile's, as the ribs were laid out)
+            d += _groove(abs(p.y + wall * 0.1), 0.0013, 0.0012)
+            if rim_y + 0.006 < p.y < -wall * 0.1:
+                a = math.atan2(math.copysign(abs((p.z - cz) / CUFF_Z) ** 1.25, p.z - cz), math.copysign(abs(p.x) ** 1.25, p.x))
+                d += 0.0009 * (1.0 - rib(a)) ** 3 * _smoothstep(-0.45, 0.1, math.sin(a))
+            return d
+        d += _groove(abs(p.y + wall * 0.5), 0.0013, 0.001)            # between the two rolls
+        # the panels: a broad pad across the back, a wing down each side, the thin palm side
+        ang = math.atan2((p.z - cz) / CUFF_Z, p.x)                    # 90 degrees = the back
+        if CUFF_RIM + 0.002 < p.y < -0.003:
+            for a in (38.0, 142.0, -52.0, -128.0):
+                da = abs((ang - math.radians(a) + math.pi) % math.tau - math.pi) * 0.063
+                d += _groove(da, 0.0014, 0.0016)
         return d
+
     def cuff_trim(p, n):
-        # the strap band and the rolled rim at the open end, in the trim color
-        band = _smoothstep(-0.0475, -0.0455, p.y) * (1.0 - _smoothstep(-0.0265, -0.0245, p.y))
-        rim = 1.0 - _smoothstep(-0.0675, -0.0655, p.y)
-        return max(band, rim)
+        return 1.0 - _smoothstep(rim_y - 0.001, rim_y + 0.001, p.y)   # the bound rim
 
     _carve(obj, cuff_grooves)
     _decimate(obj, tris)
@@ -453,70 +501,97 @@ def build_glove_cuff(voxel=0.0016, tris=3200):
     return obj
 
 
-def build_glove(voxel=0.0013, tris=6000):
-    """The hand part of the glove (the cuff is build_glove_cuff)."""
+# The back of the hand: three rolls right across it (center height, half width, how far
+# they stand out), and the stitched splits in each (the knuckle roll's line up with the
+# gaps between the fingers).
+BACK_ROLLS = ((0.019, 0.054, 0.0205), (0.05, 0.0555, 0.0215), (0.081, 0.0555, 0.022))
+ROLL_EDGES = (0.0345, 0.0655)
+ROLL_SEAMS = ((0.0,), (-0.018, 0.018), (-0.0252, 0.0, 0.025))
+# The old-time gauntlet's: four narrow sausage rolls, each one piece from side to side.
+OLD_ROLLS = ((0.013, 0.052, 0.0195), (0.035, 0.054, 0.0205), (0.058, 0.055, 0.021), (0.0815, 0.0555, 0.0215))
+OLD_ROLL_EDGES = (0.024, 0.0465, 0.07)
+
+
+def build_glove(voxel=0.0013, tris=6000, old=False):
+    """The hand part of the glove (the cuff is build_glove_cuff).
+    old: the Old-Time Set's leather gauntlet: four narrow rolls across the back of the
+    hand, and four separate, rounder fingers of three fat links each (no webbing)."""
+    rolls, edges, seams = (OLD_ROLLS, OLD_ROLL_EDGES, ((),) * 4) if old else (BACK_ROLLS, ROLL_EDGES, ROLL_SEAMS)
     bm = bmesh.new()
     X = Vector((1, 0, 0))
     G = (Vector((1, 0, 0)), Vector((0, 0, 1)), Vector((0, -1, 0)))   # game x, y, z in Blender
-    # Hand core (palm and backhand).
-    add_box(bm, g(0, 0.048, -0.004), (0.1, 0.06, 0.092), 0.026)
-    # Backhand pads: puffy pillows that fuse with soft valleys between them; a split lower
-    # row and three across the middle.
-    for xc in (-0.0255, 0.0255):
-        _ellipsoid(bm, g(xc, 0.026, 0.02), G, (0.0265, 0.0185, 0.017), PAD)
-    for xc in (-0.0338, 0.0, 0.0338):
-        _ellipsoid(bm, g(xc, 0.0595, 0.021), G, (0.0178, 0.0165, 0.017), PAD)
-    # Knuckle roll: a fat roll across the top of the hand.
-    _tube(bm, [_gv(Vector((xx, 0.088, 0.017))) for xx in (-0.05, -0.025, 0.0, 0.025, 0.05)],
-          [(0.0175, 0.016)] * 5, across=g(0, -0.2, 1.0) - g(0, 0, 0))
+    # Hand core (palm and backhand), and a rounded wrist under it: the hand turns on it
+    # inside the cuff, so a cocked wrist shows more glove, not a gap.
+    add_box(bm, g(0, 0.048, -0.004), (0.104, 0.06, 0.094), 0.026)
+    _ellipsoid(bm, g(0, 0.003, -0.003), G, (0.048, 0.027, 0.041))
+    # Backhand: three broad padded rolls from side to side, fusing with shallow valleys.
+    for y, rx, rz in rolls:
+        _ellipsoid(bm, g(0.001, y, 0.0165), G, (rx, 0.0138 if old else 0.0175, rz), 0.5 if old else 0.42)
     # Side padding down the pinky side, and the thumb-side lock pad.
-    _ellipsoid(bm, g(0.05, 0.05, -0.006), G, (0.011, 0.044, 0.04), PAD)
-    _ellipsoid(bm, g(-0.051, 0.032, -0.004), G, (0.0105, 0.028, 0.028), PAD)
-    # Fingers: one continuous padded roll each, touching their neighbors.
+    _ellipsoid(bm, g(0.0505, 0.05, -0.008), G, (0.0115, 0.045, 0.038), PAD)
+    _ellipsoid(bm, g(-0.051, 0.03, -0.006), G, (0.011, 0.03, 0.03), PAD)
+    # Fingers: a padded roll each, squared off so their backs are flat and they sit
+    # shoulder to shoulder...
+    paths = []
     for x, r, w, d, y0 in FINGERS:
         pts = _finger_path(x, r, y0)
         n = len(pts)
-        radii = [((w * 0.5 + 0.0012) * (1 - 0.06 * k / n), (d * 0.5) * (1 - 0.1 * k / n)) for k in range(n)]
-        _tube(bm, [_gv(p) for p in pts], radii, across=X)
-    # Thumb: up the side and around the front of the shaft.
+        half_w = w * 0.5 - 0.0022 if old else w * 0.5 + 0.0012
+        radii = [(half_w * (1 - 0.05 * k / n), (d * 0.5) * (1 - 0.08 * k / n)) for k in range(n)]
+        _tube(bm, [_gv(p) for p in pts], radii, across=X, sq=2.3 if old else 3.0)
+        paths.append((pts, d))
+    # ...with webbing between neighbors nearly up to their backs, so the four read as one
+    # block with lines in it, not four tubes. It stops short of the tips, which part.
+    for (pa, da), (pb, db) in (() if old else zip(paths, paths[1:])):
+        n = len(pa) - 3
+        pts = [(pa[k] + pb[k]) * 0.5 for k in range(n)]
+        add_sweep(bm, [_gv(p) for p in pts], [(0.009, min(da, db) * 0.5 - 0.0026)] * n, across=X)
+    # Thumb: fat, growing out of the side of the hand, up the side and around the front of
+    # the shaft.
     tp = [Vector(p) for p in THUMB]
-    pts = [tp[0].lerp(tp[1], k / 6.0) for k in range(6)] + [tp[1].lerp(tp[2], k / 6.0) for k in range(7)]
-    _tube(bm, [_gv(p) for p in pts], [(0.0195 - 0.003 * k / 12, 0.019 - 0.003 * k / 12) for k in range(13)],
-          across=g(0, 0, 1) - g(0, 0, 0))
-    obj = make_object("Glove", bm)
-    _fuse(obj, voxel, 10, 0.6)
+    ctl = tp[1] * 2.0 - (tp[0] + tp[2]) * 0.5       # (the curve passes through the middle point)
+    pts = [tp[0] * (1 - t) ** 2 + ctl * 2 * t * (1 - t) + tp[2] * t ** 2 for t in (k / 14.0 for k in range(15))]
+    _tube(bm, [_gv(p) for p in pts], [(0.021 - 0.0035 * k / 14, 0.0205 - 0.0035 * k / 14) for k in range(15)],
+          across=g(0, 0, 1) - g(0, 0, 0), sq=2.4)
+    _ellipsoid(bm, g(-0.047, 0.03, -0.02), G, (0.017, 0.032, 0.03))
+    obj = make_object("GloveOld" if old else "Glove", bm)
+    _fuse(obj, voxel, 9, 0.6)
 
     sy, sz = GRIP_UP, -GRIP_IN
+    gaps = [(a[0] + b[0]) * 0.5 for a, b in zip(FINGERS, FINGERS[1:])]
 
     def glove_grooves(p, n):
         d = 0.0
-        on_back = n.z > 0.35 and p.y < 0.08
-        if on_back:
-            # stitching along the valleys between the backhand pillows
-            if p.y < 0.043:
-                d += _groove(abs(p.x), 0.0012, 0.0008)
-            elif p.y < 0.075:
-                for xc in (-0.0168, 0.0168):
-                    d += _groove(abs(p.x - xc), 0.0012, 0.0008)
-            d += _groove(abs(p.y - 0.043), 0.0012, 0.0008)
-            d += _groove(abs(p.y - 0.0755), 0.0014, 0.001)     # under the knuckle roll
-        # finger rolls: rings where one roll ends and the next begins, and the knuckle line
+        if n.z > 0.35 and p.y < 0.097:
+            # stitching along the valleys between the rolls, and the splits in each roll
+            for y in edges:
+                d += _groove(abs(p.y - y), 0.0012, 0.0009)
+            row = sum(p.y >= e for e in edges)
+            for xc in seams[row]:
+                d += _groove(abs(p.x - xc), 0.0011, 0.0008)
+        # fingers: the lines where they flex, the knuckle line, and a stitched line down
+        # the webbing between each pair
         if p.y > 0.085 or p.z < -0.02:
+            th = math.degrees(math.atan2(p.y - sy, p.z - sz)) % 360.0     # 0 = back, 90 = up
+            arc_r = math.hypot(p.y - sy, p.z - sz)
             fx = min(FINGERS, key=lambda f: abs(f[0] - p.x))
             if abs(p.x - fx[0]) < fx[2] * 0.62:
-                th = math.degrees(math.atan2(p.y - sy, p.z - sz))     # 0 = back, 90 = up
-                th = th % 360.0
-                arc_r = math.hypot(p.y - sy, p.z - sz)
                 for b in FINGER_BREAKS:
-                    d += _groove(abs(th - b) * math.pi / 180 * arc_r, 0.0018, 0.0022)
+                    d += _groove(abs(th - b) * math.pi / 180 * arc_r, 0.0014, 0.002 if old else 0.0012)
                 if n.z > 0.2:
-                    d += _groove(abs(p.y - (fx[4] + 0.004)), 0.0018, 0.0016)
+                    d += _groove(abs(p.y - (fx[4] + 0.004)), 0.0016, 0.0012)
+            if arc_r > 0.04 and th < FINGER_ARC[1] - 22.0 and not old:
+                for xm in gaps:
+                    d += _groove(abs(p.x - xm), 0.001, 0.0008)
+        # the wall down the pinky side: one stitched line along it
+        if n.x > 0.6 and 0.012 < p.y < 0.09:
+            d += _groove(abs(p.z + 0.008), 0.0012, 0.0008)
         # thumb joint
         t1 = Vector(THUMB[1])
         q = p - t1
         tdir = (Vector(THUMB[2]) - Vector(THUMB[0])).normalized()
-        if abs(q.dot(tdir)) < 0.003 and (q - tdir * q.dot(tdir)).length < 0.022:
-            d += _groove(abs(q.dot(tdir)), 0.0016, 0.0016)
+        if abs(q.dot(tdir)) < 0.003 and (q - tdir * q.dot(tdir)).length < 0.024:
+            d += _groove(abs(q.dot(tdir)), 0.0015, 0.0013)
         return d
     _carve(obj, glove_grooves)
     _decimate(obj, tris)
@@ -613,6 +688,20 @@ def export(obj, filename):
     bpy.ops.export_scene.gltf(**kw)
     tris = sum(len(p.vertices) - 2 for p in obj.data.polygons)
     print("exported %s: %d tris, size %s" % (path, tris, tuple(round(v, 3) for v in obj.dimensions)))
+
+
+def build_old(do_export=False):
+    """The Old-Time Set's leather gauntlet: hockey_glove_old.glb (the hand) and
+    hockey_glove_cuff_old.glb (its long ribbed cuff); tools/build_gear.gd (only=glove)
+    makes glove_old.res and glove_cuff_old.res from them."""
+    glove = build_glove(old=True)
+    cuff = build_glove_cuff(old=True, tris=4200)
+    if do_export:
+        export(glove, "hockey_glove_old.glb")
+        export(cuff, "hockey_glove_cuff_old.glb")
+    for o in (glove, cuff):
+        o.location = Vector((-0.25, 0, 0))
+    return glove, cuff
 
 
 def build_all(do_export=False):

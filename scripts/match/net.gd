@@ -1,12 +1,19 @@
 @tool
 class_name Net
 extends Node3D
-## Gray-box goal: posts, crossbar, netting, colliders and goal-line detection.
+## The goal: the model (pipes, padding, netting), its colliders and goal-line detection.
 ## Local frame: the goal line runs along local X at z = 0; the mouth faces +Z; the net extends to -Z.
+##
+## The model is the project's own (tools/blender/net.py builds assets/net/net.glb). The
+## colliders are built here from RinkSpec's numbers, which the model follows: the posts and
+## crossbar ("post" surface) and the netting ("net": the top, and the wall from the top shelf
+## down to the base, round the back corners).
 
 signal goal_scored(net: Net)
 
 const NETTING_SHADER_PATH := "res://scenes/match/netting.gdshader"
+const MODEL_PATH := "res://assets/net/net.glb"
+const PAD_COLOR := Color(0.9, 0.9, 0.9)   ## the bumper round the base, the top shelf's padding, the lacing
 
 @export var index := 0   ## 0 = the +Z net, 1 = the -Z net
 @export var frame_color := Color(0.82, 0.06, 0.06)
@@ -18,6 +25,7 @@ var _armed := true
 
 func _ready() -> void:
 	process_physics_priority = 20 # after the puck has moved this tick
+	_build_model()
 	_build_frame()
 	_build_netting()
 
@@ -128,12 +136,40 @@ static func _seg_hits_box(a: Vector2, b: Vector2, lo: Vector2, hi: Vector2) -> b
 	return true
 
 
+## The model, with the game's materials put on by name: the pipes in frame_color, the
+## padding white, the netting drawn by its shader (its UVs are in meters along the threads).
+func _build_model() -> void:
+	var ps := load(MODEL_PATH) as PackedScene
+	if ps == null:
+		push_warning("Net: %s is missing (tools/blender/net.py builds it)" % MODEL_PATH)
+		return
+	var model := ps.instantiate() as Node3D
+	model.name = "Model"
+	add_child(model)
+	var netting := ShaderMaterial.new()
+	netting.shader = load(NETTING_SHADER_PATH)
+	var mats := {
+		"NetFrame": MeshUtil.material(frame_color, 0.35, 0.3),
+		"NetPad": MeshUtil.material(PAD_COLOR, 0.85),
+		"NetMesh": netting,
+	}
+	for n in model.find_children("*", "MeshInstance3D", true, false):
+		var mi := n as MeshInstance3D
+		for s in mi.mesh.get_surface_count():
+			var src := mi.mesh.surface_get_material(s)
+			if src and mats.has(src.resource_name):
+				mi.set_surface_override_material(s, mats[src.resource_name])
+		if mi.name == "net_mesh":
+			mi.name = "Netting"
+			mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+
+
+## The posts' and the crossbar's colliders.
 func _build_frame() -> void:
 	var w := RinkSpec.NET_WIDTH
 	var h := RinkSpec.NET_HEIGHT
 	var r := RinkSpec.POST_RADIUS
 	var post_x := w * 0.5 + r
-	var mat := MeshUtil.material(frame_color, 0.35, 0.3)
 
 	var body := StaticBody3D.new()
 	body.name = "Frame"
@@ -150,7 +186,6 @@ func _build_frame() -> void:
 		cs.shape = shape
 		cs.position = Vector3(sx * post_x, (h + r) * 0.5, 0.0)
 		body.add_child(cs)
-		_add_cylinder_visual(r, h + r, cs.transform, mat)
 
 	var bar := CylinderShape3D.new()
 	bar.radius = r
@@ -159,66 +194,32 @@ func _build_frame() -> void:
 	bar_cs.shape = bar
 	bar_cs.transform = Transform3D(Basis(Vector3.BACK, PI * 0.5), Vector3(0.0, h + r, 0.0))
 	body.add_child(bar_cs)
-	_add_cylinder_visual(r, w + 4.0 * r, bar_cs.transform, mat)
-
-	# Base frame tube along the ice at the back (visual only).
-	var base_t := Transform3D(Basis(Vector3.BACK, PI * 0.5), Vector3(0.0, r, -RinkSpec.NET_DEPTH))
-	_add_cylinder_visual(r * 0.8, w + 2.0 * r, base_t, mat)
 
 
-func _add_cylinder_visual(radius: float, height: float, xform: Transform3D, mat: Material) -> void:
-	var mesh := CylinderMesh.new()
-	mesh.top_radius = radius
-	mesh.bottom_radius = radius
-	mesh.height = height
-	mesh.radial_segments = 12
-	mesh.rings = 1
-	var mi := MeshInstance3D.new()
-	mi.mesh = mesh
-	mi.material_override = mat
-	mi.transform = xform
-	add_child(mi)
+## The netting's line at the top shelf or at the base, seen from above: from the -X post
+## back along the side, round the corner (in `steps`), along the back and forward to the +X
+## post. Points are (x, how far behind the goal line).
+static func outline(depth: float, corner: float, steps := 3) -> PackedVector2Array:
+	var hx := RinkSpec.NET_WIDTH * 0.5 + RinkSpec.POST_RADIUS
+	var half := PackedVector2Array([Vector2(-hx, 0.0)])
+	for i in steps + 1:
+		var a := PI * 0.5 * i / steps
+		half.append(Vector2(-hx + corner * (1.0 - cos(a)), depth - corner * (1.0 - sin(a))))
+	var out := half.duplicate()
+	for i in range(half.size() - 1, -1, -1):
+		out.append(Vector2(-half[i].x, half[i].y))
+	return out
 
 
+## The netting's colliders: a soft "net" surface that kills the puck's speed. The wall is a
+## slab per stretch of the outline, from the top shelf's line down to the base's (and on
+## under the ice), so it turns the back corners as the model does.
 func _build_netting() -> void:
-	var w := RinkSpec.NET_WIDTH
 	var h := RinkSpec.NET_HEIGHT
 	var d := RinkSpec.NET_DEPTH
 	var t := RinkSpec.NET_TOP_DEPTH
-	var r := RinkSpec.POST_RADIUS
-	var hx := w * 0.5 + r
+	var hx := RinkSpec.NET_WIDTH * 0.5 + RinkSpec.POST_RADIUS
 
-	# --- Visual mesh (UVs in meters) ---
-	var st := SurfaceTool.new()
-	st.begin(Mesh.PRIMITIVE_TRIANGLES)
-	# Back panel slants from the top (z = -t) down to the base (z = -d).
-	# Inward-facing normal (toward the mouth) of the slanted back panel.
-	var back_n := Vector3(0.0, -(d - t), h).normalized()
-	var slant := Vector2(h, d - t).length()
-	MeshUtil.quad(st,
-			Vector3(-hx, 0.0, -d), Vector3(hx, 0.0, -d), Vector3(hx, h, -t), Vector3(-hx, h, -t), back_n,
-			Vector2(0, 0), Vector2(2 * hx, 0), Vector2(2 * hx, slant), Vector2(0, slant))
-	# Top panel.
-	MeshUtil.quad(st,
-			Vector3(-hx, h, 0.0), Vector3(hx, h, 0.0), Vector3(hx, h, -t), Vector3(-hx, h, -t), Vector3.DOWN,
-			Vector2(0, 0), Vector2(2 * hx, 0), Vector2(2 * hx, t), Vector2(0, t))
-	# Side panels (trapezoids, drawn as a quad + triangle-ish quad).
-	for sx in [-1.0, 1.0]:
-		var x: float = sx * hx
-		var n := Vector3(-sx, 0.0, 0.0)
-		MeshUtil.quad(st,
-				Vector3(x, 0.0, 0.0), Vector3(x, 0.0, -d), Vector3(x, h, -t), Vector3(x, h, 0.0), n,
-				Vector2(0, 0), Vector2(d, 0), Vector2(t, h), Vector2(0, h))
-	var mat := ShaderMaterial.new()
-	mat.shader = load(NETTING_SHADER_PATH)
-	var mi := MeshInstance3D.new()
-	mi.name = "Netting"
-	mi.mesh = st.commit()
-	mi.material_override = mat
-	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	add_child(mi)
-
-	# --- Colliders: soft "net" surface that kills the puck's speed ---
 	var body := StaticBody3D.new()
 	body.name = "Mesh"
 	body.collision_layer = 1 << 1
@@ -228,14 +229,24 @@ func _build_netting() -> void:
 	var thick := 0.04
 	var below := 0.2
 
-	var back := BoxShape3D.new()
-	back.size = Vector3(2.0 * hx + 0.1, slant + below * 2.0, thick)
-	var back_up := Vector3(0.0, h, d - t).normalized()
-	var back_cs := CollisionShape3D.new()
-	back_cs.shape = back
-	var back_center := Vector3(0.0, h * 0.5, -(d + t) * 0.5) - back_n * thick * 0.5
-	back_cs.transform = Transform3D(Basis(Vector3.RIGHT, back_up, back_n), back_center)
-	body.add_child(back_cs)
+	var top_line := outline(t, RinkSpec.NET_TOP_CORNER)
+	var base_line := outline(d, RinkSpec.NET_BASE_CORNER)
+	var inside := Vector3(0.0, h * 0.5, -d * 0.4)
+	for i in top_line.size() - 1:
+		var a := Vector3(top_line[i].x, h, -top_line[i].y)
+		var b := Vector3(top_line[i + 1].x, h, -top_line[i + 1].y)
+		var c := Vector3(base_line[i].x, 0.0, -base_line[i].y)
+		var e := Vector3(base_line[i + 1].x, 0.0, -base_line[i + 1].y)
+		c += (c - a) * (below / h)
+		e += (e - b) * (below / h)
+		var out := (b - a).cross(c - a).normalized()
+		if out.dot(a - inside) < 0.0:
+			out = -out
+		var slab := ConvexPolygonShape3D.new()
+		slab.points = PackedVector3Array([a, b, c, e, a + out * thick, b + out * thick, c + out * thick, e + out * thick])
+		var cs := CollisionShape3D.new()
+		cs.shape = slab
+		body.add_child(cs)
 
 	var top := BoxShape3D.new()
 	top.size = Vector3(2.0 * hx + 0.1, thick, t + 0.05)
@@ -243,11 +254,3 @@ func _build_netting() -> void:
 	top_cs.shape = top
 	top_cs.position = Vector3(0.0, h + thick * 0.5, -t * 0.5)
 	body.add_child(top_cs)
-
-	for sx in [-1.0, 1.0]:
-		var side := BoxShape3D.new()
-		side.size = Vector3(thick, h + below, d)
-		var side_cs := CollisionShape3D.new()
-		side_cs.shape = side
-		side_cs.position = Vector3(sx * (hx + thick * 0.5), (h - below) * 0.5, -d * 0.5)
-		body.add_child(side_cs)

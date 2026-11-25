@@ -1,6 +1,6 @@
 extends SceneTree
 ## Offline build step for equipment models:
-##   godot --headless --path . -s res://tools/build_gear.gd [-- only=helmet|mask|team_mask|stick|goalie_stick|skate|glove|goalie_gear]
+##   godot --headless --path . -s res://tools/build_gear.gd [-- only=helmet|face|dress|hat|mask|team_mask|stick|goalie_stick|skate|glove|goalie_gear|old]
 ##
 ## Source models (assets/equip/, credits in assets/CREDITS.md) become plain meshes in
 ## meters, with their textures dropped (they carry real team and brand logos) and
@@ -8,6 +8,19 @@ extends SceneTree
 ## * Helmets (HELMETS, modeled by tools/blender/helmet_gear.py): one surface per role:
 ##   0 shell, 1 trim, 2 dark, 3 visor, 4 visor hardware. Front +Z; the origin is the male
 ##   body's head box center, crown and chin strap fitted to that head (see SkaterVisual).
+## * Face gear (FACE_HELMETS; helmet_gear.py build_face), worn on a helmet in place of its
+##   visor, one set per helmet in that helmet's frame: face_cage_<a|b|c> (0 the wire, 1 its
+##   dark clips and chin cup) and face_shield_<a|b|c> (0 the clear shield, 1 its fittings).
+## * Hats (HATS, modeled by tools/blender/hat_gear.py) in the helmets' frame, worn in place
+##   of the helmet: hat_cap 0 crown, 1 accent (bill, button, seams, strap); hat_shades
+##   0 frame, 1 lens (set on the eyes by the game); hat_cowboy 0 felt, 1 band; hat_stunt
+##   0 shell (flame-painted by the game), 1 trim (the peak and its snaps), 2 dark; hat_watch
+##   0 knit (the crown, the cuff and the lining), 1 the stripe round the cuff; hat_beanie
+##   0 knit, 1 accent (the stripes and the pom); hat_leather 0 leather, 1 straps (the
+##   padding, the binding, the chin strap), 2 dark (the ear holes); hat_golf 0 band, 1 brim
+##   (the see-through bill), 2 trim (the piping and the tab at the back); hat_guard
+##   0 leather (the band and the straps over the crown), 1 felt (the crown, its rolls along
+##   the band's edges, the stitching), 2 dark (the chin strap and rivets).
 ## * Goalie masks (MASKS, modeled by tools/blender/goalie_mask_gear.py) in the helmets'
 ##   frame, surfaces in each spec's node order: shell, liner (the shell's inside), cage,
 ##   trim (backplate and straps; the combo's white helmet trim). And the hair-colored scalp
@@ -21,6 +34,10 @@ extends SceneTree
 ## * Skate: 0 boot, 1 steel. Toe +Z, origin under the middle of the runner.
 ## * Glove: one surface. A right glove gripping: fingers along +Y curled toward -Z (the
 ##   palm), back of the hand +Z, thumb -X, origin at the wrist.
+## * The Old-Time Set (`only=old` builds just these; each also comes with its own kind):
+##   stick_old, skate_old, glove_old / glove_cuff_old and the goalie's goalie_pad_old,
+##   goalie_boot_old, goalie_thigh_old, blocker_old, goalie_catcher_old, each laid out as
+##   the modern piece it replaces (the same Blender scripts, their build_old).
 ## Dense scans are welded and simplified with Godot's mesh optimizer.
 ##   -> res://assets/characters/<out>.res
 
@@ -31,7 +48,23 @@ const EQUIP := "res://assets/equip/"
 const HELMETS := [
 	{"out": "helmet", "src": EQUIP + "helmet_a.glb"},     # modern two-piece
 	{"out": "helmet_b", "src": EQUIP + "helmet_b.glb"},   # classic one-piece
+	{"out": "helmet_c", "src": EQUIP + "helmet_c.glb"},   # the round '80s bucket (the Pro Shop's)
 ]
+const HATS := [
+	{"out": "hat_cap", "src": EQUIP + "hat_cap.glb", "nodes": ["crown", "accent"]},
+	{"out": "hat_shades", "src": EQUIP + "hat_shades.glb", "nodes": ["frame", "lens"]},
+	{"out": "hat_cowboy", "src": EQUIP + "hat_cowboy.glb", "nodes": ["felt", "band"]},
+	{"out": "hat_stunt", "src": EQUIP + "hat_stunt.glb", "nodes": ["shell", "trim", "dark"]},
+	{"out": "hat_watch", "src": EQUIP + "hat_watch.glb", "nodes": ["knit", "stripe"]},
+	{"out": "hat_beanie", "src": EQUIP + "hat_beanie.glb", "nodes": ["knit", "accent"]},
+	{"out": "hat_leather", "src": EQUIP + "hat_leather.glb", "nodes": ["leather", "straps", "dark"]},
+	{"out": "hat_golf", "src": EQUIP + "hat_golf.glb", "nodes": ["band", "brim", "trim"]},
+	{"out": "hat_guard", "src": EQUIP + "hat_guard.glb", "nodes": ["leather", "felt", "dark"]},
+]
+const FACE_HELMETS := ["a", "b", "c"]   ## face_<x>.glb: nodes cage, cage_hw, shield, shield_hw
+## Helmet cosmetics (helmet_gear.py build_dress), one per helmet like the face gear: from
+## the Chupacabras' chupa_<x>.glb, node spines -> crest_spines_<x>.res (a crest) and node
+## fangs -> dangler_fangs_<x>.res (a dangler, hung from the visor), one surface each.
 const HELMET_NODES := ["shell", "trim", "dark", "visor", "visor_hw"]
 ## Also in game axes and the helmets' frame (mask_gear.py): copied over, UVs kept.
 const TEAM_MASKS := [
@@ -62,6 +95,9 @@ const GOALIE_STICK_SRC := EQUIP + "goalie_stick.glb"
 const GOALIE_STICK_NODES := ["body", "grip", "tape"]
 const GOALIE_STICK_SHAFT := 1.55
 const GOALIE_STICK_BLADE := Vector3(0.0, -0.2, 0.3464)
+## The old-time wooden stick (stick_gear.py OLD): the skater stick's nodes, a shorter blade.
+const STICK_OLD_SRC := EQUIP + "stick_old.glb"
+const STICK_OLD_BLADE := Vector3(0.0, -0.2192, 0.2192)
 ## Skater glove sources: upright right gloves (fingers +Y, palm -Z, thumb -X) with the
 ## fingers more or less flat. GLOVE picks the one the game uses.
 ##   length: cuff to fingertips before curling (m) · knuckle: the fingers bend from here
@@ -87,6 +123,7 @@ const FIST_SRC := EQUIP + "fist.glb"
 const GRIP_UP := 0.065
 const GRIP_IN := 0.05
 const GOALIE_GEAR := ["goalie_pad", "goalie_boot", "goalie_thigh", "blocker", "goalie_catcher"]
+const GOALIE_GEAR_OLD := ["goalie_pad_old", "goalie_boot_old", "goalie_thigh_old", "blocker_old", "goalie_catcher_old"]
 
 
 func _init() -> void:
@@ -97,6 +134,19 @@ func _init() -> void:
 	if what in ["all", "helmet"]:
 		for spec: Dictionary in HELMETS:
 			_save(_nodes(spec.src, HELMET_NODES), spec.out)
+	if what in ["all", "helmet", "face"]:
+		for k: String in FACE_HELMETS:
+			_save(_nodes(EQUIP + "face_%s.glb" % k, ["cage", "cage_hw"]), "face_cage_" + k)
+			_save(_nodes(EQUIP + "face_%s.glb" % k, ["shield", "shield_hw"]), "face_shield_" + k)
+			# The Grays' alien visor (helmet_gear.py build_aliens): 0 the lenses, 1 its bar and clips.
+			_save(_nodes(EQUIP + "alien_%s.glb" % k, ["lens", "hw"]), "face_alien_" + k)
+	if what in ["all", "helmet", "dress"]:
+		for k: String in FACE_HELMETS:
+			_save(_nodes(EQUIP + "chupa_%s.glb" % k, ["spines"]), "crest_spines_" + k)
+			_save(_nodes(EQUIP + "chupa_%s.glb" % k, ["fangs"]), "dangler_fangs_" + k)
+	if what in ["all", "hat"]:
+		for spec: Dictionary in HATS:
+			_save(_nodes(spec.src, spec.nodes), spec.out)
 	if what in ["all", "mask"]:
 		for spec: Dictionary in MASKS:
 			_save(_nodes(spec.src, spec.nodes), spec.out)
@@ -105,18 +155,28 @@ func _init() -> void:
 			_save(_nodes(spec.src, spec.nodes), spec.out)
 	if what in ["all", "stick"]:
 		_build_stick()
+	if what in ["all", "stick", "old"]:
+		_save(_nodes(STICK_OLD_SRC, STICK_NODES), "stick_old", {"blade": STICK_OLD_BLADE, "shaft": STICK_SHAFT})
 	if what in ["all", "goalie_stick"]:
 		_build_goalie_stick()
 	if what in ["all", "skate"]:
 		_build_skate()
+	if what in ["all", "skate", "old"]:
+		_save([_simplify(_merge(_parts(EQUIP + "skate_old.glb")), 0), _simplify(_merge(_parts(EQUIP + "skate_old_steel.glb")), 0)], "skate_old")
 	if what in ["all", "glove"]:
 		_build_glove()
+	if what in ["all", "glove", "old"]:
+		_save([_simplify(_merge(_parts(EQUIP + "hockey_glove_old.glb")), 0)], "glove_old")
+		_save([_simplify(_merge(_parts(EQUIP + "hockey_glove_cuff_old.glb")), 0)], "glove_cuff_old")
 	if what in ["all", "glove", "fist"]:
 		_save([_simplify(_merge(_parts(FIST_SRC)), 0)], "fist")
 	if what in ["all", "goalie_gear"]:
 		# Leg pads, thigh rises and blocker from tools/blender/goalie_gear.py: modeled in
 		# game axes with their shading baked into vertex colors, so only copied over.
 		for name in GOALIE_GEAR:
+			_save([_simplify(_merge(_parts(EQUIP + name + ".glb")), 0)], name)
+	if what in ["all", "goalie_gear", "old"]:
+		for name in GOALIE_GEAR_OLD:
 			_save([_simplify(_merge(_parts(EQUIP + name + ".glb")), 0)], name)
 	quit()
 

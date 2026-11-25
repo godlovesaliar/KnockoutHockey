@@ -19,20 +19,17 @@ const ROLL := [
 	["item", "Physics", "Jolt Physics (MIT license, Jorrit Rouwe)"],
 	["gap"],
 	["head", "PLAYERS"],
-	["item", "Female Character Base - Rigged", "Braingapps · Sketchfab · CC BY 4.0"],
-	["item", "Male Character Base - Rigged", "Braingapps · Sketchfab · CC BY 4.0"],
-	["item", "Rigging and animations", "Mixamo (Adobe)"],
-	["item", "Hair and Beard Pubg Mobile 3D Model", "BilloXD · Sketchfab · CC BY 4.0"],
-	["item", "MOSTACHE", "vajidkm · Sketchfab · CC BY 4.0"],
-	["item", "ported hair", "bbb59149 · Sketchfab · CC BY 4.0"],
+	["item", "MPFB (generated the bodies)", "MakeHuman community · Blender extension"],
+	["item", "Animations", "Mixamo (Adobe)"],
 	["gap"],
 	["head", "ARENAS"],
-	["item", "Snow Trees Pack LOWPOLY", "sixonetwo (@evan4129) · Sketchfab · CC BY 4.0"],
-	["item", "Forest cabin low poly", "POLYSCAN (@POLYSCAN3D) · Sketchfab · CC BY 4.0"],
-	["item", "Zamboni", "marsmodels · Thingiverse · CC BY"],
+	["item", "Bark001 (tree bark)", "ambientCG · CC0"],
+	["item", "Easy Tree (grew the bare hardwoods)", "Jacob Johnston · Blender extension"],
 	["gap"],
 	["head", "FONTS"],
-	["item", "Playstation Buttons (button prompts)", "TracerTong · fonts4free.net · Free for personal use"],
+	["item", "Spray.ME (game title)", "Michał \"Neoqueto\" Nowak · FontStruct · CC BY-SA 3.0"],
+	["item", "Russo One (title and team badges)", "Jovanny Lemonad · SIL Open Font License"],
+	["item", "Michroma (team badges)", "Vernon Adams · SIL Open Font License"],
 	["gap"],
 	["head", "SOUND AND MUSIC"],
 	["item", "Sound effects, crowd, organ and announcers", "Generated with ElevenLabs"],
@@ -197,7 +194,7 @@ func _draw_roll() -> void:
 func _back() -> void:
 	if _leaving:
 		return
-	GameSettings.menu_select = 5
+	GameSettings.menu_select = 6
 	Sfx.play("pad", Vector3.INF, -8.0)
 	_leaving = true
 	var tw := create_tween()

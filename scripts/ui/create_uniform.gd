@@ -76,7 +76,7 @@ var _rebuild_in := -1.0
 
 func _ready() -> void:
 	Sfx.play_music()
-	_team = clampi(int(_arg("team", str(GameSettings.config.get("home_team", 0)))), 0, Teams.count() - 1)
+	_team = Store.open_team(clampi(int(_arg("team", str(GameSettings.config.get("home_team", 0)))), 0, Teams.count() - 1))
 	_which = "road" if _arg("set", "home") == "road" else "home"
 	_load_set()
 	for k: String in Uniforms.COLOR_KEYS:
@@ -84,7 +84,7 @@ func _ready() -> void:
 			_u.colors[k] = _arg(k, "")
 	if _arg("style", "") != "":
 		Uniforms.set_style(_u, _arg("style", "classic"))
-	for k: String in ["hem", "sleeve", "sock", "yoke", "width"]:
+	for k: String in ["hem", "sleeve", "sock", "sock_pattern", "yoke", "width"]:
 		if _arg(k, "") != "":
 			_u[k] = int(_arg(k, ""))
 	if _arg("alternate", "") != "":
@@ -266,7 +266,10 @@ func _tab_rows(tab: String) -> Array:
 				"hint": "Start from a stripe layout; the rows below change it from there."},
 			{"key": "hem", "label": "HEM STRIPES", "kind": "choice", "hint": "Stripes round the bottom of the jersey."},
 			{"key": "sleeve", "label": "SLEEVE STRIPES", "kind": "choice", "hint": "Stripes round the sleeves, below the elbow."},
-			{"key": "sock", "label": "SOCK STRIPES", "kind": "choice", "hint": "Stripes round the socks."},
+			{"key": "sock", "label": "SOCK STRIPES", "kind": "choice",
+				"hint": "Stripes round the socks: more rings on a barber pole, thin stripes over a two-tone sock."},
+			{"key": "sock_pattern", "label": "SOCK PATTERN", "kind": "choice",
+				"hint": "Stripes in one band, a barber pole all the way down, two-tone, or one broad block."},
 			{"key": "width", "label": "STRIPE WIDTH", "kind": "choice", "hint": "How much room the stripes take."},
 			{"key": "alternate", "label": "ALTERNATE", "kind": "choice",
 				"hint": "Every other stripe in the accent color instead of the stripe color."},
@@ -282,7 +285,7 @@ func _tab_rows(tab: String) -> Array:
 func _choices(key: String) -> Array:
 	match key:
 		"team":
-			var order := Teams.menu_order()
+			var order := Store.open_teams()   # (not the teams still locked in the shop)
 			return [order, order.map(func(i: int) -> String: return Teams.full_name(i))]
 		"set":
 			return [SETS, ["Home", "Road"]]
@@ -291,6 +294,8 @@ func _choices(key: String) -> Array:
 		"hem", "sleeve", "sock":
 			var r := range(Uniforms.MAX_STRIPES + 1)
 			return [r, r.map(func(n: int) -> String: return "None" if n == 0 else str(n))]
+		"sock_pattern":
+			return [range(Teams.SOCK_PATTERNS.size()), Teams.SOCK_PATTERN_NAMES]
 		"width":
 			return [[0, 1, 2], ["Thin", "Normal", "Wide"]]
 		"alternate":
@@ -591,10 +596,9 @@ func _draw_card() -> void:
 	var logo := Teams.logo(_team)
 	if logo:
 		var s := 96.0
-		var ls := logo.get_size()
-		var k := s / maxf(ls.x, ls.y)
-		_card.draw_texture_rect(logo, Rect2(Vector2(x + (s - ls.x * k) * 0.5, r.position.y + 16 + (s - ls.y * k) * 0.5), ls * k), false)
-		x += s + 22.0
+		var lw := MenuStyle.logo_slot(logo, s)   # (wide crests get a wider slot)
+		MenuStyle.draw_logo(_card, logo, Rect2(x, r.position.y + 16, lw, s))
+		x += lw + 22.0
 	var name := Teams.full_name(_team).to_upper()
 	var fs := 30
 	while fs > 16 and MenuStyle.text_width(name, fs) > r.end.x - x - 20.0:

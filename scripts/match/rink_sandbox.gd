@@ -7,7 +7,8 @@ extends Node3D
 ## Keys:    T = random blast, G = drop from 2 m, R = reset, Q/E = power, C / Back = camera.
 ##
 ## Command-line (after `--`): cam=broadcast|overhead|end_zone, shot=<png path>,
-##          fire=x,z[,lift] (fires once at start), wait=<seconds before the screenshot>.
+##          fire=x,z[,lift] (fires once at start), wait=<seconds before the screenshot>,
+##          eye=x,y,z,tx,ty,tz[,fov] (a fixed camera at x,y,z looking at tx,ty,tz: close-ups).
 
 const MIN_POWER := 5.0
 const MAX_POWER := 45.0
@@ -179,6 +180,14 @@ func _handle_cmdline() -> void:
 		var idx := BroadcastCamera.Mode.keys().find(str(args["cam"]).to_upper())
 		if idx >= 0:
 			cam.set_mode(idx as BroadcastCamera.Mode)
+	if args.has("eye"):
+		var e := str(args["eye"]).split_floats(",")
+		if e.size() >= 6:
+			var c := Camera3D.new()
+			c.fov = e[6] if e.size() > 6 else 40.0
+			add_child(c)
+			c.look_at_from_position(Vector3(e[0], e[1], e[2]), Vector3(e[3], e[4], e[5]))
+			c.make_current()
 	if args.has("fire"):
 		var f := str(args["fire"]).split(",")
 		if f.size() >= 2:

@@ -10,11 +10,17 @@ extends Control
 ## Accept: on to the rules (RulesSelect), or for Knockout Mode straight into the fights.
 ## Back: the main menu.
 ##
-## `-- shot=<png> [wait=<s>] [home=<i>] [away=<i>]` saves a screenshot and quits.
+## Only teams that can be played as come up (Store.open_teams): a locked team isn't
+## offered for either side. A challenge game (GameSettings.mode "challenge", started from
+## the shop) is the exception: the locked team is the home side and stays put, and every
+## controller picks the away team or watches. Back goes to the shop.
+##
+## `-- shot=<png> [wait=<s>] [home=<i>] [away=<i>] [challenge=<i>]` saves a screenshot and quits.
 
 const RULES_SCENE := "res://scenes/ui/RulesSelect.tscn"
 const MATCH_SCENE := "res://scenes/match/Match.tscn"
 const MENU_SCENE := "res://scenes/ui/MainMenu.tscn"
+const STORE_SCENE := "res://scenes/ui/Store.tscn"
 
 const PLAYER_X := 1.25        ## meters left / right of center for each team's player
 const PLAYER_LIFT := 0.45     ## meters the players stand above the ice, level with the crests
@@ -25,6 +31,7 @@ const CHIPS_Y := 742.0        ## top of the controller row
 
 var devices: Array[Dictionary] = []   ## {id, name, side: -1 home / 0 watching / 1 away, x}
 var teams := [0, 1]
+var _challenge := -1          ## a challenge game: the Teams index of the locked team to beat (the home side); -1 = not one
 var _input: MenuInput
 var _canvas: Control
 var _plates: Control
@@ -49,6 +56,17 @@ func _ready() -> void:
 		teams[0] = int(_arg("home", "0"))
 	if _arg("away", "") != "":
 		teams[1] = int(_arg("away", "1"))
+	if _arg("challenge", "") != "":
+		GameSettings.mode = "challenge"
+		GameSettings.challenge = int(_arg("challenge", "0"))
+	if GameSettings.mode == "challenge":
+		# The team to beat is at home; the player's team is the one they last played as.
+		_challenge = GameSettings.challenge
+		var side := int(GameSettings.humans[0].get("team", 0)) if not GameSettings.humans.is_empty() else 0
+		teams = [_challenge, Store.open_team(teams[side], _challenge)]
+	else:
+		teams[0] = Store.open_team(teams[0])
+		teams[1] = Store.open_team(teams[1], teams[0])
 	Sfx.play_music()
 	_build_stage()
 	_input = MenuInput.new()
@@ -177,7 +195,9 @@ func _dress_side(t: int) -> void:
 	var tex := MenuArena.logo(team)
 	_logos[t].texture = tex
 	if tex:
-		_logos[t].pixel_size = 2.2 / float(tex.get_width())
+		# Fitted to the board, tall crests as well as wide ones (2.2 m across a tall one
+		# stood far over the top of it).
+		_logos[t].pixel_size = 2.2 / float(maxi(tex.get_width(), tex.get_height()))
 	var m := StandardMaterial3D.new()
 	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	var col: Color = Teams.team(team).colors.jersey
@@ -242,6 +262,10 @@ func _detect_devices() -> void:
 					placed = true
 		if not placed:
 			devices[2 if devices.size() > 2 else 0].side = -1
+	if _challenge >= 0:
+		for d in devices:
+			if int(d.side) < 0:
+				d.side = 1   # nobody plays the team to beat
 	for d in devices:
 		d.x = _column_x(d.side)
 
@@ -262,7 +286,7 @@ func _on_side(dev: String, dir: int) -> void:
 	var d := _device(dev)
 	if d.is_empty() or _leaving:
 		return
-	var s := clampi(int(d.side) + dir, -1, 1)
+	var s := clampi(int(d.side) + dir, 0 if _challenge >= 0 else -1, 1)
 	if s != d.side:
 		d.side = s
 		Sfx.play("click", Vector3.INF, -10.0, 1.2)
@@ -272,6 +296,9 @@ func _on_side(dev: String, dir: int) -> void:
 func _change_for(dev: String, dir: int, other: bool) -> void:
 	var d := _device(dev)
 	if d.is_empty() or _leaving:
+		return
+	if _challenge >= 0:
+		_change_team(1, dir)
 		return
 	var t := 0 if int(d.side) <= 0 else 1
 	if int(d.side) == 0:
@@ -283,7 +310,7 @@ func _change_for(dev: String, dir: int, other: bool) -> void:
 
 func _change_team(t: int, dir: int) -> void:
 	# Step in menu order (East, Central, West), so a conference's teams come up together.
-	var order := Teams.menu_order()
+	var order := Store.open_teams()
 	var n := order.size()
 	var at := maxi(order.find(teams[t]), 0)
 	var next: int = order[wrapi(at + dir, 0, n)]
@@ -316,6 +343,10 @@ func _continue() -> void:
 			var kind := "pad" if id.begins_with("pad") else id
 			humans.append({"kind": kind, "pad": int(id.substr(3)) if kind == "pad" else 0,
 					"team": 0 if d.side < 0 else 1})
+	if _challenge >= 0 and humans.is_empty():
+		_pop[1] = 1.0   # someone has to play it
+		Sfx.play("pad", Vector3.INF, -6.0)
+		return
 	GameSettings.config["home_team"] = teams[0]
 	GameSettings.config["away_team"] = teams[1]
 	GameSettings.humans = humans
@@ -334,7 +365,7 @@ func _back() -> void:
 	Sfx.play("pad", Vector3.INF, -8.0)
 	if GameSettings.mode == "knockout":
 		GameSettings.menu_list = "modes"
-	_go(MENU_SCENE)
+	_go(STORE_SCENE if _challenge >= 0 else MENU_SCENE)
 
 
 func _go(scene: String) -> void:
@@ -347,6 +378,9 @@ func _go(scene: String) -> void:
 # --- Drawing --------------------------------------------------------------------
 
 func _draw_header(c: Control) -> void:
+	if _challenge >= 0:
+		MenuStyle.draw_tag(c, Vector2(60, 40), "CHALLENGE", "SELECT YOUR TEAM")
+		return
 	MenuStyle.draw_tag(c, Vector2(60, 40), "KNOCKOUT MODE" if GameSettings.mode == "knockout" else "EXHIBITION", "SELECT TEAMS")
 
 
@@ -370,6 +404,8 @@ func _draw_plates() -> void:
 				Vector2(x0 + PLATE_W + sk, y - 2), Vector2(x0 + sk + 6, y - 2)]), Color(0.02, 0.03, 0.07, 0.72))
 		var who := _players_on(-1 if t == 0 else 1)
 		var tag := ("HOME" if t == 0 else "AWAY") + ("   ·   " + who if who != "" else "   ·   CPU")
+		if _challenge >= 0 and t == 0:
+			tag = "HOME   ·   CHALLENGE"
 		_plates.draw_string(small, Vector2(x0 + 44, y - 13), tag, HORIZONTAL_ALIGNMENT_LEFT, -1, 20, Color(1, 1, 1, 0.85))
 		# Slanted plate in the team's color.
 		var pts := PackedVector2Array([Vector2(x0 + sk, y), Vector2(x0 + PLATE_W + sk, y), Vector2(x0 + PLATE_W, y + h), Vector2(x0, y + h)])
@@ -385,7 +421,7 @@ func _draw_plates() -> void:
 		_draw_conference(info, x0 + PLATE_W - 52, y + 13, small)
 		# Up / down arrows stacked at the plate's right end, as the controls change teams
 		# (click them too). Up is the previous team.
-		for dir in [-1, 1]:
+		for dir in ([] if _challenge >= 0 and t == 0 else [-1, 1]):
 			var ax: float = x0 + PLATE_W - 14 + sk * (0.75 if dir < 0 else 0.25)
 			var ay: float = y + h * 0.5 + dir * 22.0
 			var r := Rect2(ax - 26, ay - 22, 52, 44)
@@ -419,7 +455,7 @@ func _draw_conference(info: Dictionary, right: float, top: float, font: Font) ->
 	var conf := str(info.get("conference", ""))
 	if conf == "":
 		return
-	var label := conf.to_upper() + " CONFERENCE"
+	var label := Teams.conference_label(conf)
 	var w := font.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, 16).x + 30.0
 	var h := 26.0
 	var sk := h * 0.3
@@ -448,7 +484,7 @@ func _draw_chips() -> void:
 	var small := MenuStyle.font(0.12)
 	# Column labels.
 	for side in [-1, 0, 1]:
-		var label: String = ["HOME", "WATCHING", "AWAY"][side + 1]
+		var label: String = (["", "WATCHING", "YOUR TEAM"] if _challenge >= 0 else ["HOME", "WATCHING", "AWAY"])[side + 1]
 		var lw := small.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, 18).x
 		_chips.draw_string(small, Vector2(_column_x(side) - lw * 0.5, CHIPS_Y - 10), label,
 				HORIZONTAL_ALIGNMENT_LEFT, -1, 18, MenuStyle.DIM)
@@ -484,6 +520,8 @@ func _draw_chips() -> void:
 
 func _draw_footer() -> void:
 	var hint := "Left / right: pick a side.   Up / down: your team.   %s: the other team." % ("L1 / R1" if _input.using_pad else "Q / E")
+	if _challenge >= 0:
+		hint = "Beat the %s to unlock them.   Left / right: play or watch.   Up / down: your team." % str(Teams.team(_challenge).name)
 	MenuStyle.draw_footer(_footer, _canvas.size.x, hint,
 			[[_input.accept_label(), "CONTINUE"], [_input.back_label(), "BACK"]], _input.using_pad)
 

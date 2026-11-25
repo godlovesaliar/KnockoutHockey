@@ -1,7 +1,8 @@
 extends Control
 ## CUSTOMIZE > CREATE TEAM: tabs of settings bars on the left (TEAM, COLORS, BADGE,
 ## BADGE COLORS), and on the right the badge on a card over a player in the uniform,
-## standing on center ice with the badge painted there too.
+## standing on center ice with the badge painted there too. On the goalie mask rows the
+## player is a goalie, close up.
 ##
 ## Up / down picks a row, left / right changes it, accept types a name or runs an action
 ## row (on a pad, PadKeyboard comes up). L1 / R1 (Q / E) or a click switches tabs.
@@ -16,11 +17,13 @@ extends Control
 const MENU_SCENE := "res://scenes/ui/MainMenu.tscn"
 const MENU_SELECT := 1          ## CREATE TEAM's place in the CUSTOMIZE list
 const SKATER_SCENE := preload("res://scenes/actors/Skater.tscn")
+const GOALIE_SCENE := preload("res://scenes/actors/Goalie.tscn")
+const MASK_ROWS := ["mask_paint", "mask_colors"]   ## rows that show the goalie
 
-const TABS := ["team", "colors", "badge", "badge_colors"]
-const TAB_NAMES := ["TEAM", "COLORS", "BADGE", "BADGE COLORS"]
+const TABS := ["team", "colors", "gear", "badge", "badge_colors"]
+const TAB_NAMES := ["TEAM", "COLORS", "GEAR", "BADGE", "BADGE COLORS"]
 const TAB_POS := Vector2(40, 152)
-const TAB_SIZE := Vector2(190, 44)
+const TAB_SIZE := Vector2(176, 44)
 const ROW_POS := Vector2(60, 220)
 const ROW_SIZE := Vector2(720, 40)
 const ROW_GAP := 4.0
@@ -63,6 +66,7 @@ var _stage: Node3D
 var _arena := {}
 var _cam: Camera3D
 var _skater: Skater
+var _goalie_view := false   ## the preview is the goalie (a mask row is selected)
 var _rebuild_in := -1.0
 
 
@@ -75,7 +79,7 @@ func _ready() -> void:
 		_t = CustomTeams.all()[edit].duplicate(true)
 	_t.home_arena = Arenas.home_id(Teams.LIST.size() + _edit_index) if _edit_index >= 0 else "modern"
 	_saved = _snapshot()
-	for k: String in ["city", "name", "abbr", "conference", "design", "pants", "helmet", "primary", "secondary", "accent"]:
+	for k: String in ["city", "name", "abbr", "conference", "design", "pants", "helmet", "primary", "secondary", "accent", "mask_paint", "mask_colors", "headgear", "kit", "crest", "eye_fx", "dangler", "face", "socks", "pants_style"]:
 		var a := _arg(k, "")
 		if a != "":
 			_t[k] = int(a) if _t[k] is int else a
@@ -247,7 +251,7 @@ func _tab_rows(tab: String) -> Array:
 				{"key": "conference", "label": "CONFERENCE", "kind": "choice",
 					"hint": "Which conference they play in (and where they come up in team lists)."},
 				{"key": "home_arena", "label": "HOME ARENA", "kind": "choice",
-					"hint": "Where they play home games: any arena, the outdoor rink too. Saved with the team."},
+					"hint": "Where they play home games: any arena you have, an outdoor rink too. Saved with the team."},
 			]
 		"colors":
 			rows = [
@@ -255,8 +259,31 @@ func _tab_rows(tab: String) -> Array:
 				{"key": "secondary", "label": "SECONDARY", "kind": "choice", "hint": "Stripes and the numbers."},
 				{"key": "accent", "label": "ACCENT", "kind": "choice", "hint": "Number outlines, and a third color for the badge."},
 				{"key": "design", "label": "JERSEY STYLE", "kind": "choice", "hint": "The stripes on the hem, sleeves and socks."},
+				{"key": "socks", "label": "SOCKS", "kind": "choice",
+					"hint": "The jersey style's sock stripes, or a barber pole, two-tone or block sock instead."},
 				{"key": "pants", "label": "PANTS", "kind": "choice", "hint": "Pants color."},
 				{"key": "helmet", "label": "HELMET", "kind": "choice", "hint": "Helmet color."},
+			]
+		"gear":
+			rows = [
+				{"key": "headgear", "label": "HEAD GEAR", "kind": "choice",
+					"hint": "Helmets, a mask or hood for the whole team, or bare heads. Sold in the Pro Shop."},
+				{"key": "kit", "label": "EQUIPMENT", "kind": "choice",
+					"hint": "Standard, or the Pro Shop's Old-Time Set on everyone: leather, tube skates and wooden sticks."},
+				{"key": "pants_style", "label": "PANTS CUT", "kind": "choice",
+					"hint": "Standard, or long pants down to the skates on everyone. Sold in the Pro Shop."},
+				{"key": "face", "label": "VISORS", "kind": "choice",
+					"hint": "Each player's own visor, or the same face gear on every skater. Sold in the Pro Shop."},
+				{"key": "crest", "label": "HELMET CREST", "kind": "choice",
+					"hint": "Something on top of every helmet: a ridge of spines. Sold in the Pro Shop."},
+				{"key": "eye_fx", "label": "EYES", "kind": "choice",
+					"hint": "Their own eyes, or glowing red ones for the whole team. Sold in the Pro Shop."},
+				{"key": "dangler", "label": "DANGLER", "kind": "choice",
+					"hint": "Something hung under every visor: a pair of fangs. Sold in the Pro Shop."},
+				{"key": "mask_paint", "label": "GOALIE MASKS", "kind": "choice",
+					"hint": "Paint for the team's goalies, unless a goalie has their own (Create Player)."},
+				{"key": "mask_colors", "label": "MASK COLORS", "kind": "choice",
+					"hint": "Which of the team's colors go where on the masks."},
 			]
 		"badge":
 			rows = [
@@ -311,7 +338,7 @@ func _choices(key: String) -> Array:
 		"conference":
 			return [Teams.CONFERENCES, Teams.CONFERENCES]
 		"home_arena":
-			var arenas := Arenas.all()
+			var arenas := Arenas.pickable(Arenas.home_id(Teams.LIST.size() + _edit_index) if _edit_index >= 0 else "")
 			return [arenas.map(func(a: Dictionary) -> String: return str(a.id)),
 					arenas.map(func(a: Dictionary) -> String: return str(a.name))]
 		"primary", "secondary", "accent":
@@ -321,6 +348,36 @@ func _choices(key: String) -> Array:
 			return [CustomTeams.DESIGN_NAMES.keys(), CustomTeams.DESIGN_NAMES.values()]
 		"pants", "helmet":
 			return _slot_choices()
+		"headgear":
+			# What's bought (Store), and what a saved team already wears.
+			var saved := CustomTeams.all()
+			var ch := Store.headgear_choices(str(saved[_edit_index].get("headgear", "")) if _edit_index >= 0 and _edit_index < saved.size() else "")
+			ch[1][0] = "Helmets"
+			return ch
+		"face":
+			var ours := CustomTeams.all()
+			return Store.team_face_choices(str(ours[_edit_index].get("face", "")) if _edit_index >= 0 and _edit_index < ours.size() else "")
+		"crest", "eye_fx", "dangler":
+			var mine := CustomTeams.all()
+			return Store.cosmetic_choices(key, str(mine[_edit_index].get(key, "")) if _edit_index >= 0 and _edit_index < mine.size() else "")
+		"socks":
+			return [[""] + Teams.SOCK_PATTERNS.slice(1), ["Jersey Style"] + Teams.SOCK_PATTERN_NAMES.slice(1)]
+		"pants_style":
+			var clubs := CustomTeams.all()
+			return Store.pants_choices(str(clubs[_edit_index].get("pants_style", "")) if _edit_index >= 0 and _edit_index < clubs.size() else "", false)
+		"kit":
+			var teams := CustomTeams.all()
+			return Store.oldtime_choices(str(teams[_edit_index].get("kit", "")) if _edit_index >= 0 and _edit_index < teams.size() else "")
+		"mask_paint":
+			var v := ["", GoalieVisual.MASK_PLAIN]
+			var n := ["Each Their Own", "Plain"]
+			for d: Dictionary in GoalieVisual.MASK_PAINTS:
+				v.append(d.name)
+				n.append(d.label)
+			return [v, n]
+		"mask_colors":
+			var names := GoalieVisual.paint_scheme_names(str(_t.get("mask_paint", "")))
+			return [range(names.size()), names]
 		"b_shape":
 			return [BadgeLogo.SHAPES, BadgeLogo.SHAPE_NAMES]
 		"b_border":
@@ -369,6 +426,8 @@ func _row_off(key: String) -> bool:
 			return _t.badge.layout == "icon"
 		"fill", "delete":
 			return _edit_index < 0
+		"mask_colors":
+			return GoalieVisual.paint_design(str(_t.get("mask_paint", ""))).is_empty()
 	return false
 
 
@@ -443,7 +502,7 @@ func _refresh() -> void:
 			"choice":
 				var ch := _choices(d.key)
 				var idx: int = ch[0].find(_value_of(d.key))
-				it.value = str(ch[1][idx]) if idx >= 0 else str(_value_of(d.key))
+				it.value = str(ch[1][idx]) if idx >= 0 else ("-" if d.key == "mask_colors" else str(_value_of(d.key)))
 			"action":
 				if d.key == "delete":
 					it.text = "PRESS AGAIN TO DELETE" if _delete_armed else d.label
@@ -460,6 +519,10 @@ func _select(i: int, quiet := false) -> void:
 		_items[k].glyph = _input.accept_label() if _rows[k].kind in ["action", "text"] else ""
 		_items[k].glyph_pad = _input.using_pad
 	_refresh()
+	var goalie: bool = i < _rows.size() and _rows[i].key in MASK_ROWS
+	if goalie != _goalie_view:
+		_goalie_view = goalie
+		_rebuild_in = 0.0
 	if not quiet:
 		Sfx.play("click", Vector3.INF, -10.0, 1.4)
 
@@ -483,6 +546,8 @@ func _step(i: int, dir: int) -> void:
 		_load_team(int(nv))
 		return
 	_set_value(d.key, nv)
+	if d.key == "mask_paint":
+		_t.mask_colors = 0   # (each design has its own schemes)
 	Sfx.play("click", Vector3.INF, -8.0, 1.6)
 	_changed()
 	_refresh()
@@ -702,7 +767,7 @@ func _rebuild() -> void:
 	if _skater != null:
 		_skater.queue_free()
 		_skater = null
-	var s: Skater = SKATER_SCENE.instantiate()
+	var s: Skater = (GOALIE_SCENE if _goalie_view else SKATER_SCENE).instantiate()
 	var home := Teams.uniform_of(_t, _t, false)
 	var road := Teams.uniform_of(_t, _t, true)
 	s.uniform = home
@@ -714,6 +779,10 @@ func _rebuild() -> void:
 	p.last = str(_t.name).to_upper() if str(_t.name) != "" else ""
 	p.number = 19
 	p.facial_hair = "beard"
+	if _goalie_view:
+		CustomPlayers.set_position(p, "G")
+		p.number = 30
+		p.facial_hair = ""
 	CustomPlayers.apply(s, p)
 	s.puck = _arena.puck
 	s.rink = _arena.rink
@@ -723,7 +792,8 @@ func _rebuild() -> void:
 	s.teammates = [s]
 	s.place(SPOT, Vector3.BACK)
 	if s.visual != null:
-		s.visual.display_pose = "side"
+		if not _goalie_view:
+			s.visual.display_pose = "side"
 		if s.visual.face != null:
 			s.visual.face.look_at_camera = true
 		s.visual.snap()
@@ -737,12 +807,18 @@ func _place_camera() -> void:
 	var yaw := sin(_time * 0.25) * 0.12
 	var pitch := 0.1
 	var d := 5.6
+	var mask := _goalie_view and _skater != null and _skater.visual != null and _skater is Goalie
+	if mask:
+		# The goalie's mask, close up and turning a little further to show its sides.
+		look = _skater.visual.bone_shown("Head") + Vector3(0, 0.02, 0)
+		yaw = 0.35 + sin(_time * 0.5) * 0.45
+		d = 1.5
 	_cam.look_at_from_position(look + Vector3(sin(yaw) * cos(pitch), sin(pitch), cos(yaw) * cos(pitch)) * d, look)
 	# The player sits under the card, right of the rows.
 	var half_h := tan(deg_to_rad(_cam.fov * 0.5)) * d
 	var half_w := half_h * get_viewport_rect().size.aspect()
 	_cam.h_offset = -0.6 * half_w
-	_cam.v_offset = 0.3 * half_h
+	_cam.v_offset = (0.32 if mask else 0.3) * half_h
 
 
 # --- Drawing ------------------------------------------------------------------------

@@ -1,6 +1,6 @@
 class_name CustomTeams
 ## Teams made in CUSTOMIZE > CREATE TEAM, saved to `user://custom_teams.json`. Teams
-## lists them after the league's 39 (Teams.team(i) for i >= Teams.LIST.size()), so every
+## lists them after the league's 39 and the two classic teams (Teams.team(i) for i >= Teams.LIST.size()), so every
 ## screen and game takes them like any team. Their players come from Free Agency (Edit
 ## Roster, or Create Team's FILL ROSTER).
 ##
@@ -8,7 +8,14 @@ class_name CustomTeams
 ## chant, logo, colors) plus what the editor sets:
 ##   id, custom (true), primary / secondary / accent (indices into PALETTE),
 ##   pants / helmet (a SLOTS name), design (a Teams.DESIGNS key), badge (BadgeLogo's
-##   settings). `colors` is worked out from those (uniform_colors) and not saved.
+##   settings), mask_paint / mask_colors (its goalies' mask paint: "" each their own,
+##   GoalieVisual.MASK_PLAIN, or a GoalieVisual.MASK_PAINTS name and which color scheme),
+##   headgear (what the team wears on its heads: "" helmets, a SkaterVisual.TEAM_MASKS key
+##   or "none" for bare heads) and kit ("" the usual gear, or "old": the store's Old-Time
+##   Set on everyone, gloves, skates, sticks and goalie pads), crest / eye_fx / dangler (cosmetics
+##   for the whole team, each a SkaterVisual.CRESTS / EYE_FX / DANGLERS key or "") and
+##   face (face gear for all its skaters: a SkaterVisual.FACE_GEAR key, "" each their own),
+##   socks (a Teams.SOCK_PATTERNS name, "" the design's stripes) and pants_style ("" or "long"). `colors` is worked out from those (uniform_colors) and not saved.
 ## `logo` is the badge drawn to `user://team_logos/<id>.png` when the team is saved.
 
 const SAVE_PATH := "user://custom_teams.json"
@@ -47,7 +54,8 @@ static func blank() -> Dictionary:
 		"id": "", "custom": true, "city": "", "name": "", "abbr": "", "conference": "East",
 		"call": "", "chant": "", "logo": "",
 		"primary": 12, "secondary": 21, "accent": 4, "pants": "black", "helmet": "primary",
-		"design": "classic", "badge": BadgeLogo.blank(),
+		"design": "classic", "badge": BadgeLogo.blank(), "mask_paint": "", "mask_colors": 0, "headgear": "", "kit": "",
+		"crest": "", "eye_fx": "", "dangler": "", "face": "", "socks": "", "pants_style": "",
 	}
 	t.colors = uniform_colors(t)
 	return t
@@ -171,7 +179,7 @@ static func _load() -> void:
 		t.merge(d, true)
 		badge.merge(t.get("badge", {}), true)
 		t.badge = badge
-		for k: String in ["primary", "secondary", "accent"]:
+		for k: String in ["primary", "secondary", "accent", "mask_colors"]:
 			t[k] = int(t[k])
 		BadgeLogo.fix_types(t.badge)
 		t.colors = uniform_colors(t)

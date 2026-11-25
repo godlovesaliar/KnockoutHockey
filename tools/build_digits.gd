@@ -2,8 +2,8 @@ extends SceneTree
 ## Renders the jersey number digits 0-9 into one sheet (needs a window, not --headless):
 ##   godot --path . -s res://tools/build_digits.gd
 ## Each cell is CELL pixels; white = the digit's face, black = its outline, alpha =
-## coverage. SkaterVisual tints face and outline per team and projects the result onto
-## the jersey with a Decal.
+## coverage. SkaterVisual tints face and outline per team and prints the result on the
+## jersey (uniform.gdshader).
 ##   -> res://assets/characters/digits.png
 
 const CELL := Vector2i(160, 210)

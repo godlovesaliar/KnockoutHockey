@@ -20,8 +20,8 @@ const VOLUME_NAMES := ["Off", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10"]
 const AUDIO := [
 	{"key": "master", "label": "MASTER VOLUME", "values": VOLUME_VALUES, "names": VOLUME_NAMES,
 		"hint": "Everything at once."},
-	{"key": "music", "label": "MENU MUSIC", "values": VOLUME_VALUES, "names": VOLUME_NAMES,
-		"hint": "The front-end playlist."},
+	{"key": "music", "label": "MUSIC", "values": VOLUME_VALUES, "names": VOLUME_NAMES,
+		"hint": "The front-end playlist and the broadcast theme."},
 	{"key": "effects", "label": "SOUND EFFECTS", "values": VOLUME_VALUES, "names": VOLUME_NAMES,
 		"hint": "Skates, shots, hits, the horn and the menus."},
 	{"key": "crowd", "label": "CROWD AND ORGAN", "values": VOLUME_VALUES, "names": VOLUME_NAMES,
@@ -292,7 +292,7 @@ func _back() -> void:
 	if _leaving:
 		return
 	GameSettings.save_settings()
-	GameSettings.menu_select = 4
+	GameSettings.menu_select = 5
 	Sfx.play("pad", Vector3.INF, -8.0)
 	_leaving = true
 	var tw := create_tween()

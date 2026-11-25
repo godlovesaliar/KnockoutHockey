@@ -7,6 +7,9 @@ extends Control
 ## Up / down picks a row, left / right changes it (accept steps it forward too; the mouse:
 ## click a row to step it, right-click to step back). Pad Start starts from anywhere.
 ## Back: team select. Choices stay in GameSettings.config (and are saved) for next time.
+## A challenge game (GameSettings.mode "challenge") is played in the home team's arena
+## (the ARENA row is fixed) and on Pro or harder: Rookie shows and plays as Pro
+## (MatchDirector raises it), and the row steps through the harder ones only.
 ##
 ## `-- shot=<png> [wait=<s>] [sel=<n>] [home=<i>] [away=<i>]` saves a screenshot and quits.
 
@@ -61,6 +64,7 @@ var _card: Control
 var _fade: ColorRect
 var _leaving := false
 var _crests: Array[TextureRect] = []
+var _challenge := false     ## a challenge game: the arena and the easiest difficulty are off
 
 
 func _ready() -> void:
@@ -68,8 +72,16 @@ func _ready() -> void:
 	for k in ["home", "away"]:
 		if _arg(k, "") != "":
 			config[k + "_team"] = int(_arg(k, "0"))
-	if not config.has("arena") or (str(config.arena) != "" and str(Arenas.find(str(config.arena)).id) != str(config.arena)):
-		config.arena = ""   # (a deleted arena: back to the home team's)
+	if not config.has("arena") or (str(config.arena) != "" and not Arenas.pickable().any(
+			func(a: Dictionary) -> bool: return str(a.id) == str(config.arena))):
+		config.arena = ""   # (a deleted arena, or a rink not bought yet: back to the home team's)
+	if _arg("challenge", "") != "":   # (screenshots: a challenge against this team, as the shop starts one)
+		GameSettings.mode = "challenge"
+		GameSettings.challenge = int(_arg("challenge", "0"))
+		config.home_team = GameSettings.challenge
+	_challenge = GameSettings.mode == "challenge"
+	if _challenge:
+		config.arena = ""
 	_rules = [_arena_row()] + RULES
 	Sfx.play_music()
 	var back := MenuBackdrop.new()
@@ -105,7 +117,7 @@ func _ready() -> void:
 
 	var header := Control.new()
 	header.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	header.draw.connect(func() -> void: MenuStyle.draw_tag(header, Vector2(60, 40), "EXHIBITION", "GAME RULES"))
+	header.draw.connect(func() -> void: MenuStyle.draw_tag(header, Vector2(60, 40), "CHALLENGE" if _challenge else "EXHIBITION", "GAME RULES"))
 	_canvas.add_child(header)
 
 	_card = Control.new()
@@ -117,7 +129,7 @@ func _ready() -> void:
 		cr.texture = MenuArena.logo(int(config.get("home_team" if t == 0 else "away_team", t)))
 		cr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 		cr.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-		cr.size = Vector2(100, 100)
+		cr.size = Vector2(MenuStyle.logo_slot(cr.texture, 100.0), 100)   # (wide crests get a wider slot)
 		cr.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		_canvas.add_child(cr)
 		_crests.append(cr)
@@ -171,11 +183,13 @@ func _refresh() -> void:
 		var st: Dictionary = _rules[i]
 		var idx: int = st.values.find(config.get(st.key))
 		_items[i].value = st.names[idx] if idx >= 0 else str(config.get(st.key))
+		if _challenge and st.key == "difficulty" and float(config.get("difficulty", 0.5)) < Store.CHALLENGE_DIFFICULTY:
+			_items[i].value = "Pro (challenge)"
 		# OT length / shootout rounds only matter with that kind of overtime.
 		var ot: String = config.get("overtime", "sd_so")
 		_items[i].soon = false
 		_items[i].modulate.a = 0.45 if (st.key == "ot_length" and ot in ["off", "shootout"]) \
-				or (st.key == "shootout_rounds" and ot in ["off", "sudden_death"]) else 1.0
+				or (st.key == "shootout_rounds" and ot in ["off", "sudden_death"]) or (_challenge and st.key == "arena") else 1.0
 
 
 ## The ARENA row: the home team's own arena, or any arena there is.
@@ -183,11 +197,11 @@ func _arena_row() -> Dictionary:
 	var home := Arenas.home_of(int(config.get("home_team", 0)))
 	var values := [""]
 	var names := ["Home Arena (%s)" % str(home.name)]
-	for a: Dictionary in Arenas.all():
+	for a: Dictionary in Arenas.pickable():
 		values.append(str(a.id))
 		names.append(str(a.name))
 	return {"key": "arena", "label": "ARENA", "values": values, "names": names,
-		"hint": "Where the game is played: the home team's arena, or any other (yours from Create Arena too)."}
+		"hint": "Where the game is played: the home team's arena, or any other (yours from Create Arena too). More rinks in the Pro Shop."}
 
 
 func _select(i: int, quiet := false) -> void:
@@ -205,7 +219,14 @@ func _step(i: int, dir: int) -> void:
 		return
 	var st: Dictionary = _rules[i]
 	var values: Array = st.values
+	if _challenge and st.key == "arena":
+		_items[i].nudge()
+		return
+	if _challenge and st.key == "difficulty":
+		values = values.filter(func(v: float) -> bool: return v >= Store.CHALLENGE_DIFFICULTY)
 	var cur := values.find(config.get(st.key))
+	if cur < 0 and _challenge and st.key == "difficulty":
+		cur = 0   # (Rookie plays as Pro here: step on from Pro)
 	config[st.key] = values[wrapi(cur + dir, 0, values.size()) if cur >= 0 else 0]
 	Sfx.play("click", Vector3.INF, -8.0, 1.6 if dir > 0 else 1.25)
 	_refresh()
@@ -255,7 +276,7 @@ func _draw_card() -> void:
 	_card.draw_rect(Rect2(x, y, cw, 3), MenuStyle.RED)
 	for t in 2:
 		var cx := x + (cw * 0.22 if t == 0 else cw * 0.78)
-		_crests[t].position = Vector2(cx - 50, y + 12)
+		_crests[t].position = Vector2(cx - _crests[t].size.x * 0.5, y + 12)
 	var f := MenuStyle.font(0.2)
 	var small := MenuStyle.font(0.12)
 	var vw := f.get_string_size("VS", HORIZONTAL_ALIGNMENT_LEFT, -1, 34).x
@@ -284,7 +305,9 @@ func _who(team: int) -> String:
 
 
 func _draw_footer() -> void:
-	var hint: String = (RULES[_index].hint if _index < RULES.size() else "Drop the puck.")
+	var hint: String = (_rules[_index].hint if _index < _rules.size() else "Drop the puck.")
+	if _challenge and _index < _rules.size():
+		hint = {"arena": "A challenge is played in their arena.", "difficulty": "A challenge is played on Pro or harder."}.get(_rules[_index].key, hint)
 	var prompts := [[_input.accept_label(), "START" if _index == _items.size() - 1 else "CHANGE"], [_input.back_label(), "BACK"]]
 	MenuStyle.draw_footer(_footer, _canvas.size.x, hint, prompts, _input.using_pad)
 

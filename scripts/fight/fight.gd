@@ -727,14 +727,16 @@ func _begin_square_up() -> void:
 func _drop_gear(s: Skater, held: Dictionary) -> void:
 	var r := s.global_position + Vector3(_rng.randf_range(-0.6, 0.6), 0.0, _rng.randf_range(-0.6, 0.6))
 	var stick := MeshInstance3D.new()
-	stick.mesh = SkaterVisual.STICK_MESH
-	stick.material_override = MeshUtil.material(Color(0.07, 0.07, 0.08), 0.5)
+	stick.mesh = s.visual.shaft.mesh   # (their own stick, in its own finish)
+	for i in stick.mesh.get_surface_count():
+		stick.set_surface_override_material(i, s.visual.shaft.get_surface_override_material(i))
 	add_child(stick)
 	_fall(stick, held.stick, Transform3D(Basis(Vector3.UP, _rng.randf() * TAU) * Basis(Vector3.RIGHT, -PI * 0.5), r + Vector3(0, 0.02, 0)))
 	for k in 2:
 		var g := MeshInstance3D.new()
-		g.mesh = SkaterVisual.GLOVE_MESH
-		g.material_override = SkaterVisual.glove_material(s.visual.team_colors().gloves, s.visual.team_colors().trim)
+		var worn: Array = s.visual.glove_gear()   # (their own gloves: the old-time gauntlets too)
+		g.mesh = worn[0]
+		g.material_override = worn[2]
 		add_child(g)
 		var gp := s.global_position + Vector3(_rng.randf_range(-0.7, 0.7), 0.06, _rng.randf_range(-0.7, 0.7))
 		_fall(g, held.gloves[k], Transform3D(Basis(Vector3.UP, _rng.randf() * TAU) * Basis(Vector3.RIGHT, PI * 0.5), gp))

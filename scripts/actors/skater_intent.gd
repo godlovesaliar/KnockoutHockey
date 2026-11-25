@@ -20,6 +20,7 @@ var shoot_up := false
 var deke_down := false
 var deke_held := false
 var check_down := false
+var check_held := false      ## still on the check button: a slow check into the boards becomes a pin, held while it stays down
 var block_held := false      ## fights: R1 held
 
 
@@ -38,4 +39,5 @@ func clear() -> void:
 	deke_down = false
 	deke_held = false
 	check_down = false
+	check_held = false
 	block_held = false

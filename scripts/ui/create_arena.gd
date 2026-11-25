@@ -70,7 +70,7 @@ func _ready() -> void:
 		var v := _arg(k, "")
 		if v != "":
 			_a[k] = (v == "true") if _a[k] is bool else (int(v) if _a[k] is int or v.is_valid_int() else v)
-	_preview_team = clampi(int(_arg("team", str(GameSettings.config.get("home_team", 0)))), 0, Teams.count() - 1)
+	_preview_team = Store.open_team(clampi(int(_arg("team", str(GameSettings.config.get("home_team", 0)))), 0, Teams.count() - 1))
 	_saved = _snapshot()
 	_build_stage()
 
@@ -224,7 +224,7 @@ func _tab_rows(tab: String) -> Array:
 			{"key": "editing", "label": "EDITING", "kind": "choice",
 				"hint": "Make a new arena, or pick a saved one to change."},
 			{"key": "name", "label": "NAME", "kind": "text", "max": 24, "hint": "What the arena's called."},
-			{"key": "style", "label": "STYLE", "kind": "choice", "hint": "The kind of building: Modern Arena, Retro Dome, Community Rink or Outdoor Rink."},
+			{"key": "style", "label": "STYLE", "kind": "choice", "hint": "The kind of building: Modern Arena or Retro Dome, and the Community and Outdoor rinks once bought in the Pro Shop."},
 			{"key": "home", "label": "HOME TEAM", "kind": "choice",
 				"hint": "Make it a team's home. Outdoor rinks can only be home to created teams."},
 		]
@@ -260,7 +260,7 @@ func _tab_rows(tab: String) -> Array:
 
 
 func _team_choices(with_none: bool) -> Array:
-	var order := Teams.menu_order()
+	var order := Store.open_teams()   # (not the teams still locked in the shop)
 	var v: Array = [-1] if with_none else []
 	var n: Array = ["None"] if with_none else []
 	for i: int in order:
@@ -435,17 +435,21 @@ func _step(i: int, dir: int) -> void:
 			_load_arena(int(nv))
 			return
 		"style":
-			# Only the styles that are built (the rest step past, marked soon).
+			# Only the styles that are built and bought (the rest step past).
 			var k := cur
+			var locked := false
 			for n in values.size():
 				k = wrapi(k + dir, 0, values.size())
-				if values[k] in Arenas.READY:
+				if values[k] in Arenas.READY and Store.rink_open(values[k]):
 					break
+				locked = locked or not Store.rink_open(values[k])
 			if values[k] == _a.style:
 				_items[i].nudge()
 				_say("MORE STYLES ARE COMING")
 				Sfx.play("pad", Vector3.INF, -8.0)
 				return
+			if locked:
+				_say("MORE RINKS IN THE PRO SHOP")
 			_a.style = values[k]
 		"home":
 			_home = int(nv)

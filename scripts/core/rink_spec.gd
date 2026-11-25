@@ -32,6 +32,9 @@ const NET_WIDTH := 6.0 * FT
 const NET_HEIGHT := 4.0 * FT
 const NET_DEPTH := 40.0 * IN
 const NET_TOP_DEPTH := 22.0 * IN
+## The back corners of the top shelf and of the base are rounded (tools/blender/net.py has the same radii).
+const NET_TOP_CORNER := 0.20
+const NET_BASE_CORNER := 0.36
 const POST_RADIUS := 1.1875 * IN
 
 const PUCK_RADIUS := 1.5 * IN

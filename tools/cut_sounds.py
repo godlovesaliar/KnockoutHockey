@@ -1,6 +1,7 @@
 """Cuts the recordings in assets/sound/ into the clips the game plays (assets/sound/cut/).
 
     python tools/cut_sounds.py            (needs ffmpeg on PATH or FFMPEG set)
+    python tools/cut_sounds.py only=zamboni   (just the clips of that name; the rest stay as they are)
 
 Each entry below takes a stretch of a source file, fades its ends, normalizes its peak
 and writes <name>_<n>.ogg; the Sfx autoload loads every clip in assets/sound/cut/ and
@@ -83,6 +84,7 @@ SPLITS = {
 LOOPS = {
     # name: (source, start, length, crossfade, peak dB)
     "crowd": ("crowdbaseline", 0.0, 20.0, 1.5, -3),
+    "zamboni": ("zamboni", 1.0, 22.0, 2.0, -3),    # the resurfacer's engine (Zamboni._start_engine)
 }
 
 
@@ -191,11 +193,14 @@ def cut_intros(ff):
 
 def main():
     ff = ffmpeg_bin()
+    only = [a.split("=", 1)[1] for a in sys.argv[1:] if a.startswith("only=")]
     os.makedirs(OUT, exist_ok=True)
     for f in os.listdir(OUT):
-        if f.endswith(".ogg"):
+        if f.endswith(".ogg") and not only:
             os.remove(os.path.join(OUT, f))
     for name, parts in CLIPS.items():
+        if only and name not in only:
+            continue
         for i, (src, start, length, peak) in enumerate(parts):
             path = os.path.join(SRC, src + ".mp3")
             gain = peak - peak_db(ff, path, start, length)
@@ -206,6 +211,8 @@ def main():
                             "-af", af, "-c:a", "libvorbis", "-q:a", "5", out], check=True)
             print("%-16s %s %.2f+%.2f  gain %+.1f dB" % (os.path.basename(out), src, start, length, gain))
     for name, (src, start, length, xf, peak) in LOOPS.items():
+        if only and name not in only:
+            continue
         path = os.path.join(SRC, src + ".mp3")
         gain = peak - peak_db(ff, path, start, length)
         out = os.path.join(OUT, "%s_0.ogg" % name)
@@ -218,6 +225,8 @@ def main():
         subprocess.run([ff, "-v", "error", "-y", "-i", path, "-filter_complex", fc, "-map", "[out]",
                         "-c:a", "libvorbis", "-q:a", "5", out], check=True)
         print("%-16s %s loop %.1fs (xfade %.1fs)  gain %+.1f dB" % (os.path.basename(out), src, length - xf, xf, gain))
+    if only:
+        return
     cut_intros(ff)
     cut_splits(ff)
 

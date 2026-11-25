@@ -7,8 +7,9 @@ render_mode cull_disabled; // the inside of sleeves and collars shows at the hem
 // torso scaled to 0.6 m), so it doesn't swim when the body moves and fits every body:
 //   jersey  knit dimples, coarser mesh panels down the sides and under the arms, drape
 //           folds (around the sleeves, down the body), sewn seams at every stripe edge
-//   pants   nylon shell with sheen, quilted padding channels
-//   socks   ribbed knit
+//   pants   nylon shell with sheen, quilted padding channels; or matte canvas (the old-time
+//           kit); or a smooth long shell to the skates, striped down the side
+//   socks   ribbed knit; or heavy wool; clear tape round the shin on taped ones
 //   gloves  leather grain, darker palms
 // Height detail turns into normals per pixel (screen-space bump), and fine patterns fade
 // out with distance before they can shimmer.
@@ -24,6 +25,17 @@ uniform vec3 helmet : source_color = vec3(0.3, 0.04, 0.05); // unused here (the 
 uniform vec3 skates : source_color = vec3(0.04, 0.04, 0.05);
 uniform float darken = 1.0; // Alpha_Joints use a slightly darker shade
 instance uniform float gloves_worn = 1.0;   // 0 = gloves off (fights): the hands show bare
+// With a skate model on (SkaterVisual.add_skates): the sock ends here, over the boot's collar
+// (position along the leg, 1 = the ankle joint), and the foot inside the boot is not drawn.
+instance uniform float sock_end = 2.0;
+// With gloves on, the sleeve ends here, inside the glove's cuff (position along the arm,
+// 1 = the wrist): SkaterVisual sets it where a cuffed glove is worn.
+instance uniform float sleeve_end = 2.0;
+// What this player wears on the legs (SkaterVisual.dress_legs): their own choice, or the
+// team's kit. Pants: 0 the padded nylon shell, 1 old-time canvas, 2 long pants over the
+// socks. Socks: 0 knit, 1 knit with clear tape below the knee and over the ankle, 2 wool.
+instance uniform float pants_style = 0.0;
+instance uniform float sock_style = 0.0;
 
 uniform float detail = 1.0;          // 0 = flat colors (old look)
 uniform float knit_scale = 230.0;    // jersey knit cells per meter
@@ -40,14 +52,48 @@ uniform float yoke_r = 0.0;
 uniform float vstripes = 0.0;
 // Officials: long pants down over the legs instead of socks (socks drawn as pants).
 uniform bool long_pants = false;
+const vec2 TAPE_KNEE = vec2(0.555, 0.6);     // leg: the tape below the knee
+const vec2 TAPE_ANKLE = vec2(0.085, 0.035);  // leg: the tape over the ankle, back from the sock's end
 uniform vec3 yoke_shape = vec3(0.8, 2.6, 0.0);   // z 0: depth ignored, so pads poking through the jersey agree with it
+// Prints: the crest on the chest, the number and the nameplate on the back. Part of the
+// cloth (placed in its rest space, like the rest of the detail), so they bend and fold
+// with the jersey and never land on an arm, a glove or a stick passing in front of it.
+// Each box: center x, center y, 1 / width, 1 / height in rest space (0 = no print).
+// Set per player on their own copy of the material (SkaterVisual._print).
+uniform sampler2D crest_tex : source_color, filter_linear_mipmap_anisotropic, repeat_disable;
+uniform sampler2D number_tex : source_color, filter_linear_mipmap_anisotropic, repeat_disable;
+uniform sampler2D name_tex : source_color, filter_linear_mipmap_anisotropic, repeat_disable;
+uniform vec4 crest_box = vec4(0.0);
+uniform vec4 number_box = vec4(0.0);
+uniform vec4 name_box = vec4(0.0);
 
 varying vec3 rest_p;
 varying vec3 rest_n;
 
+// 1 on the two bands of tape round a taped sock, at `f` along the leg (`w`: edge softness).
+float tape_at(float f, float w) {
+	float e = min(sock_end, 0.96);
+	return smoothstep(TAPE_KNEE.x - w, TAPE_KNEE.x + w, f) * (1.0 - smoothstep(TAPE_KNEE.y - w, TAPE_KNEE.y + w, f))
+			+ smoothstep(e - TAPE_ANKLE.x - w, e - TAPE_ANKLE.x + w, f) * (1.0 - smoothstep(e - TAPE_ANKLE.y - w, e - TAPE_ANKLE.y + w, f));
+}
+
 void vertex() {
 	rest_p = CUSTOM0.xyz;
 	rest_n = CUSTOM1.xyz;
+	// Over a skate model the sock's front lies flat on the shin for its last few centimeters:
+	// the skate's tongue stands in front of it.
+	if (sock_end < 1.5 && COLOR.b > 0.5) {
+		VERTEX -= NORMAL * 0.012 * smoothstep(sock_end - 0.09, sock_end - 0.02, UV2.y) * smoothstep(0.2, 0.8, rest_n.z);
+	}
+	if (COLOR.b > 0.5) {
+		if (pants_style > 1.5) {
+			// Long pants hang a little clear of the shin.
+			VERTEX += NORMAL * 0.007 * smoothstep(pants_leg, pants_leg + 0.12, UV2.y);
+		} else if (sock_style > 0.5 && sock_style < 1.5) {
+			// Tape pulls the sock in.
+			VERTEX -= NORMAL * 0.007 * tape_at(UV2.y, 0.008);
+		}
+	}
 }
 
 float hash3(vec3 p) {
@@ -96,6 +142,16 @@ float seam(float f, float edge) {
 	return 1.0 - smoothstep(0.0, w * 1.5 + 0.004, abs(f - edge));
 }
 
+// A print at rest position `p`: its color, and in alpha how much of it covers the cloth
+// here. `side` 1 on the chest (picture right = the wearer's left), -1 on the back.
+vec4 print(sampler2D tex, vec4 box, vec2 p, float side) {
+	vec2 uv = vec2((p.x - box.x) * box.z * side, (box.y - p.y) * box.w) + 0.5;
+	vec4 c = texture(tex, uv);
+	vec2 in_box = step(vec2(0.0), uv) * step(uv, vec2(1.0));
+	c.a *= in_box.x * in_box.y;
+	return c;
+}
+
 void fragment() {
 	vec4 part;
 	float sk;
@@ -104,6 +160,22 @@ void fragment() {
 	uniform_regions_full(COLOR, UV2, part, sk, tr, acc);
 	if (part.w > 0.5 && gloves_worn < 0.5) {
 		discard;
+	}
+	if (gloves_worn > 0.5 && COLOR.g > 0.5 && UV2.y > sleeve_end) {
+		discard;
+	}
+	if (sock_end < 1.5 && (sk > 0.5 || (COLOR.b > 0.25 && UV2.y > sock_end * COLOR.b))) {
+		discard;
+	}
+	// Long pants: the socks' part of the leg is pants too, and carries no sock stripes.
+	float long_k = step(1.5, pants_style);
+	float canvas_k = step(0.5, pants_style) * (1.0 - long_k);
+	if (long_k > 0.5) {
+		part.y += part.z;
+		part.z = 0.0;
+		float leg = smoothstep(0.9, 1.0, COLOR.b);
+		tr *= 1.0 - leg;
+		acc *= 1.0 - leg;
 	}
 	float total = max(part.x + part.y + part.z + part.w + sk, 0.001);
 	// Above the base of the neck (collar, tops of the pads) everything is yoke: the
@@ -143,12 +215,40 @@ void fragment() {
 	float pants_k = clamp(part.y / total, 0.0, 1.0);
 	float socks_k = clamp(part.z / total, 0.0, 1.0);
 	float glove_k = clamp(part.w / total, 0.0, 1.0);
+	// How squarely the cloth faces out to the wearer's side (1 on the outside of a leg).
+	float out_x = n.x * sign(p.x);
+	if (long_k > 0.5) {
+		// A stripe in the trim color down the outside of each leg, waist to skate.
+		float sw = max(fwidth(out_x), 0.004);
+		c = mix(c, trim, smoothstep(0.945 - sw, 0.945 + sw, out_x) * pants_k);
+	}
+
+	// Prints, on the outside of the jersey's body: the chest faces forward at rest, the
+	// back backward (fading out where the cloth turns to the sides). Under the fabric
+	// detail below, so the folds and the knit run through them.
+	// (The branches are on uniforms only: the texture lookups keep their mip levels.)
+	float print_k = jersey_k * COLOR.r * (FRONT_FACING ? 1.0 : 0.0);
+	float chest = print_k * smoothstep(0.0, 0.3, n.z);
+	float back = print_k * smoothstep(0.0, 0.3, -n.z);
+	if (crest_box.z > 0.0) {
+		vec4 t = print(crest_tex, crest_box, p.xy, 1.0);
+		c = mix(c, t.rgb, t.a * chest);
+	}
+	if (number_box.z > 0.0) {
+		vec4 t = print(number_tex, number_box, p.xy, -1.0);
+		c = mix(c, t.rgb, t.a * back);
+	}
+	if (name_box.z > 0.0) {
+		vec4 t = print(name_tex, name_box, p.xy, -1.0);
+		c = mix(c, t.rgb, t.a * back);
+	}
 
 	float h = 0.0;          // height detail (bump)
 	float shade = 1.0;      // albedo multiplier
 	float rough = 0.8;
 	float spec = 0.35;
 	float rim = 0.0;
+	float tape_k = 0.0;     // clear tape over the sock: milky, and glossy
 
 	// --- Jersey -------------------------------------------------------------------
 	if (jersey_k > 0.01) {
@@ -192,30 +292,87 @@ void fragment() {
 
 	// --- Pants (breezers) ---------------------------------------------------------
 	if (pants_k > 0.01) {
-		float y = p.y / quilt_step;
-		float channel = fract(y);
-		float pillow = sin(3.14159 * channel);                     // puffed padding
-		float groove = 1.0 - smoothstep(0.0, 0.08, min(channel, 1.0 - channel));
 		float crinkle = noise3(p * 40.0) * keep(p, 40.0);
-		float ph = pillow * 0.5 - groove * 0.6 + crinkle * 0.15;
-		h += ph * pants_k;
-		shade = mix(shade, (0.82 + 0.18 * pillow) * (1.0 - 0.25 * groove), pants_k);
-		rough = mix(rough, 0.42 + 0.15 * crinkle, pants_k);
-		spec = mix(spec, 0.55, pants_k);
-		rim += 0.1 * pants_k;
+		if (canvas_k > 0.5) {
+			// Old-time canvas: a matte plain weave, unevenly worn, creased across the lap
+			// and down the legs, with a stitched seam down the outside and a hem at the knee.
+			float weave = tri_dots(p, w, 300.0, 0.3) * keep(p, 300.0);
+			float wear = noise3(p * 11.0) * 0.6 + noise3(p * 34.0) * 0.4;
+			float crease = smoothstep(0.3, 0.8, noise3(vec3(p.x * 9.0, p.y * 5.0, p.z * 9.0)));
+			float sw = max(fwidth(out_x), 0.002);
+			float side_seam = 1.0 - smoothstep(0.0, sw * 1.5 + 0.004, abs(out_x - 0.985));
+			float hem = pure.b * seam(f, pants_leg - 0.025);
+			float st = clamp(side_seam + hem, 0.0, 1.0);
+			h += (crease * 1.0 - weave * 0.25 - st * 0.6 + crinkle * 0.2) * pants_k;
+			shade = mix(shade, (0.8 + 0.2 * wear) * (0.86 + 0.14 * crease) * (1.0 - 0.1 * weave) * (1.0 - 0.3 * st), pants_k);
+			rough = mix(rough, 0.93, pants_k);
+			spec = mix(spec, 0.2, pants_k);
+			rim += 0.2 * pants_k;
+		} else if (long_k > 0.5) {
+			// Long pants: one smooth nylon shell, no padding channels, long folds down the leg.
+			float fold = smoothstep(0.25, 0.8, noise3(vec3(p.x * 14.0, p.y * 3.0, p.z * 14.0)));
+			h += (fold * 0.9 + crinkle * 0.25) * pants_k;
+			shade = mix(shade, 0.8 + 0.2 * fold, pants_k);
+			rough = mix(rough, 0.36 + 0.15 * crinkle, pants_k);
+			spec = mix(spec, 0.6, pants_k);
+			rim += 0.12 * pants_k;
+		} else {
+			float y = p.y / quilt_step;
+			float channel = fract(y);
+			float pillow = sin(3.14159 * channel);                     // puffed padding
+			float groove = 1.0 - smoothstep(0.0, 0.08, min(channel, 1.0 - channel));
+			float ph = pillow * 0.5 - groove * 0.6 + crinkle * 0.15;
+			h += ph * pants_k;
+			shade = mix(shade, (0.82 + 0.18 * pillow) * (1.0 - 0.25 * groove), pants_k);
+			rough = mix(rough, 0.42 + 0.15 * crinkle, pants_k);
+			spec = mix(spec, 0.55, pants_k);
+			rim += 0.1 * pants_k;
+		}
 	}
 
 	// --- Socks: vertical knit ribs ------------------------------------------------
 	if (socks_k > 0.01) {
 		// Around the leg by the rest normal's heading: ribs stay vertical all the way round.
 		float ang = atan(n.z, n.x);
-		float rib = 0.5 + 0.5 * sin(ang * sock_ribs);
-		rib *= 1.0 - smoothstep(0.25, 0.6, fwidth(ang) * sock_ribs / 6.2832);
+		float wool_k = step(1.5, sock_style);
+		// Wool: half as many ribs, twice as heavy.
+		float ribs = sock_ribs * mix(1.0, 0.5, wool_k);
+		float rib = 0.5 + 0.5 * sin(ang * ribs);
+		rib *= 1.0 - smoothstep(0.25, 0.6, fwidth(ang) * ribs / 6.2832);
 		float fold = smoothstep(0.25, 0.85, noise3(vec3(p.x * 8.0, f * 20.0, p.z * 8.0)));
-		h += (rib * 0.4 + fold * 0.4) * socks_k;
-		shade = mix(shade, (0.88 + 0.12 * rib) * (0.9 + 0.1 * fold), socks_k);
-		rough = mix(rough, 0.9, socks_k);
-		rim += 0.3 * socks_k;
+		float sh = rib * 0.4 + fold * 0.4;
+		float ss = (0.88 + 0.12 * rib) * (0.9 + 0.1 * fold);
+		float sr = 0.9;
+		float sp = spec;
+		float srim = 0.3;
+		if (wool_k > 0.5) {
+			// Knit rows across the ribs, fuzz, uneven yarn, and the sock sagging in rings
+			// toward the ankle.
+			float rows = (0.5 + 0.5 * sin(f * 520.0)) * (1.0 - smoothstep(0.25, 0.6, fwidth(f) * 520.0 / 6.2832));
+			float fuzz = noise3(p * 260.0) * keep(p, 260.0);
+			float yarn = noise3(p * 60.0);
+			float sag = smoothstep(0.3, 0.8, noise3(vec3(p.x * 5.0, f * 60.0, p.z * 5.0))) * smoothstep(0.62, 0.88, f);
+			sh = rib * 0.75 + rows * 0.2 + fuzz * 0.2 + fold * 0.4 + sag * 1.1;
+			ss = (0.78 + 0.22 * rib) * (0.92 + 0.08 * rows) * (0.86 + 0.14 * yarn) * (0.9 + 0.1 * fold) * (0.84 + 0.16 * sag);
+			sr = 1.0;
+			srim = 0.55;
+		} else if (sock_style > 0.5) {
+			// Clear tape: glossy, the knit pressed flat under it, its windings showing as
+			// faint rings.
+			float tape = tape_at(f, max(fwidth(f), 0.0015));
+			float wind = 0.5 + 0.5 * sin(f * 420.0);
+			sh = mix(sh, wind * 0.12 - 0.35, tape);
+			ss = mix(ss, 1.0 + 0.06 * wind, tape);
+			tape_k = tape * socks_k;
+			sr = mix(sr, 0.14, tape);
+			sp = mix(sp, 0.8, tape);
+			srim = mix(srim, 0.0, tape);
+		}
+		h += sh * socks_k;
+		shade = mix(shade, ss, socks_k);
+		rough = mix(rough, sr, socks_k);
+		spec = mix(spec, sp, socks_k);
+		rim += srim * socks_k;
 	}
 
 	// --- Gloves (outfit hands, mostly under the glove models) ----------------------
@@ -229,7 +386,7 @@ void fragment() {
 
 	rough = mix(rough, 0.35, clamp(sk, 0.0, 1.0));
 	shade = mix(1.0, shade, detail);
-	ALBEDO = c * shade * darken;
+	ALBEDO = mix(c * shade, vec3(0.9), tape_k * 0.22) * darken;
 	ROUGHNESS = rough;
 	SPECULAR = spec;
 	RIM = rim * detail;

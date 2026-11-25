@@ -83,12 +83,7 @@ func _text(s: String, pos: Vector2, width: float, font_size: int, color: Color, 
 
 
 func _logo(team: int, rect: Rect2) -> void:
-	var tex := MenuStyle.team_logo(team)
-	if tex == null:
-		return
-	var s := minf(rect.size.x / tex.get_width(), rect.size.y / tex.get_height())
-	var sz := Vector2(tex.get_width(), tex.get_height()) * s
-	draw_texture_rect(tex, Rect2(rect.position + (rect.size - sz) * 0.5, sz), false)
+	MenuStyle.draw_logo(self, MenuStyle.team_logo(team), rect)
 
 
 func _draw_wide(d: Node) -> void:

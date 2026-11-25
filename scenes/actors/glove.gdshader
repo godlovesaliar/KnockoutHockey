@@ -10,6 +10,9 @@ render_mode cull_disabled;
 // The padding is a nylon shell (a visible weave, a soft sheen); the palm a darker,
 // rougher grained leather. Detail is pinned to the model (its own vertex positions) and
 // fades out with distance before it can shimmer.
+// `leather` (the Old-Time Set's gauntlets, skates and goalie pads): the shell is leather
+// too, grained like the palm, a little uneven in tone where it has worn, with no weave
+// and no nylon sheen.
 
 uniform vec3 shell : source_color = vec3(0.55, 0.08, 0.1);
 uniform vec3 palm : source_color = vec3(0.2, 0.19, 0.18);
@@ -20,6 +23,7 @@ uniform float weave_scale = 320.0;  // nylon weave cells per meter (model space)
 uniform float grain_scale = 380.0;  // leather grain cells per meter
 uniform float stitch_scale = 260.0; // stitches per meter along the seams
 uniform float bump = 1.0;
+uniform float leather = 0.0;        // 1: the shell is leather, not nylon
 
 varying vec3 lp;
 
@@ -59,7 +63,7 @@ void fragment() {
 	float wk = keep(lp, weave_scale);
 	vec3 wp = lp * weave_scale * 3.14159;
 	float weave = (sin(wp.x + wp.y) * sin(wp.y - wp.z + wp.x * 0.5)) * 0.5 + 0.5;
-	weave *= wk;
+	weave *= wk * (1.0 - leather);
 	float grain = noise3(lp * grain_scale) * 0.7 + noise3(lp * grain_scale * 2.3) * 0.3;
 	grain *= keep(lp, grain_scale * 2.3);
 	// Stitches: dashes along the seams (lighter thread on the dark seam line).
@@ -68,17 +72,21 @@ void fragment() {
 	float thread = seam * (1.0 - seam) * 4.0 * dash;     // along the seam's shoulders
 
 	vec3 base = mix(mix(shell, trim, tr), palm, pm);
-	float shade = (0.35 + 0.65 * ao) * (1.0 - seam_dark * seam) * (1.0 - 0.08 * weave * (1.0 - pm)) * (1.0 - 0.07 * grain * pm);
+	// Leather wears unevenly: broad lighter and darker patches.
+	float worn = noise3(lp * 22.0) * 0.6 + noise3(lp * 61.0) * 0.4;
+	base *= mix(1.0, 0.84 + 0.32 * worn, leather);
+	float grained = max(pm, leather * (1.0 - tr));     // where the surface is leather
+	float shade = (0.35 + 0.65 * ao) * (1.0 - seam_dark * seam) * (1.0 - 0.08 * weave * (1.0 - pm)) * (1.0 - 0.07 * grain * grained);
 	ALBEDO = mix(base * shade, base * 1.15 + 0.08, thread * 0.5);
-	ROUGHNESS = mix(0.45, 0.78, pm) + 0.12 * (1.0 - ao);
+	ROUGHNESS = mix(mix(0.45, 0.58, leather), 0.78, pm) + 0.12 * (1.0 - ao);
 	SPECULAR = mix(0.5, 0.3, pm);
 	AO = ao;
 	AO_LIGHT_AFFECT = 0.6;
-	RIM = 0.12 * (1.0 - pm) * ao;      // the nylon's sheen at grazing angles
+	RIM = 0.12 * (1.0 - pm) * ao * (1.0 - leather);      // the nylon's sheen at grazing angles
 	RIM_TINT = 0.5;
 
 	// Screen-space bump from the height detail (kept small: the shapes carry the form).
-	float h = mix(weave * 0.14, grain * 0.5, pm) - seam * 0.6;
+	float h = mix(weave * 0.14, grain * 0.5, grained) - seam * 0.6;
 	h *= bump;
 	vec3 dpdx = dFdx(VERTEX);
 	vec3 dpdy = dFdy(VERTEX);

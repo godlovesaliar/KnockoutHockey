@@ -70,6 +70,10 @@ func _play(n: int, period: float, totals: Dictionary) -> void:
 			s.foul_committed.connect(func(_o: Skater, _v: Skater, kind: StringName) -> void:
 				var k := "foul_" + str(kind)
 				totals[k] = int(totals.get(k, 0)) + 1)
+			# Board battles, by how they end.
+			s.pin_ended.connect(func(_a: Skater, _b: Skater, how: StringName) -> void:
+				var k := "pin_" + str(how)
+				totals[k] = int(totals.get(k, 0)) + 1)
 	if OS.get_cmdline_user_args().has("trace"):
 		m.phase_changed.connect(func(ph: int) -> void:
 			print("  [%.1fs] phase %s  P%d clock %.1f  score %s" % [Time.get_ticks_msec() / 1000.0, MatchDirector.Phase.keys()[ph], m.period, m.clock, m.score]))
@@ -139,6 +143,11 @@ func _play(n: int, period: float, totals: Dictionary) -> void:
 		m.shots_on_goal(0), m.shots_on_goal(1), st.hits[0] + st.hits[1], st.big_hits[0] + st.big_hits[1],
 		st.penalties[0], st.penalties[1], st.pp_goals[0], st.pp_goals[1], st.offsides, st.icings,
 		st.changes[0], st.changes[1], ticks / 120.0])
+	var pins := {}
+	for k: String in totals:
+		if k.begins_with("pin_"):
+			pins[k] = totals[k]
+	print("  board battles so far, by how they ended: %s" % [pins])
 	_check(done.finished, "game %d reaches FINAL" % n)
 	_check(escapes == 0, "game %d: puck never escapes the rink (%d ticks)" % [n, escapes])
 	_check(longest_carry < 120 * 25, "game %d: nobody holds the puck forever (longest %.1fs)" % [n, longest_carry / 120.0])

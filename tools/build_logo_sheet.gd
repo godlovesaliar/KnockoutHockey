@@ -15,15 +15,15 @@ const PANEL := Color(0.14, 0.15, 0.18)
 
 
 func _init() -> void:
-	var font := SystemFont.new()   # (PLAYB___.TTF maps letters to pad-button glyphs)
+	var font := SystemFont.new()
 	font.font_names = PackedStringArray(["Arial", "Segoe UI", "sans-serif"])
 	font.font_weight = 700
 	var most := 0
-	for conf: String in Teams.CONFERENCES:
+	for conf: String in Teams.GROUPS:
 		most = maxi(most, Teams.in_conference(conf).size())
 	var rows_per_conf := ceili(float(most) / COLS)
 	var size := Vector2i(MARGIN * 2 + COLS * int(CELL.x),
-		TITLE + Teams.CONFERENCES.size() * (HEADER + rows_per_conf * int(CELL.y)) + MARGIN)
+		TITLE + Teams.GROUPS.size() * (HEADER + rows_per_conf * int(CELL.y)) + MARGIN)
 
 	var vp := SubViewport.new()
 	vp.size = size
@@ -42,8 +42,8 @@ func _init() -> void:
 	vp.add_child(title)
 
 	var y := float(TITLE)
-	for conf: String in Teams.CONFERENCES:
-		var head := _label(conf.to_upper() + " CONFERENCE", font, 40, Color(1, 0.8, 0.25))
+	for conf: String in Teams.GROUPS:
+		var head := _label((conf.to_upper() + " CONFERENCE" if conf != Teams.CLASSIC else "CLASSIC TEAMS"), font, 40, Color(1, 0.8, 0.25))
 		head.position = Vector2(0, y + 14)
 		head.size = Vector2(size.x, 56)
 		vp.add_child(head)

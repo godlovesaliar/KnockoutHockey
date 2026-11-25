@@ -2,6 +2,8 @@
 
 Run inside Blender (Blender MCP, or headless):
     blender -b -P tools/blender/build_jersey.py -- female
+    blender -b -P tools/blender/build_jersey.py -- male:goalie     (one cut only; or :skater)
+Headless is the safe way: Body() removes every object in the open file first.
 Writes assets/characters/jersey_<body>.glb: one skinned mesh, bind pose = the body's rest
 pose, bones named like the body's FBX (tools/build_characters.gd maps them the same way).
 
@@ -27,12 +29,18 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")) if "
 
 BODIES = {
     # `shape`: this body's overrides of P below.
-    "female": dict(file="assets/player/Mujer_Base.fbx", height=1.75, prefix="mixamorig:", map={}, shape={}),
-    "male": dict(file="assets/player/Hombre_Base (1).fbx", height=1.84, prefix="",
+    # Our own bodies (tools/blender/mpfb_body.py). The female: on a Mixamo-style rig whose
+    # neck joint sits high and behind the middle of her neck, so the collar is laid out
+    # above it and around the neck itself, as a ring cut level; the cloth over the top of
+    # the shoulder is held to the collarbone and chest (`shoulder_hold`).
+    "female": dict(file="assets/player/mpfb_female.glb", height=1.75, prefix="mixamorig:", map={},
+                   shape=dict(top=0.05, collar_line=True, collar_rise=4.0, collar_r0=0.08, neck_drop=-0.014, neck_centered=True, neck_r=0.6, neck_ease=0.014, neck_gap=0.012, v_depth=0.055, sh_r=0.07, sleeve_ease=0.012, sleeve_back=0.05, shoulder_smooth=40, shoulder_weight_smooth=80, shoulder_hold=0.75),
+                   goalie=dict(collar_r0=0.08, neck_drop=-0.005, neck_ease=0.016, neck_gap=0.014, sh_r=0.135, sleeve_ease=0.055)),
+    # The male: boxier and straighter; the thick neck needs the collar-line cut and a lower
+    # top; sleeves start further in and the shoulders are rounded off (the broad shoulders
+    # otherwise leave a pad-like shelf).
+    "male": dict(file="assets/player/mpfb_male.glb", height=1.84, prefix="",
                  map={"LowerBack": "Spine", "Spine": "Spine1", "Spine1": "Spine2"},
-                 # boxier and straighter; the thick neck needs the collar-line cut and a
-                 # lower top; sleeves start further in and the shoulders are rounded off
-                 # (the broad shoulders otherwise leave a pad-like shelf)
                  shape=dict(taper_fb=0.04, taper_side=0.06, top=0.05, collar_line=True,
                             sh_r=0.092, sleeve_back=0.06, shoulder_smooth=40,
                             shoulder_weight_smooth=80, flare=0.06, pin_hem=True,
@@ -46,6 +54,28 @@ P = dict(
     ease=0.024,        # cloth off the body (m), over the pads
     sleeve_ease=0.022, # sleeves off the arms (m)
     gap=0.018,         # least room between the shoulders / sleeves and the body (m)
+    neck_ease=None,    # cloth off the body around the neck opening (m; None = ease): a roomy
+                       # cut (the goalie's) otherwise stands as far off the neck as off the chest
+    neck_gap=None,     # ...and the least room kept there (m; None = gap)
+    collar_rise=0.0,   # with collar_line: how fast the collar line climbs going out from the
+                       # neck (m per m), past collar_r0 from the middle of the neck (m at
+                       # 1.75 m; a little less front to back, as a neck is). A roomy cut's yoke
+                       # stands above a level collar line all the way out to the shoulders, and
+                       # a level cut takes the whole of it off: a neck opening as wide as the
+                       # yoke. Steep (4) cuts a clean round hole; a slope near the yoke's own
+                       # grazes the cloth and leaves it ragged.
+    collar_r0=0.1,
+    v_depth=0.04,      # how far the V drops below the front of the neck opening (m at 1.75 m)
+    neck_drop=0.0,     # the neck opening and collar are laid out this far below the neck joint
+                       # (m at 1.75 m; negative: above it)
+    neck_centered=False,  # the neck opening is laid out around the neck's own middle front to
+                       # back, not around the neck joint (MPFB's "mixamo" rig has the joint
+                       # 2.4 cm behind the middle of the neck: the opening came out low at the
+                       # back and in front, and stood up at the sides like wings)
+    neck_r=1.0,        # the plain round cut around the neck (everything inside an ellipse 15.6 cm
+                       # across, from 5 cm under the neck point up), as a share of that size.
+                       # Under 0.65 or so it lies inside the neck and takes nothing: the cloth
+                       # then stands up the neck as a ring, cut off level at the collar line
     taper_fb=0.07,     # how fast the front/back may pull in going down (m per m)
     taper_side=0.2,    # same for the sides (low = falls straight from the armpits)
     top=0.09,          # torso rings run up to this far above the neck joint (m)
@@ -56,6 +86,8 @@ P = dict(
     pin_hem=False,     # below the hips joint, skin to the pelvis only
     torso_arms=True,   # torso rings above the armpit also wrap the upper arms (shoulder line)
     deltoid_to_arm=0.0,  # how much cloth past the shoulder joint is moved onto the upper arm
+    shoulder_hold=0.0,   # how much of the upper arm's weight the cloth over the top of the
+                       # shoulder (inward of the joint) hands back to the collarbone and chest
     flare=0.045,       # extra looseness at the hem (m): it hangs over the padded pants
     flare_h=0.2,       # over how much height above the hem the flare builds up (m)
     sh_r=0.100,        # sleeve radius at the shoulder (m)
@@ -81,7 +113,11 @@ class Body:
         P.update(self.spec.get("shape", {}))
         for o in list(bpy.data.objects):
             bpy.data.objects.remove(o)
-        bpy.ops.import_scene.fbx(filepath=os.path.join(ROOT, self.spec["file"]))
+        path = os.path.join(ROOT, self.spec["file"])
+        if path.lower().endswith((".glb", ".gltf")):
+            bpy.ops.import_scene.gltf(filepath=path)
+        else:
+            bpy.ops.import_scene.fbx(filepath=path)
         self.arm = next(o for o in bpy.data.objects if o.type == "ARMATURE")
         meshes = [o for o in bpy.data.objects if o.type == "MESH"]
         self.mesh = max(meshes, key=lambda o: len(o.data.vertices))
@@ -173,6 +209,12 @@ class Body:
     def joint(self, canon):
         return self.arm.pose.bones[self.bones[canon]].head.copy()
 
+    def neck(self):
+        """Where the neck opening is laid out from: the neck joint, less the cut's neck_drop."""
+        p = self.joint("Neck")
+        p.z -= P["neck_drop"] * self.spec["height"] / 1.75
+        return p
+
     def bvh(self, bones, extra=()):
         me = self.posed.data
         polys = [list(p.vertices) for p in me.polygons if sum(self.dom[i] in bones for i in p.vertices) >= 2]
@@ -258,9 +300,18 @@ def _hull_ring(row):
 TORSO = {"Hips", "Spine", "Spine1", "Spine2", "Neck", "LeftShoulder", "RightShoulder", "LeftUpLeg", "RightUpLeg"}
 
 
+def neck_w(body, p):
+    """How much a point belongs to the surroundings of the neck opening (0..1): 1 close
+    around the neck from just under the collar line up, fading out toward the shoulders."""
+    neck = body.neck()
+    k = body.spec["height"] / 1.75
+    r = math.hypot(p.x, p.y - neck.y)
+    return (1.0 - smoothstep(0.085 * k, 0.17 * k, r)) * smoothstep(neck.z - 0.12 * k, neck.z - 0.05 * k, p.z)
+
+
 def torso(body):
     hips = body.rest["Hips"].z
-    neck = body.joint("Neck")
+    neck = body.neck()
     pit = body.joint("LeftArm").z - 0.10 * body.spec["height"] / 1.75
     low = body.bvh(TORSO)
     high = body.bvh(TORSO | {"LeftArm", "RightArm"}) if P["torso_arms"] else low
@@ -279,7 +330,10 @@ def torso(body):
             a = 2 * math.pi * t / NT
             d = Vector((math.sin(a), -math.cos(a), 0))
             h = bvh.ray_cast(Vector((C.x, C.y, z)) + d * 0.8, -d, 0.8)
-            row.append((0.8 - h[3] + P["ease"]) if h[0] else 0.0)
+            ease = P["ease"]
+            if h[0] and P["neck_ease"] is not None:
+                ease += (P["neck_ease"] - ease) * neck_w(body, h[0])
+            row.append((0.8 - h[3] + ease) if h[0] else 0.0)
         R.append(_hull_ring(row) if max(row) > 0 else row)
     for _ in range(10):
         R = [[(row[t - 1] + 2 * row[t] + row[(t + 1) % NT]) / 4 if row[t] > 0 else 0 for t in range(NT)] for row in R]
@@ -436,8 +490,11 @@ def clearance(body, j, gap=0.018, iters=3):
                 continue
             out = v.co - loc
             side = out.dot(nrm)
-            if side < gap:
-                v.co = loc + nrm * gap if side < 0 else v.co + nrm * (gap - side)
+            g = gap
+            if P["neck_gap"] is not None:
+                g += (P["neck_gap"] - g) * neck_w(body, v.co)
+            if side < g:
+                v.co = loc + nrm * g if side < 0 else v.co + nrm * (g - side)
                 moved += 1
         m = j.modifiers.new("relax", "SMOOTH")
         m.factor = 0.5
@@ -541,13 +598,34 @@ def cut_openings(body, j):
         c = E + d * ((H - E).length * P["cuff_at"] - 0.006)
         bmesh.ops.bisect_plane(bm, geom=bm.verts[:] + bm.edges[:] + bm.faces[:], plane_co=c, plane_no=d, clear_outer=True)
     # Neck: an ellipse around the neck seen from above, tilted (lower in front), with a V.
-    neck = body.joint("Neck")
+    neck = body.neck()
     head = body.joint("Head")
     k = body.spec["height"] / 1.75
-    rx, ry = 0.078 * k, 0.07 * k
+    rx, ry = 0.078 * k * P["neck_r"], 0.07 * k * P["neck_r"]
     cy = neck.y - 0.006
-    v_depth = 0.04 * k         # how far the V drops below the front of the opening
+    v_depth = P["v_depth"] * k
     v_half = 0.024 * k         # half width of the V at the top
+    # The middle of the neck itself front to back (the joint sits toward its back).
+    yc = cy
+    if P["collar_rise"] or P["neck_centered"]:
+        sb = body.smooth_bvh()
+        # (no higher than the joint: a collar laid out above it, neck_drop < 0, measured the
+        # chin instead of the throat)
+        zp = min(neck.z, body.joint("Neck").z)
+        # (beside the middle line, a few times: a ray down the body's own seam at x = 0 can
+        # slip between its triangles, and the ray from behind then lands on the inside of
+        # the throat. On the MPFB female that put the "middle" at the front of her neck, and
+        # the opening stood uncut at the back and sides.)
+        mids = []
+        for x in (-0.012, -0.006, 0.006, 0.012):
+            f = sb.ray_cast(Vector((x, -1, zp)), Vector((0, 1, 0)), 2.0)[0]
+            b = sb.ray_cast(Vector((x, 1, zp)), Vector((0, -1, 0)), 2.0)[0]
+            if f is not None and b is not None and 0.04 < b.y - f.y < 0.25:
+                mids.append((f.y + b.y) * 0.5)
+        if mids:
+            yc = sorted(mids)[len(mids) // 2]
+    if P["neck_centered"]:
+        cy = yc
     kill = []
     for v in bm.verts:
         p = v.co
@@ -562,6 +640,7 @@ def cut_openings(body, j):
             back = max(0.0, (p.y - cy)) / max(math.hypot(p.x, p.y - cy), 1e-6)
             front = max(0.0, -(p.y - cy)) / max(math.hypot(p.x, p.y - cy), 1e-6)
             z_line = neck.z + 0.015 * k * back - 0.02 * k * front
+            z_line += P["collar_rise"] * max(0.0, math.hypot(p.x, (p.y - yc) / 0.9) - P["collar_r0"] * k)
             inside = p.z > z_line
         front = p.y < cy - ry * 0.4
         if front and abs(p.x) < v_half:
@@ -576,6 +655,34 @@ def cut_openings(body, j):
     # drop slivers left by the cuts
     loose = [v for v in bm.verts if not v.link_faces]
     bmesh.ops.delete(bm, geom=loose, context="VERTS")
+    # ...and the scraps: a patch of cloth the collar line left standing on its own, a pinhole
+    # beside the opening (a few faces whose corners all rose above the line). Thickened, a
+    # scrap's knife-edge corners flew meters out, a whole group at a time (a streak from the
+    # MPFB female's collar to the far boards).
+    seen, scraps = set(), []
+    for v in bm.verts:
+        if v in seen:
+            continue
+        part, stack = [v], [v]
+        seen.add(v)
+        while stack:
+            a = stack.pop()
+            for e in a.link_edges:
+                o = e.other_vert(a)
+                if o not in seen:
+                    seen.add(o)
+                    part.append(o)
+                    stack.append(o)
+        if len(part) < 200:
+            scraps.extend(part)
+    if scraps:
+        print("  cut: dropped %d vertices of loose scraps" % len(scraps))
+        bmesh.ops.delete(bm, geom=scraps, context="VERTS")
+    holes = [e for loop in _boundary_loops(bm) if len(loop) <= 12 for e in bm.edges
+             if e.is_boundary and e.verts[0] in loop and e.verts[1] in loop]
+    if holes:
+        filled = bmesh.ops.holes_fill(bm, edges=holes, sides=12)
+        print("  cut: filled %d pinholes" % len(filled["faces"]))
     bm.to_mesh(j.data)
     bm.free()
 
@@ -643,6 +750,12 @@ PART_BODY, PART_COLLAR, PART_LACE = 0.0, 0.5, 1.0   # "part" color attribute (re
 def thickness(j, t=0.005):
     """Cloth thickness: an inner layer and a rim at every opening, so the hem, cuffs and
     neck read as fabric edges instead of a paper-thin cut."""
+    from mathutils.kdtree import KDTree
+
+    was = KDTree(len(j.data.vertices))
+    for v in j.data.vertices:
+        was.insert(v.co, v.index)
+    was.balance()
     m = j.modifiers.new("thick", "SOLIDIFY")
     m.thickness = t
     m.offset = -1.0
@@ -656,6 +769,13 @@ def thickness(j, t=0.005):
     bm = bmesh.new()
     bm.from_mesh(j.data)
     fixed = 0
+    # (first whole groups thrown out together, which have each other for neighbors: nothing
+    # of the cloth may end up more than a few thicknesses from where the cloth was)
+    for v in bm.verts:
+        co, _, dist = was.find(v.co)
+        if dist > t * 4.0:
+            v.co = co
+            fixed += 1
     for _ in range(3):
         for v in bm.verts:
             if not v.link_edges:
@@ -675,18 +795,22 @@ def collar(body, j):
     across the V. Returns the collar object (joined into the jersey by the caller)."""
     bm = bmesh.new()
     bm.from_mesh(j.data)
-    neck = body.joint("Neck")
+    neck = body.neck()
     loops = [l for l in _boundary_loops(bm) if sum(v.co.z for v in l) / len(l) > neck.z - 0.12]
     loop = max(loops, key=len)
     pts = [v.co.copy() for v in loop]
     jb = BVHTree.FromBMesh(bm)
     N = 120
     pts = _resample(pts, N)
+    # The cut runs vertex to vertex: take its teeth off everywhere first (a few mm of
+    # rounding), before the V is found and kept pointed below.
+    for _ in range(3):
+        pts = [pts[i] * 0.5 + (pts[i - 1] + pts[(i + 1) % N]) * 0.25 for i in range(N)]
     # the V's point: the lowest point of the opening near the middle, in front
     front = min(range(N), key=lambda i: pts[i].z + abs(pts[i].x) * 4 if pts[i].y < neck.y else 9)
     # smooth the jagged cut, less toward the V so it stays pointed
     keep = [math.exp(-(min(abs(i - front), N - abs(i - front)) / 4.0) ** 2) for i in range(N)]
-    for _ in range(10):
+    for _ in range(30):   # (a level cut across the nearly level yoke behind the neck wanders by centimeters)
         pts = [pts[i].lerp(pts[i] * 0.5 + (pts[i - 1] + pts[(i + 1) % N]) * 0.25, 1 - keep[i]) for i in range(N)]
     # Snap the jersey's own cut edge onto the smoothed curve: the vertex-by-vertex cut is
     # jagged, and its teeth would stick out from under the band.
@@ -722,15 +846,44 @@ def collar(body, j):
         prof.append((math.copysign(abs(cb) ** 0.4, cb) * width * 0.5, math.copysign(abs(cn) ** 0.6, cn) * thick * 0.5))
     rings = []
     cy = neck.y
+    mid = sum(pts, Vector()) / N
+    frames = []
     for i, p in enumerate(pts):
         tang = (pts[(i + 1) % N] - pts[i - 1]).normalized()
         loc, n, _, _ = jb.find_nearest(p)
         out_dir = Vector((p.x, p.y - cy, 0)).normalized()
-        if n.dot(out_dir) < 0:
+        # (away from the body: outward where the cloth hangs, up where it lies on the yoke,
+        # which "outward" alone cannot tell from down)
+        if n.dot(out_dir + Vector((0, 0, 1))) < 0:
             n = -n
         b = tang.cross(n).normalized()
-        if b.z < 0:
+        # Across the band, toward the opening: up around the neck, in toward the middle
+        # down the sides of the V. (Up alone is no guide there: the band runs nearly straight
+        # down, "across" lies level, and its sign flipped from one ring to the next, which
+        # twisted the band into a ruffle beside the laces.)
+        if b.dot((mid - p).normalized() + Vector((0, 0, 1))) < 0:
             b = -b
+        frames.append([p, b, n])
+    # ...and no ring turned over against its neighbor, starting from the back of the neck.
+    back = max(range(N), key=lambda i: pts[i].y)
+    for d in range(1, N):
+        i, j = (back + d) % N, (back + d - 1) % N
+        if frames[i][1].dot(frames[j][1]) < 0:
+            frames[i][1] = -frames[i][1]
+        if frames[i][2].dot(frames[j][2]) < 0:
+            frames[i][2] = -frames[i][2]
+    # The jersey's normal right at its cut edge is noisy (thin, uneven triangles), and the
+    # band crinkled with it: both directions are evened out along the loop.
+    for _ in range(20):
+        ns = [(frames[i - 1][2] + frames[i][2] * 2.0 + frames[(i + 1) % N][2]).normalized() for i in range(N)]
+        for i in range(N):
+            frames[i][2] = ns[i]
+    for i in range(N):
+        tang = (pts[(i + 1) % N] - pts[i - 1]).normalized()
+        b = tang.cross(frames[i][2]).normalized()
+        frames[i][1] = b if b.dot(frames[i][1]) >= 0 else -b
+        frames[i][2] = frames[i][1].cross(tang).normalized() * (1.0 if frames[i][1].cross(tang).dot(frames[i][2]) >= 0 else -1.0)
+    for p, b, n in frames:
         # band stands up a little from the jersey toward the neck
         c = p + b * width * 0.15 + n * thick * 0.2
         rings.append([out.verts.new(c + b * pb + n * pn) for pb, pn in prof])
@@ -856,9 +1009,10 @@ def skin(body, j, smooth_iters=30):
             w = {k: x * (1 - t) for k, x in _norm(W[i]).items()}
             w["Hips"] = w.get("Hips", 0.0) + t
             W[i] = w
-    # Cloth past the shoulder joint follows the upper arm. Skinned to the collarbone (as
-    # the body's deltoid is), it stays out when a T-pose arm drops to the side and sticks
-    # out like a shoulder pad.
+    # Cloth past the shoulder joint follows the upper arm: what it has of the collarbone's
+    # weight goes to the arm. Skinned to the collarbone (as the body's deltoid is on MPFB's
+    # "mixamo" rig), it stays out when a T-pose arm drops to the side and sticks out like a
+    # shoulder pad.
     if P["deltoid_to_arm"]:
         for side in ("Left", "Right"):
             A = body.joint(side + "Arm")
@@ -867,9 +1021,31 @@ def skin(body, j, smooth_iters=30):
                 if (v.co.x > 0) != (side == "Left"):
                     continue
                 t = smoothstep(-0.05, 0.05, (v.co - A).dot(d)) * P["deltoid_to_arm"]
-                if t > 0:
-                    w = {k: x * (1 - t) for k, x in _norm(W[i]).items()}
-                    w[side + "Arm"] = w.get(side + "Arm", 0.0) + t
+                w = _norm(W[i])
+                moved = w.get(side + "Shoulder", 0.0) * t
+                if moved > 0:
+                    w[side + "Shoulder"] -= moved
+                    w[side + "Arm"] = w.get(side + "Arm", 0.0) + moved
+                    W[i] = w
+    # Cloth over the top of the shoulder, inward of the joint, stays with the collarbone
+    # and chest. On MPFB's "mixamo" rig the skin there is half the upper arm's (the first
+    # female's: a sixth to a quarter), and the cloth copied it: the whole shoulder cap turned
+    # with the arm, like an action figure's arm in its socket. `along`: along the arm from
+    # the joint in the modelling pose; the share handed back fades out 6 cm past the joint.
+    if P["shoulder_hold"]:
+        for side in ("Left", "Right"):
+            A = body.joint(side + "Arm")
+            d = (body.joint(side + "ForeArm") - A).normalized()
+            for i, v in enumerate(j.data.vertices):
+                if (v.co.x > 0) != (side == "Left"):
+                    continue
+                t = (1.0 - smoothstep(-0.10, 0.06, (v.co - A).dot(d))) * P["shoulder_hold"]
+                w = _norm(W[i])
+                moved = w.get(side + "Arm", 0.0) * t
+                if moved > 0:
+                    w[side + "Arm"] -= moved
+                    w[side + "Shoulder"] = w.get(side + "Shoulder", 0.0) + moved * 0.6
+                    w["Spine2"] = w.get("Spine2", 0.0) + moved * 0.4
                     W[i] = w
     # Extra passes around the shoulders where the arm turns a long way from the bind pose
     # (a T-pose body): the blend spreads over more cloth instead of folding into a crease.
@@ -968,14 +1144,21 @@ def export(body, o, path):
 ## Goalie cut, on top of the body's shape: room for a chest protector and arm pads
 ## underneath (much more ease, especially down the arms), a boxy straight body and a longer
 ## hem. -> jersey_<body>_goalie.glb
+## The neck stays close all the same (neck_ease / neck_gap), with a round opening cut around
+## the neck itself (collar_line with a steep collar_rise): left to the body's ease the collar
+## stood as far off the neck as the cloth off the chest (32 cm across on the male; the user
+## found it far too wide), and without a collar line the cloth ran up the neck with only a
+## slit down the throat (the female). A body's own `goalie` dict in BODIES overrides these.
 GOALIE = dict(ease=0.07, sleeve_ease=0.055, gap=0.05, taper_fb=0.02, taper_side=0.03,
-              sh_r=0.135, cuff_r=0.095, hem=0.84, flare=0.04)
+              sh_r=0.135, cuff_r=0.095, hem=0.84, flare=0.04,
+              collar_line=True, neck_ease=0.026, neck_gap=0.02, collar_rise=4.0, collar_r0=0.1)
 
 
 def make(name, out_dir=None, goalie=False):
     body = Body(name)
     if goalie:
         P.update(GOALIE)
+        P.update(body.spec.get("goalie", {}))
     j = shell(body)
     clearance(body, j, gap=P["gap"])
     folds(body, j)
@@ -1004,6 +1187,10 @@ def make(name, out_dir=None, goalie=False):
 
 if __name__ == "__main__":
     argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
+    # `<body>` builds both cuts; `<body>:goalie` or `<body>:skater` just the one.
     for which in (argv or ["female", "male"]):    # (ybot is only a fallback body)
-        make(which)
-        make(which, goalie=True)
+        name, _, cut = which.partition(":")
+        if cut != "goalie":
+            make(name)
+        if cut != "skater":
+            make(name, goalie=True)

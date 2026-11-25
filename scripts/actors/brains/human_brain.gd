@@ -100,6 +100,7 @@ func update(_skater: Skater, i: SkaterIntent, _delta: float) -> void:
 	i.deke_down = _cur.deke and not _prev.get("deke", false)
 	i.deke_held = _cur.deke
 	i.check_down = _cur.check and not _prev.get("check", false)
+	i.check_held = _cur.check
 	i.block_held = _cur.get("block", false)
 
 

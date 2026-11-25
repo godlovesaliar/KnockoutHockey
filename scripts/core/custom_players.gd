@@ -14,7 +14,19 @@ class_name CustomPlayers
 ##   skill_mode ("points" or "free"), ratings {SKA SHT PAS HND PHY DEF} for skaters or
 ##   {REF POS GLV BLK RBD} for goalies (on the roster sheet's scale), gender
 ##   ("Male"/"Female"), skin, eyes, hair_color (palette indices), hair_style,
-##   facial_hair, helmet (helmet or mask model), visor, stick, tape.
+##   facial_hair, helmet (helmet or mask model), visor, stick, tape, and for goalies
+##   mask_paint ("" the team's or one from their name, GoalieVisual.MASK_PLAIN, or a
+##   GoalieVisual.MASK_PAINTS name) with mask_colors (which of its color schemes);
+##   headgear (a mask worn instead of the helmet whatever the team wears: "" none,
+##   "vintage" or "lucha", or "none" for a bare head; bought in the store);
+##   face ("" the visor or none, as `visor` says; "shield" a full clear shield, "cage" a
+##   wire cage or "alien" the Grays' alien visor in its place) and visor_tint ("" clear, "smoke", "amber", "mirror", "gold"),
+##   both bought in the store;
+##   crest, eye_fx and dangler (cosmetics, each its own slot: "" none or the team's, else a
+##   SkaterVisual.CRESTS / EYE_FX / DANGLERS key; bought in the store);
+##   gloves, skates and, for goalies, pads (each "" the usual gear or "old", the store's
+##   Old-Time Set; "oldtime" is its `stick`); socks ("" the usual, "taped", or "old" the
+##   set's wool) and pants ("" the usual, "old" the set's canvas, or "long", bought in the store).
 ##
 ## Ratings use the roster sheet's scale, so a created player plays like a sheet player of
 ## the same ratings (as_row() feeds Rosters.stats()).
@@ -66,11 +78,27 @@ const GOALIE_POOL := 130   ## all five to 86: about the sheet's average goalie
 const SKIN_NAMES := ["Light", "Fair", "Medium", "Olive", "Brown", "Dark"]
 const EYE_NAMES := ["Dark Brown", "Brown", "Hazel", "Amber", "Green", "Gray", "Blue", "Light Blue"]
 const HAIR_COLOR_NAMES := ["Black", "Dark Brown", "Brown", "Light Brown", "Blonde", "Red", "Gray"]
-const HAIR_STYLES := ["messy", "buzz", "shaggy", "mop", "quiff", "braid"]   ## "braid": women only
-const HAIR_STYLE_NAMES := ["Messy", "Buzz Cut", "Shaggy", "Mop", "Quiff", "Braid"]
-const FACIAL_HAIR := ["", "beard", "chinstrap", "moustache"]   ## men only
-const FACIAL_HAIR_NAMES := ["None", "Beard", "Chinstrap", "Moustache"]
-const HELMET_NAMES := ["Modern", "Classic"]
+## Hairstyles as the editor lists them (SkaterVisual.HAIR_STYLES; SkaterVisual.hair_fits
+## says which a gender can wear) and facial hair ("" first; men only).
+const HAIR_STYLES := ["buzz", "fade", "messy", "quiff", "part", "slick", "curly", "afro", "mop", "shaggy",
+		"flow", "mullet", "mohawk", "balding", "topknot", "ponytail", "braid", "long", "bob"]
+const HAIR_STYLE_NAMES := ["Buzz Cut", "High Fade", "Messy", "Quiff", "Side Part", "Slicked Back", "Curly", "Afro",
+		"Mop", "Shaggy", "Hockey Flow", "Mullet", "Mohawk", "Balding", "Top Knot", "Ponytail", "Braid", "Long", "Bob"]
+const FACIAL_HAIR := ["", "beard", "playoff", "chinstrap", "chops", "goatee", "moustache", "horseshoe",
+		"handlebar", "soulpatch"]
+const FACIAL_HAIR_NAMES := ["None", "Beard", "Playoff Beard", "Chinstrap", "Mutton Chops", "Goatee", "Moustache",
+		"Horseshoe", "Handlebar", "Soul Patch"]
+const HELMET_NAMES := ["Modern", "Classic", "'80s Bucket"]   ## as SkaterVisual.HELMETS
+const FACE_PICKS := ["none", "visor", "shield", "cage", "alien"]   ## Create Player's VISOR row (face_pick / set_face_pick)
+const FACE_PICK_NAMES := ["None", "Visor", "Full Shield", "Cage", "Alien Visor"]
+const VISOR_TINTS := ["", "smoke", "amber", "mirror", "gold"]   ## as SkaterVisual.VISOR_TINTS
+const VISOR_TINT_NAMES := ["Clear", "Smoked", "Amber", "Blue Mirror", "Gold Mirror"]
+## Cosmetic slots as the editors list them: {slot: [values, names]} ("" first).
+const COSMETICS := {
+	"crest": [["", "spines"], ["None", "Spines"]],
+	"eye_fx": [["", "red"], ["Normal", "Glowing Red"]],
+	"dangler": [["", "fangs"], ["None", "Fangs"]],
+}
 const MASK_NAMES := ["Modern", "Helmet & Cage", "'80s", "Molded"]   ## as GoalieVisual.MASKS
 
 ## Height (inches) and weight (lb): the creator's range, and the default per gender (about
@@ -93,9 +121,24 @@ static func blank() -> Dictionary:
 		"playstyle": "Two-Way", "skill_mode": "points", "ratings": {},
 		"gender": "Male", "height_in": HEIGHT_DEFAULT.Male, "weight_lbs": WEIGHT_DEFAULT.Male, "skin": 1, "eyes": 1, "hair_style": "messy", "hair_color": 1,
 		"facial_hair": "", "helmet": 0, "visor": true, "stick": "black", "tape": "white",
+		"mask_paint": "", "mask_colors": 0, "headgear": "", "gloves": "", "skates": "", "pads": "", "socks": "", "pants": "",
+		"face": "", "visor_tint": "", "crest": "", "eye_fx": "", "dangler": "",
 	}
 	reset_ratings(p)
 	return p
+
+
+## What a skater wears over the face, as one choice (FACE_PICKS): "none", "visor", or the
+## face gear ("shield", "cage").
+static func face_pick(p: Dictionary) -> String:
+	if SkaterVisual.FACE_GEAR.has(str(p.get("face", ""))):
+		return str(p.face)
+	return "visor" if bool(p.get("visor", true)) else "none"
+
+
+static func set_face_pick(p: Dictionary, pick: String) -> void:
+	p.visor = pick != "none"
+	p.face = pick if SkaterVisual.FACE_GEAR.has(pick) else ""
 
 
 static func is_goalie(p: Dictionary) -> bool:
@@ -254,14 +297,27 @@ static func apply(s: Skater, p: Dictionary) -> void:
 	s.eye_color = SkaterVisual.EYE_COLORS[clampi(int(p.get("eyes", 1)), 0, SkaterVisual.EYE_COLORS.size() - 1)]
 	s.hair_color = SkaterVisual.HAIR_COLORS[clampi(int(p.get("hair_color", 1)), 0, SkaterVisual.HAIR_COLORS.size() - 1)]
 	var style: String = p.get("hair_style", "messy")
-	if style == "braid" and s.body_type != "female":
+	if not SkaterVisual.hair_fits(style, s.body_type):
 		style = "messy"
 	s.hair_style = style
 	s.facial_hair = p.get("facial_hair", "") if s.body_type == "male" else ""
 	s.gear_style = int(p.get("helmet", 0))
+	s.mask_paint = str(p.get("mask_paint", ""))
+	s.mask_colors = int(p.get("mask_colors", 0))
+	s.headgear = str(p.get("headgear", ""))
 	s.visor = bool(p.get("visor", true))
+	s.face_gear = str(p.get("face", ""))
+	s.visor_tint = str(p.get("visor_tint", ""))
+	s.helmet_crest = str(p.get("crest", ""))
+	s.eye_fx = str(p.get("eye_fx", ""))
+	s.dangler = str(p.get("dangler", ""))
 	s.stick_style = p.get("stick", "black")
 	s.stick_tape = p.get("tape", "white")
+	s.glove_style = str(p.get("gloves", ""))
+	s.skate_style = str(p.get("skates", ""))
+	s.pad_style = str(p.get("pads", ""))
+	s.sock_style = str(p.get("socks", ""))
+	s.pants_style = str(p.get("pants", ""))
 
 
 # --- Storage -----------------------------------------------------------------------
@@ -404,7 +460,7 @@ static func _read(path: String) -> Array:
 				var p := blank()
 				p.merge(d, true)
 				# JSON numbers come back as floats.
-				for k: String in ["number", "skin", "eyes", "hair_color", "helmet", "height_in", "weight_lbs"]:
+				for k: String in ["number", "skin", "eyes", "hair_color", "helmet", "height_in", "weight_lbs", "mask_colors"]:
 					p[k] = int(p[k])
 				for k: String in p.ratings:
 					p.ratings[k] = int(p.ratings[k])

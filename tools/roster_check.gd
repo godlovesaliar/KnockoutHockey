@@ -25,6 +25,6 @@ func _init() -> void:
 			print("  #%-2s %-3s %-12s %-14s ovr %s  spd %d sht %d pas %d chk %d def %d fgt %d agg %d  | ref %d pos %d" % [
 				p.number, p.position, p.last, p.playstyle, p.overall, s.speed, s.shot_power, s.passing, s.checking, s.defense, s.fighting, s.aggression, s.reflexes, s.positioning])
 	print("generated (no roster): ", missing)
-	for c: String in Teams.CONFERENCES:
+	for c: String in Teams.GROUPS:
 		print("%s (%d): %s" % [c, Teams.in_conference(c).size(), ", ".join(Teams.in_conference(c).map(func(i: int) -> String: return Teams.team(i).abbr))])
 	quit()

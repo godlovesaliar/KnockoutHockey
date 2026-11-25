@@ -12,6 +12,9 @@
 # tools/build_gear.gd (only=goalie_gear) turns them into assets/characters/*.res.
 #
 # Run in Blender:  exec(open(r"<project>/tools/blender/goalie_gear.py").read()); build_all(True)
+# The Old-Time Set's leather pads, waffle board and mitt: build_old(True) -> goalie_pad_old.glb,
+# goalie_boot_old.glb, goalie_thigh_old.glb, blocker_old.glb, goalie_catcher_old.glb
+# (build_gear.gd only=old).
 #
 # Frames (game coordinates, meters, sized for a 1.8 m body; GoalieVisual places them):
 #   pad    a LEFT leg pad: origin at the ankle joint, +Y up the shin (to the knee at
@@ -261,8 +264,25 @@ def _bowl(x, y):
 C_HEEL = ((0.03, -0.035), (0.1, 0.07), 2.5)       # fills the V between the lobes at the wrist
 
 
+_SOLID_WEB = False    # the old-time mitt: the web is leather, part of the palm sheet
+
+
+def _in_web_poly(x, y):
+    """Inside the web's outline: its free edge closed through the notch."""
+    poly = _web_edge() + [C_NOTCH]
+    inside = False
+    for i in range(len(poly)):
+        (x0, y0), (x1, y1) = poly[i - 1], poly[i]
+        if (y0 > y) != (y1 > y) and x < x0 + (y - y0) * (x1 - x0) / (y1 - y0):
+            inside = not inside
+    return inside
+
+
 def _in_sheet(x, y):
-    return any(_se_inside(s, x, y) < 1.0 for s in (C_FINGER, C_THUMB, C_HEEL))
+    if any(_se_inside(s, x, y) < 1.0 for s in (C_FINGER, C_THUMB, C_HEEL)):
+        return True
+    # (and round the notch, where the lobes' outlines leave a sliver open under the web)
+    return _SOLID_WEB and (_in_web_poly(x, y) or math.hypot(x - C_NOTCH[0], y - C_NOTCH[1]) < 0.03)
 
 
 def _catcher_rim(n=420):
@@ -325,12 +345,24 @@ def _sheet(bm, step=0.004):
     _merge(bm, tmp)
 
 
-def build_catcher(voxel=0.0024, tris=7000):
-    """Goalie trapper on the left hand (see the section comment); about 0.45 long."""
+def build_catcher(voxel=0.0024, tris=7000, old=False):
+    """Goalie trapper on the left hand (see the section comment); about 0.45 long.
+    old: the Old-Time Set's mitt, closer to a first baseman's than a trapper: the web a
+    solid piece of leather laced in with the rest (no net), a rounder leather gauntlet
+    for a cuff, a plain padded back."""
+    global _SOLID_WEB
+    _SOLID_WEB = old
+    try:
+        return _build_catcher(voxel, tris, old)
+    finally:
+        _SOLID_WEB = False
+
+
+def _build_catcher(voxel, tris, old):
     # The palm sheet, thickened.
     bm = bmesh.new()
     _sheet(bm)
-    obj = make_object("Catcher", bm)
+    obj = make_object("CatcherOld" if old else "Catcher", bm)
     so = obj.modifiers.new("Solidify", "SOLIDIFY")
     so.thickness = 0.034
     so.offset = 0.0
@@ -359,17 +391,21 @@ def build_catcher(voxel=0.0024, tris=7000):
     # The web's free edge: a rounded binding from the thumb's tip to the finger lobe, and
     # the T's strap down its middle (two net windows either side).
     web_edge = _web_edge()
-    _tube(bm, [g(x, y, _bowl(x, y)) for x, y in web_edge], [(0.012, 0.016)] * len(web_edge),
-          across=Vector((0, 0, 1)), segs=14)
-    strap = _web_strap()
-    _tube(bm, [g(x, y, _bowl(x, y) - 0.004) for x, y in strap], [(0.014, 0.008)] * len(strap),
-          across=Vector((0, 0, 1)), segs=14)
-    # Cuff: tall and boxy over the wrist (hollowed below).
-    _pillow(bm, (0.008, -0.15, 0.004), (0.13, 0.08, 0.078), 0.3)
+    strap = _web_strap() if not old else []
+    if not old:
+        _tube(bm, [g(x, y, _bowl(x, y)) for x, y in web_edge], [(0.012, 0.016)] * len(web_edge),
+              across=Vector((0, 0, 1)), segs=14)
+        _tube(bm, [g(x, y, _bowl(x, y) - 0.004) for x, y in strap], [(0.014, 0.008)] * len(strap),
+              across=Vector((0, 0, 1)), segs=14)
+    # Cuff: tall and boxy over the wrist (hollowed below); the old mitt's a rounder gauntlet.
+    if old:
+        _pillow(bm, (0.004, -0.14, 0.004), (0.09, 0.088, 0.064), 0.55)
+    else:
+        _pillow(bm, (0.008, -0.15, 0.004), (0.13, 0.08, 0.078), 0.3)
     # Back of the hand: a padded block, and bands wrapping across it and round its sides.
     _pillow(bm, (-0.03, 0.06, -0.005), (0.105, 0.14, 0.04), 0.45)
     band = ((-0.118, -0.008), (-0.105, -0.032), (-0.075, -0.044), (-0.03, -0.048), (0.015, -0.044), (0.05, -0.033), (0.066, -0.012))
-    for y in (-0.04, 0.02, 0.08, 0.14):
+    for y in ((0.0, 0.11) if old else (-0.04, 0.02, 0.08, 0.14)):
         _tube(bm, [g(x, y, z) for x, z in band], [(0.012, 0.009), (0.02, 0.014)] + [(0.022, 0.016)] * (len(band) - 4) + [(0.02, 0.014), (0.012, 0.009)], across=Vector((0, 0, 1)))
     bm.to_mesh(obj.data)
     bm.free()
@@ -399,7 +435,9 @@ def build_catcher(voxel=0.0024, tris=7000):
     edge_s = [0.0]
     for k in range(1, len(web_edge)):
         edge_s.append(edge_s[-1] + math.hypot(web_edge[k][0] - web_edge[k - 1][0], web_edge[k][1] - web_edge[k - 1][1]))
-    lines = [(p, s) for p, s in zip(rim, rim_s) if math.hypot(p[0] - C_NOTCH[0], p[1] - C_NOTCH[1]) >= 0.035] + [(p, s) for p, s in zip(web_edge, edge_s)]
+    lines = [(p, s) for p, s in zip(rim, rim_s) if math.hypot(p[0] - C_NOTCH[0], p[1] - C_NOTCH[1]) >= 0.035]
+    if not old:
+        lines += [(p, s) for p, s in zip(web_edge, edge_s)]
     kd = KDTree(len(lines))
     for i, (p, _s) in enumerate(lines):
         kd.insert(Vector((p[0], p[1], 0.0)), i)
@@ -425,6 +463,14 @@ def build_catcher(voxel=0.0024, tris=7000):
             r = pocket_r(p)
             for lv in (1.0, 1.4, 1.8):
                 d += _groove(abs(r - lv) * 0.055, 0.0015, 0.0012)
+        if old and n.z > 0.2 and _in_web_poly(p.x, p.y):
+            # the leather web: laced to the thumb and the finger lobe along both edges,
+            # and a stitched line down its middle
+            for lobe in (C_FINGER, C_THUMB):
+                e = _se_inside(lobe, p.x, p.y) - 1.0
+                d += _groove(e * 0.05, 0.002, 0.0016)
+            mid = _web_edge()[7]
+            d += _groove(_seg_dist((p.x, p.y), mid, C_NOTCH), 0.0016, 0.0012)
         # cuff: the seam where it meets the glove and a panel line round its middle
         d += _groove(abs(p.y + 0.072), 0.002, 0.0018)
         d += _groove(abs(p.y + 0.15), 0.0016, 0.0012) * _smoothstep(0.06, 0.07, abs(p.z) + abs(p.x) * 0.5)
@@ -442,7 +488,7 @@ def build_catcher(voxel=0.0024, tris=7000):
     bm.from_mesh(obj.data)
     solid_verts = len(bm.verts)
     sp = 0.017
-    for dx_, dy_ in ((0.7071, 0.7071), (0.7071, -0.7071)):
+    for dx_, dy_ in (() if old else ((0.7071, 0.7071), (0.7071, -0.7071))):
         for k in range(-30, 31):
             pts = []
             for t in range(-60, 61):
@@ -476,7 +522,8 @@ def build_catcher(voxel=0.0024, tris=7000):
     def trim(p, n):
         i, dist = near_rim(p)
         bind = (1 - _smoothstep(0.011, 0.015, dist)) * _smoothstep(-0.08, -0.07, p.y)
-        bind = max(bind, 1 - _smoothstep(0.013, 0.017, _poly_dist((p.x, p.y), strap)))
+        if strap:
+            bind = max(bind, 1 - _smoothstep(0.013, 0.017, _poly_dist((p.x, p.y), strap)))
         cuff_end = 1 - _smoothstep(-0.215, -0.205, p.y)
         cuff_band = _smoothstep(-0.135, -0.13, p.y) * (1 - _smoothstep(-0.098, -0.093, p.y)) * _smoothstep(-0.2, 0.2, -n.y)
         return max(bind, cuff_end, cuff_band)
@@ -495,6 +542,216 @@ def build_catcher(voxel=0.0024, tris=7000):
     me.update()
     obj.data.materials.append(material("PadMat", (0.92, 0.92, 0.9, 1.0)))
     return obj
+
+
+# --- The old-time set ------------------------------------------------------------------
+#
+# Leather pads stuffed with deer hair, as goalies wore them before foam: narrower and
+# rounder than the modern slab, the shin a row of stuffed ribs between stitched channels,
+# three fat rolls across the knee, one roll down the outside, and a short flat thigh
+# board with a rounded top. The same frames as the modern pieces, so the game hangs them
+# the same way. Vertex colors as above; the game gives them leather (glove.gdshader
+# `leather`): A the rolls (a darker leather), G the worn inside faces.
+
+OLD_RIBS = (-0.064, -0.022, 0.02, 0.062)       # the stitched channels down the shin (x)
+OLD_KNEE = (0.342, 0.39, 0.438)               # the knee rolls (y)
+
+
+def _old_seams(p, n, ribs, y_range, lines):
+    """Deep channels at `ribs` (x) over y_range on the pad's face, plus _seams lines."""
+    d = _seams(lines)(p, n)
+    if n.z > 0.35 and y_range[0] <= p.y <= y_range[1]:
+        for x in ribs:
+            d += _groove(abs(p.x - x), 0.0045, 0.0034)
+    return d
+
+
+def build_old_pad(voxel=0.0028, tris=6000):
+    bm = bmesh.new()
+    Yb = Vector((0, 0, 1))      # (game +Y in Blender: across a roll running side to side)
+    # Face, to just under the knee rolls, and the block the knee rolls sit on.
+    _pillow(bm, (0.006, 0.185, 0.05), (0.115, 0.215, 0.062), 0.42)
+    _pillow(bm, (0.004, 0.39, 0.036), (0.106, 0.08, 0.05), 0.45)
+    # Side wings round the leg (the back open).
+    _pillow(bm, (0.098, 0.2, -0.014), (0.026, 0.235, 0.085), 0.5)
+    _pillow(bm, (-0.092, 0.2, -0.014), (0.026, 0.235, 0.085), 0.5)
+    # Three rolls across the knee, and the roll down the outside edge.
+    for y in OLD_KNEE:
+        _tube(bm, [g(x, y, 0.084) for x in (-0.084, -0.04, 0.0, 0.045, 0.09)], [(0.0215, 0.034)] * 5, across=Yb)
+    _tube(bm, [g(0.117, y, 0.06) for y in (-0.02, 0.06, 0.15, 0.24, 0.312)], [(0.022, 0.023)] * 5)
+    # Inside: a calf flap (it takes the ice in the butterfly).
+    _pillow(bm, (-0.092, 0.16, -0.035), (0.028, 0.14, 0.042), 0.5)
+    obj = make_object("GoaliePadOld", bm)
+    _fuse(obj, voxel, 6, 0.6)
+    lines = [("y", 0.318, (-0.13, 0.1), True),            # under the knee rolls
+             ("y", 0.366, (-0.11, 0.11), True), ("y", 0.414, (-0.11, 0.11), True),
+             ("x", 0.095, (-0.03, 0.33), True)]           # along the outer roll
+
+    def seams(p, n):
+        return _old_seams(p, n, OLD_RIBS, (0.0, 0.305), lines)
+    _carve(obj, seams)
+    _decimate(obj, tris)
+
+    def trim(p, n):
+        roll = _smoothstep(0.09, 0.098, p.x) * _smoothstep(0.02, 0.04, p.z) * (1 - _smoothstep(0.33, 0.34, p.y))
+        knee = _smoothstep(0.32, 0.327, p.y) * _smoothstep(0.066, 0.08, p.z)
+        return max(roll, knee)
+
+    def landing(p, n):
+        return _smoothstep(-0.07, -0.08, p.x) * _smoothstep(0.3, 0.7, -n.x)
+
+    _bake_colors(obj, landing, seams, trim, reach=0.05)
+    obj.data.materials.append(material("OldPadMat", (0.45, 0.27, 0.13, 1.0)))
+    return obj
+
+
+def build_old_boot(voxel=0.0026, tris=2600):
+    """The old pad's boot: the same frame as build_boot, a little narrower and shorter,
+    two stitched breaks across the instep."""
+    bm = bmesh.new()
+    _pillow(bm, (0.008, -0.02, 0.06), (0.119, 0.075, 0.094), 0.45)
+    _pillow(bm, (0.012, -0.092, 0.147), (0.123, 0.095, 0.138), 0.45)
+    _tube(bm, [g(0.113, y, 0.058) for y in (-0.155, -0.095, -0.03)], [(0.019, 0.02)] * 3)
+    obj = make_object("GoalieBootOld", bm)
+    _fuse(obj, voxel, 10, 0.6)
+    lines = [("y", -0.045, (-0.13, 0.1), True), ("y", -0.082, (-0.13, 0.1), True), ("x", 0.092, (-0.15, -0.01), True)]
+
+    def seams(p, n):
+        return _old_seams(p, n, OLD_RIBS, (-0.035, 0.03), lines)
+    _carve(obj, seams)
+    _decimate(obj, tris)
+
+    def trim(p, n):
+        return _smoothstep(0.09, 0.098, p.x) * _smoothstep(0.02, 0.04, p.z)
+
+    _bake_colors(obj, None, seams, trim, reach=0.04)
+    obj.data.materials.append(material("OldPadMat", (0.45, 0.27, 0.13, 1.0)))
+    return obj
+
+
+def build_old_thigh(voxel=0.0026, tris=2000):
+    """The old pad's thigh board: short, flat, its top rounded off; stitched in three
+    panels with a line round its edge."""
+    bm = bmesh.new()
+    _pillow(bm, (0.004, 0.08, 0.066), (0.104, 0.105, 0.04), 0.5)
+    obj = make_object("GoalieThighOld", bm)
+    _fuse(obj, voxel, 10, 0.6)
+
+    def seams(p, n):
+        d = 0.0
+        if n.z > 0.35:
+            for x in (-0.035, 0.04):
+                d += _groove(abs(p.x - x), 0.0035, 0.0024) * (p.y < 0.16)
+            # a line round the edge
+            e = 1.0 - (abs((p.x - 0.004) / 0.104) ** 4 + abs((p.y - 0.08) / 0.105) ** 4) ** 0.25
+            d += _groove(abs(e - 0.14) * 0.1, 0.0016, 0.0014)
+        return d
+    _carve(obj, seams)
+    _decimate(obj, tris)
+    _bake_colors(obj, None, seams, None, reach=0.04)
+    obj.data.materials.append(material("OldPadMat", (0.45, 0.27, 0.13, 1.0)))
+    return obj
+
+
+WAFFLE = ((0.0, 0.06, 0.106), (0.176, 0.118, 0.016))     # the board: center, half size
+WAFFLE_GRID = 0.031                                      # hole spacing
+
+
+def _waffle_holes():
+    """Where the holes are on the board's face (game x, y)."""
+    (cx, cy, _cz), (hx, hy, _hz) = WAFFLE
+    nx, ny = int((hx - 0.03) / WAFFLE_GRID), int((hy - 0.026) / WAFFLE_GRID)
+    return [(cx + ix * WAFFLE_GRID, cy + iy * WAFFLE_GRID) for ix in range(-nx, nx + 1) for iy in range(-ny, ny + 1)]
+
+
+def build_waffle(voxel=0.002, tris=5200):
+    """The waffle board: the old blocker, a flat rectangle of felt under leather punched
+    with rows of holes, on the back of a plain leather mitt with a short gauntlet cuff."""
+    (cx, cy, cz), (hx, hy, hz) = WAFFLE
+    bm = bmesh.new()
+    _pillow(bm, (cx, cy, cz), (hx, hy, hz), 0.14)
+    # The mitt under it, holding the stick, and its cuff up the wrist.
+    _pillow(bm, (0.0, 0.065, 0.05), (0.062, 0.088, 0.05), 0.5)
+    for x in (-0.03, 0.0, 0.03):     # finger rolls on the palm side
+        _tube(bm, [g(x, y, -0.005) for y in (0.03, 0.07, 0.11, 0.135)], [(0.016, 0.018)] * 4)
+    ys = (-0.115, -0.085, -0.055, -0.025, 0.0)
+    _tube(bm, [g(0.0, y, 0.035) for y in ys], [(0.058 + 0.012 * (-y / 0.115) ** 1.3, 0.052 + 0.009 * (-y / 0.115) ** 1.3) for y in ys])
+    obj = make_object("Waffle", bm)
+    _fuse(obj, voxel, 6, 0.5)
+
+    def seams(p, n):
+        d = 0.0
+        if n.z > 0.5 and p.z > cz + hz * 0.4:     # the board's face
+            ex = hx - 0.017 - abs(p.x - cx)
+            ey = hy - 0.017 - abs(p.y - cy)
+            if ex > -0.003 and ey > -0.003:
+                d += _groove(min(ex, ey), 0.0016, 0.0016)     # the stitched border
+        if p.z < 0.01:
+            for y in (0.06, 0.1):                 # finger breaks on the mitt
+                d += _groove(abs(p.y - y), 0.0015, 0.0015)
+        d += _groove(abs(p.y + 0.1), 0.0014, 0.0012) * (p.z < cz - hz)   # the cuff's binding
+        return d
+    _carve(obj, seams)
+    _decimate(obj, tris)
+
+    # The holes, laid on after the remesh (carved in, they came out of the decimation as
+    # ragged pits): a dark disc each, a hair proud of the face.
+    from mathutils.bvhtree import BVHTree
+    me = obj.data
+    bvh = BVHTree.FromPolygons([v.co for v in me.vertices], [list(q.vertices) for q in me.polygons])
+    bm = bmesh.new()
+    bm.from_mesh(me)
+    solid = len(bm.verts)
+    for x, y in _waffle_holes():
+        hit = bvh.ray_cast(g(x, y, cz + 0.1), g(0, 0, -1), 0.2)
+        if hit[0] is None:
+            continue
+        c = hit[0] + hit[1] * 0.0005
+        ring = [bm.verts.new(c + g(math.cos(math.tau * k / 12) * 0.0072, math.sin(math.tau * k / 12) * 0.0072, 0)) for k in range(12)]
+        mid = bm.verts.new(c)
+        for k in range(12):
+            bm.faces.new((mid, ring[k], ring[(k + 1) % 12]))
+    bm.to_mesh(me)
+    bm.free()
+    me.shade_smooth()
+
+    def trim(p, n):
+        # the leather binding round the board's edge
+        ex = hx - abs(p.x - cx)
+        ey = hy - abs(p.y - cy)
+        on_board = _smoothstep(cz - hz - 0.004, cz - hz + 0.004, p.z)
+        return on_board * (1.0 - _smoothstep(0.014, 0.019, min(ex, ey)))
+
+    def palm(p, n):
+        return _smoothstep(0.01, -0.01, p.z) * _smoothstep(0.2, 0.6, -n.z) * (1 - _smoothstep(-0.02, -0.03, p.y))
+
+    _bake_colors(obj, palm, seams, trim, reach=0.04)
+    col = obj.data.color_attributes["glove"]
+    for i in range(solid, len(obj.data.vertices)):
+        col.data[i].color = (0.2, 0.0, 1.0, 1.0)          # the holes: dark
+    obj.data.materials.append(material("OldPadMat", (0.45, 0.27, 0.13, 1.0)))
+    return obj
+
+
+OLD_FILES = ("goalie_pad_old.glb", "goalie_boot_old.glb", "goalie_thigh_old.glb", "blocker_old.glb", "goalie_catcher_old.glb")
+
+
+def build_old(do_export=False, only=None):
+    """The Old-Time Set's goalie gear, laid out in a row behind the modern pieces:
+    leather pads (pad, boot, thigh board), the waffle board and the mitt. `only`: a list
+    of indices into OLD_FILES to build just those. tools/build_gear.gd
+    (only=goalie_gear) turns the files into assets/characters/*.res."""
+    builders = (build_old_pad, build_old_boot, build_old_thigh, build_waffle, lambda: build_catcher(old=True))
+    out = []
+    for i, (fn, name) in enumerate(zip(builders, OLD_FILES)):
+        if only is not None and i not in only:
+            continue
+        o = fn()
+        if do_export:
+            export(o, name)
+        o.location = Vector((0.35 * min(i, 4) if i != 1 else 0.0, 0.6, 0))
+        out.append(o)
+    return out
 
 
 def build_all(do_export=False):

@@ -319,11 +319,12 @@ func _draw_tape() -> void:
 		MenuStyle.draw_slant(_canvas, cr.grow(3), Color(MenuStyle.INK, a), 12)
 		MenuStyle.draw_slant(_canvas, cr, Color(MenuStyle.team_color(id), a), 12)
 		var logo := MenuStyle.team_logo(id)
+		var lw := MenuStyle.logo_slot(logo, 32.0)   # (wide crests get a wider slot; the name moves over)
 		if logo:
-			_canvas.draw_texture_rect(logo, Rect2(cx + 16, y + 7, 32, 32), false, Color(1, 1, 1, a))
+			MenuStyle.draw_logo(_canvas, logo, Rect2(cx + 16, y + 7, lw, 32), Color(1, 1, 1, a))
 		var nm := MenuStyle.player_name(f.s)
-		var fs := 26 if MenuStyle.text_width(nm, 26) < chip_w - 80 else 20
-		MenuStyle.draw_bold(_canvas, Vector2(cx + 58, y + 33), nm, fs, Color(1, 1, 1, a), 5, Color(MenuStyle.INK, a), 0.2, false)
+		var fs := 26 if MenuStyle.text_width(nm, 26) < chip_w - 48 - lw else 20
+		MenuStyle.draw_bold(_canvas, Vector2(cx + 26 + lw, y + 33), nm, fs, Color(1, 1, 1, a), 5, Color(MenuStyle.INK, a), 0.2, false)
 		var sname: String = Fight.STYLE_NAMES[f.style]
 		var scol: Color = Fight.STYLE_COLORS[f.style]
 		var sw := MenuStyle.text_width(sname, 14, 0.12) + 24.0
@@ -401,25 +402,26 @@ func _draw_panel(k: int, cw: float) -> void:
 	# Crest and name at the outer end, the style after the name in its color.
 	var logo := MenuStyle.team_logo(id)
 	var crest := 22.0
+	var crest_w := MenuStyle.logo_slot(logo, crest)   # (wide crests get a wider slot)
 	var row_y := o.y + 5.0
 	var nm := MenuStyle.player_name(f.s)
-	var fs := 19 if MenuStyle.text_width(nm, 19) < in_w - 140.0 else 16
+	var fs := 19 if MenuStyle.text_width(nm, 19) < in_w - 118.0 - crest_w else 16
 	var nw := MenuStyle.text_width(nm, fs)
 	var sname: String = Fight.STYLE_NAMES[f.style]
 	var sw := MenuStyle.text_width(sname, 12, 0.12)
 	var scol: Color = (Fight.STYLE_COLORS[f.style] as Color).lerp(Color.WHITE, 0.25)
 	if not right:
 		if logo:
-			_canvas.draw_texture_rect(logo, Rect2(in_x, row_y, crest, crest), false)
-		MenuStyle.draw_bold(_canvas, Vector2(in_x + crest + 8.0, row_y + 18), nm, fs, Color.WHITE, 0, MenuStyle.INK, 0.2, false)
-		_canvas.draw_string(MenuStyle.font(0.12), Vector2(in_x + crest + 8.0 + nw + 12.0, row_y + 17), sname,
+			MenuStyle.draw_logo(_canvas, logo, Rect2(in_x, row_y, crest_w, crest))
+		MenuStyle.draw_bold(_canvas, Vector2(in_x + crest_w + 8.0, row_y + 18), nm, fs, Color.WHITE, 0, MenuStyle.INK, 0.2, false)
+		_canvas.draw_string(MenuStyle.font(0.12), Vector2(in_x + crest_w + 8.0 + nw + 12.0, row_y + 17), sname,
 				HORIZONTAL_ALIGNMENT_LEFT, -1, 12, scol)
 	else:
 		var ex := in_x + in_w
 		if logo:
-			_canvas.draw_texture_rect(logo, Rect2(ex - crest, row_y, crest, crest), false)
-		MenuStyle.draw_bold(_canvas, Vector2(ex - crest - 8.0 - nw, row_y + 18), nm, fs, Color.WHITE, 0, MenuStyle.INK, 0.2, false)
-		_canvas.draw_string(MenuStyle.font(0.12), Vector2(ex - crest - 8.0 - nw - 12.0 - sw, row_y + 17), sname,
+			MenuStyle.draw_logo(_canvas, logo, Rect2(ex - crest_w, row_y, crest_w, crest))
+		MenuStyle.draw_bold(_canvas, Vector2(ex - crest_w - 8.0 - nw, row_y + 18), nm, fs, Color.WHITE, 0, MenuStyle.INK, 0.2, false)
+		_canvas.draw_string(MenuStyle.font(0.12), Vector2(ex - crest_w - 8.0 - nw - 12.0 - sw, row_y + 17), sname,
 				HORIZONTAL_ALIGNMENT_LEFT, -1, 12, scol)
 	# Health, then the balance and stamina hairlines. The bars sit square in the slanted
 	# strip, indented so the slant doesn't cut them.

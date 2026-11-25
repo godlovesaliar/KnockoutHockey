@@ -63,7 +63,7 @@ func _ready() -> void:
 	Sfx.play_music()
 	add_child(MenuBackdrop.new())
 	_clubs.append(Rosters.FREE_AGENT)
-	for i: int in Teams.menu_order():
+	for i: int in Store.open_teams():   # (not the teams still locked in the shop)
 		var abbr := str(Teams.team(i).abbr)
 		_clubs.append(abbr)
 		_team_of[abbr] = i
@@ -444,12 +444,11 @@ func _draw_panel(side: int) -> void:
 	var lx := x + 56.0
 	if not fa:
 		var logo := MenuStyle.team_logo(_team_of[abbr])
+		var s := 52.0
+		var lw := MenuStyle.logo_slot(logo, s)   # (wide crests get a wider slot)
 		if logo:
-			var s := 52.0
-			var ls := logo.get_size()
-			var k := s / maxf(ls.x, ls.y)
-			_view.draw_texture_rect(logo, Rect2(Vector2(lx + (s - ls.x * k) * 0.5, PANEL_Y + 5 + (s - ls.y * k) * 0.5), ls * k), false)
-		lx += 64.0
+			MenuStyle.draw_logo(_view, logo, Rect2(lx, PANEL_Y + 5, lw, s))
+		lx += lw + 12.0
 	var name := _club_name(abbr)
 	var fs := 30
 	while fs > 16 and MenuStyle.text_width(name, fs) > PANEL_W - (lx - x) - 70.0:

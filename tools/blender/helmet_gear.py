@@ -5,21 +5,50 @@
 # Run in Blender:  exec(open(r"<project>/tools/blender/helmet_gear.py").read()); build_all(True)
 # The chin straps are laid on the male head: dump it first with
 #   godot --headless --path . -s res://tools/dump_heads.gd -- out=<dir>
-# and import <dir>/head_male.obj (forward -Z, up Y) so HEAD_OBJ exists; without it the
-# straps follow their control paths unprojected.
+# import <dir>/head_male.obj (forward -Z, up Y) and name its skin object as HEAD_OBJ says
+# (as tools/blender/mask_gear.py wants it too); without it the straps follow their control
+# paths unprojected.
 #
 #   A  modern two-piece shell: a crown piece riding over a lower band, long slot vents
 #      along the top, side slots, a rear adjuster, a short "pro cut" visor.
 #   B  classic one-piece: squarer and flatter-topped, a molded rib around it above the
 #      brow, vertical forehead slots, vent grooves on the sides, a rubber edge, a short
 #      straight-cut visor.
-# Both: ear holes, ear guards, a Y chin strap (front and rear straps meeting at a buckle
-# under the ear, then along the jaw to a chin cup) laid along the head's own surface.
+#   C  the round '80s bucket (the Pro Shop's): a smooth round dome, round vent holes, cut
+#      high over the ears, which stay open inside a loop hanging from the shell.
+# All: a Y chin strap (front and rear straps meeting at a buckle under the ear, then along
+# the jaw to a chin cup) laid along the head's own surface; A and B have ear holes and guards.
 #
-# Frame (game coordinates, meters): the male body's head box center (its rest pose) at
-# the origin, +Y up, +Z the face, +X the head's left. The game fits each body by mapping
-# the crown to its crown and the chin strap to its chin (CROWN_Y / CHIN_Y below, saved as
-# metas by build_gear.gd), scaling across by head width.
+# Face gear (the Pro Shop's, worn in place of the visor): a full wire cage and a full clear
+# shield, built once per helmet so each hangs from that helmet's own brow, and exported to
+# assets/equip/face_<a|b|c>.glb (nodes cage, cage_hw, shield, shield_hw); build_gear.gd
+# makes face_cage_<x>.res and face_shield_<x>.res, which the game hangs on the helmet.
+# build_new(True) builds helmet C and all the face gear without touching A and B.
+#
+# The Grays' alien visor (their signature gear; face gear, worn in place of the visor): a
+# pair of great black slanted eyes, a bulging almond lens over each of the player's own,
+# its inner corner low beside the nose and its outer corner drawn up to a point at the
+# temple, the two joined by a thin bar over the nose. (One shield with a notch for the
+# nose, tried first, read as ski goggles.)
+# Built per helmet (build_alien, build_aliens(True)) and exported to
+# assets/equip/alien_<a|b|c>.glb (nodes lens, hw); build_gear.gd (only=face) makes
+# face_alien_<x>.res.
+#
+# The Chupacabras' pieces (their signature gear, worn on whichever helmet a player has; in
+# the game each is its own cosmetic): a ridge of spines down the middle of the shell from
+# the brow to the nape (a helmet crest), and two fangs hanging from the visor's lower edge
+# (a dangler). Their glowing red eyes are the game's work, on the player's own eyes.
+# Built per helmet (build_chupa, build_dress(True)) and exported to
+# assets/equip/chupa_<a|b|c>.glb (nodes spines, fangs); build_gear.gd (only=dress) makes
+# crest_spines_<x>.res and dangler_fangs_<x>.res.
+#
+# Frame (game coordinates, meters): the origin CROWN below the top of a head HEAD_W wide,
+# centered, +Y up, +Z the face, +X the head's left. The game sets a helmet on each body's
+# crown, scaled by its head width (SkaterVisual._build_helmet); the male head is brought
+# into the frame the same way here (head_fit), so the straps lie on him as he wears it.
+# The frame's numbers are the downloaded male body's the game began with: our own male's
+# head is 1% narrower and its crown 6 mm lower over the same face, so on him the helmet is
+# that much smaller and sits that much lower on the brow, as it would on a real head.
 # Objects become glTF nodes, and build_gear.gd sorts the surfaces by node name:
 #   shell (team color) · trim (white) · dark (straps, buckles, ear guards, liner, screws)
 #   · visor (clear shield) · visor_hw (its clips and screws; shown with the visor only)
@@ -37,13 +66,25 @@ PROJECT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(
 OUT = os.path.join(PROJECT, "assets", "equip")
 COLLECTION = "HelmetGear"
 
-# The male head box center in skeleton space (game coords), where the models are built.
-HEAD_CENTER = (0.0, 1.6953, 0.0003)
-CROWN_Y = 0.145      # top of the male head above HEAD_CENTER
-CHIN_Y = -0.095      # bottom of the male chin
-# The reference head (tools/dump_heads.gd), if loaded: its name depends on how it was imported.
-HEAD_OBJ = next((n for n in ("male_male_muscle_13290Mesh_s0", "male_muscle_13290Mesh_s0")
-                 if bpy.data.objects.get(n) is not None), "male_male_muscle_13290Mesh_s0")
+# SkaterVisual's fitting constants: HELMET_CROWN, HELMET_HEAD_W.
+CROWN = 0.1447
+HEAD_W = 0.1939
+# The male head (tools/dump_heads.gd, imported and named as above) and its head box
+# (skeleton space, from the dump's printout).
+HEAD_OBJ = "head_male"
+HEAD_BOX = ((-0.095738, 1.553988, -0.049997), (0.191476, 0.286012, 0.237688))
+
+
+def head_fit():
+    """(at, scale): where the game puts the helmets' frame on the male body (skeleton
+    space), as SkaterVisual._build_helmet does."""
+    pos, size = Vector(HEAD_BOX[0]), Vector(HEAD_BOX[1])
+    k = size.x / HEAD_W
+    return Vector((pos.x + size.x * 0.5, pos.y + size.y - CROWN * k, pos.z + size.z * 0.5)), k
+
+
+# Where the finished helmets stand in the scene: on the male head.
+HEAD_CENTER = tuple(head_fit()[0])
 
 
 def g(x, y, z):
@@ -465,7 +506,7 @@ _bvh = None
 
 
 def head_bvh():
-    """BVH of the reference head (game coords relative to HEAD_CENTER), or None."""
+    """BVH of the male head in the helmets' frame, or None."""
     global _bvh
     if _bvh is not None:
         return _bvh
@@ -473,8 +514,8 @@ def head_bvh():
     if o is None:
         print("(reference head %s not loaded: straps follow their plain paths)" % HEAD_OBJ)
         return None
-    c = Vector(HEAD_CENTER)
-    verts = [gv(o.matrix_world @ v.co) - c for v in o.data.vertices]
+    c, k = head_fit()
+    verts = [(gv(o.matrix_world @ v.co) - c) / k for v in o.data.vertices]
     polys = [tuple(p.vertices) for p in o.data.polygons]
     _bvh = BVHTree.FromPolygons(verts, polys)
     return _bvh
@@ -677,7 +718,9 @@ A_RIM = [(0, 0.066), (28, 0.064), (46, 0.046), (58, 0.006), (70, -0.036), (95, -
          (125, -0.05), (150, -0.068), (180, -0.076)]
 # Where the crown piece's lower edge runs (over the band).
 A_SPLIT = [(0, 0.092), (35, 0.09), (60, 0.078), (95, 0.062), (130, 0.046), (160, 0.03), (180, 0.026)]
-A_EAR = (-0.006, 0.0, 0.034, 0.024)   # ear hole: center z, y, length (z), height (y)
+# Ear hole: center z, y, length (z), height (y). (Both helmets' holes went up 5 mm with our
+# own male head: under a crown that much lower his ears sit that much higher in the frame.)
+A_EAR = (-0.006, 0.005, 0.034, 0.024)
 A_SCREWS = (63.0, (0.028, 0.048))      # visor screws: azimuth, heights
 A_VISOR_BOTTOM = [(0, -0.03), (28, -0.028), (44, -0.016), (54, 0.01), (62, 0.032), (66, 0.04)]
 
@@ -799,7 +842,7 @@ B_BRIM_HI = [(0, 0.083), (40, 0.08), (58, 0.071)]           # its upper edge
 B_BRIM_VENTS = (31.0, 37.0, 43.0)
 B_STRIP = (-0.022, 0.03)                                    # side rivet strip: center z, y
 B_RIB_H = 0.0095
-B_EAR = (-0.004, -0.004, 0.034, 0.026)
+B_EAR = (-0.004, 0.001, 0.034, 0.026)
 B_SCREWS = (64.0, (0.026, 0.044))
 B_VISOR_BOTTOM = [(0, -0.024), (44, -0.024), (54, -0.016), (59, 0.004), (62, 0.03)]
 
@@ -937,19 +980,516 @@ def build_b(offset=Vector()):
     return {"shell": shell, "trim": tr, "dark": dk, "visor": vi, "visor_hw": vh}
 
 
+# --- Helmet C: the round '80s bucket ----------------------------------------------------------
+#
+# The one-piece helmets of the early 1980s: a smooth dome, rounder over the shoulders of
+# the head than A or B and with nothing molded into it but two rows of round vent holes,
+# cut high over the ears. The ears stay in the open inside a loop that hangs from the
+# shell's edge and carries the chin strap.
+
+C_SHAPE = Shape(ax=0.108, cf=0.123, cb=0.142, cy=0.066, b=0.097, p=2.15, pv=2.7, tuck=0.1, zc=-0.004,
+                tuck_back=0.08, tuck_y=0.03, pv_fb=2.1)
+# The edge: over the brow, down a little at the temple, an arch over the ear, down behind it.
+C_RIM = [(0, 0.06), (30, 0.058), (48, 0.044), (62, 0.031), (76, 0.027), (92, 0.029), (104, 0.022),
+         (118, -0.018), (132, -0.05), (156, -0.066), (180, -0.07)]
+C_HOLES = (0.045, (0.05, 0.005, -0.04))        # round vents on top: x either side, z of each
+C_HOLE_R = 0.0068
+C_LOOP = [(0.036, 0.032), (0.034, 0.0), (0.02, -0.03), (-0.008, -0.04), (-0.036, -0.03), (-0.05, -0.006)]   # the ear loop (z, y)
+C_SCREWS = (61.0, (0.04, 0.055))
+C_VISOR_BOTTOM = [(0, -0.03), (28, -0.028), (44, -0.016), (54, 0.012), (61, 0.034)]
+
+
+def build_c(offset=Vector()):
+    sh = C_SHAPE
+    M = mats()
+    up, fwd, left = Vector((0, 1, 0)), Vector((0, 0, 1)), Vector((1, 0, 0))
+    dome = new_object("c_dome", lambda bm: shell_patch(
+        bm, sh, lambda a: keyed(C_RIM, a), None, nu=72, nv=26), offset)
+    solidify(dome, 0.0034)
+    apply_all(dome)
+
+    def vents():
+        """Round holes: three either side of the top, three along each side, two on the back."""
+        out = []
+        for s in (1.0, -1.0):
+            for z in C_HOLES[1]:
+                out.append(stadium_cutter("cut", Vector((s * C_HOLES[0], 0.2, z)), fwd, left, C_HOLE_R * 2, C_HOLE_R * 2, 0.11))
+            p, n, u, sd = _surface_frame(sh, 180.0 - s * 20.0, 0.07)
+            out.append(stadium_cutter("cut", p, u, sd, C_HOLE_R * 2, C_HOLE_R * 2, 0.02))
+            for a in (74.0, 96.0, 118.0):       # ... and three along each side, above the ear
+                p, n, u, sd = _surface_frame(sh, s * a, 0.084)
+                out.append(stadium_cutter("cut", p, u, sd, C_HOLE_R * 1.7, C_HOLE_R * 1.7, 0.02))
+        return out
+
+    cut(dome, vents())
+    # A raised band across the brow, round to the temples (the shell's one molded line).
+    brow = new_object("c_brow", lambda bm: band_patch(
+        bm, sh, -66.0, 66.0, lambda a: keyed(C_RIM, a) + 0.0015, lambda a: keyed(C_RIM, a) + 0.021,
+        nu=44, nv=4, grow=0.0026), offset)
+    solidify(brow, 0.004, bevel=0.0014)
+    apply_all(brow)
+    shell = join("c_shell", [dome, brow])
+    shell.data.materials.append(M["shell"])
+
+    # Trim: the rear adjuster plate and a screw at each temple.
+    def trim(bm):
+        p, n, u, s = _surface_frame(sh, 180.0, -0.03)
+        rounded_box(bm, p + n * 0.001, s, u, n, 0.024, 0.01, 0.0024, segs=20, rings=5)
+        for sd in (1.0, -1.0):
+            p, n = surf_pt(sh, sd * 84.0, 0.05)
+            screw(bm, p + n * 0.0004, n, r=0.0036, h=0.0015)
+    tr = new_object("c_trim", trim, offset)
+    tr.data.materials.append(M["trim"])
+
+    # Dark: liner, a rubber edge, the ear loops, visor screws, chin strap and cup.
+    lin = new_object("c_liner", lambda bm: shell_patch(
+        bm, sh, lambda a: keyed(C_RIM, a) + 0.005, None, nu=48, nv=12, grow=-0.0036), offset)
+    solidify(lin, 0.009, bevel=0.0)
+    cut(lin, vents())
+
+    def dark(bm):
+        rim = []
+        n = 96
+        for i in range(n):
+            a = 360.0 * i / n - 180.0
+            p, nr = surf_pt(sh, a, keyed(C_RIM, a) + 0.0012)
+            rim.append((p - nr * 0.0013, nr))
+        rings = []
+        for i, (p, nr) in enumerate(rim):
+            t = (rim[(i + 1) % n][0] - rim[i - 1][0]).normalized()
+            rings.append(ring_pts(p, nr, t.cross(nr).normalized(), 0.0026, 0.0028, 8))
+        tube(bm, rings, closed=True)
+        for s in (1.0, -1.0):
+            # The ear loop: a flat band from the edge ahead of the ear, down under it and
+            # back up behind (it lies on the shell's own line carried on down).
+            loop = [side_pt(sh, q.x, q.y, s, 0.0005) for q in spline([Vector(c) for c in C_LOOP], 26)]
+            rings = []
+            for i, (p, nr) in enumerate(loop):
+                t = (loop[min(i + 1, len(loop) - 1)][0] - loop[max(i - 1, 0)][0]).normalized()
+                rings.append(ring_pts(p, nr, t.cross(nr).normalized(), 0.0024, 0.0055, 10, 3.5))
+            tube(bm, rings)
+            for y in C_SCREWS[1]:
+                p, nr = surf_pt(sh, s * C_SCREWS[0], y)
+                screw(bm, p, nr)
+        f, _ = side_pt(sh, C_LOOP[2][0], C_LOOP[2][1])
+        f -= Vector((0.004, 0, 0))
+        b, _ = side_pt(sh, C_LOOP[4][0], C_LOOP[4][1])
+        b -= Vector((0.004, 0, 0))
+        chin_strap(bm, f, b, Vector((0.094, -0.072, -0.006)),
+                   [Vector((0.074, -0.098, 0.024)), Vector((0.046, -0.114, 0.05)), Vector((0.018, -0.116, 0.062))])
+        chin_cup(bm, Vector((0.0, -0.112, 0.064)), size=(0.036, 0.024, 0.0065))
+    dk = join("c_dark", [new_object("c_dark", dark, offset), lin])
+    dk.data.materials.append(M["dark"])
+
+    # Visor: a short shield with rounded corners, screwed to the temples.
+    vi = new_object("c_visor", lambda bm: visor_shield(
+        bm, sh, 61.0, 0.066, C_VISOR_BOTTOM, gap=0.006, flare=0.04, nu=36, nv=6), offset)
+    solidify(vi, 0.0025, bevel=0.0008)
+    apply_all(vi)
+    vi.data.materials.append(M["visor"])
+
+    def hw(bm):
+        for s in (1.0, -1.0):
+            p, nr = surf_pt(sh, s * C_SCREWS[0], sum(C_SCREWS[1]) * 0.5)
+            t = (Vector((0, 1, 0)) - nr * nr.y).normalized()
+            rounded_box(bm, p + nr * 0.0058, nr.cross(t).normalized(), t, nr, 0.008, 0.015, 0.0026, segs=16, rings=5)
+    vh = new_object("c_visor_hw", hw, offset)
+    vh.data.materials.append(M["visor_hw"])
+    return {"shell": shell, "trim": tr, "dark": dk, "visor": vi, "visor_hw": vh}
+
+
+# --- Face gear: the cage and the full shield ---------------------------------------------------
+#
+# Both lie on one surface in front of the face: from under the helmet's brow, round to just
+# ahead of the ears, down and in under the chin. In plan it is a superellipse, FACE_W wide
+# and FACE_FRONT deep at each height (off the helmet's axis); its outline as seen from the
+# front is (azimuth deg, y), the top following the helmet's own edge.
+
+FACE_SIDE = [(60.0, 0.008), (68.0, -0.036), (70.0, -0.072), (62.0, -0.106), (42.0, -0.13), (18.0, -0.142), (0.0, -0.145)]
+FACE_W = [(-0.16, 0.05), (-0.14, 0.07), (-0.10, 0.088), (-0.05, 0.1), (0.0, 0.106), (0.08, 0.108)]
+FACE_FRONT = [(-0.158, 0.034), (-0.15, 0.082), (-0.138, 0.109), (-0.112, 0.132), (-0.075, 0.146), (-0.035, 0.152),
+              (0.005, 0.152), (0.04, 0.146), (0.072, 0.134)]
+FACE_P = 2.3
+FACE_BARS_Y = (0.012, -0.026, -0.064, -0.1)       # the cage's level bars
+FACE_BARS_A = (-46.0, -30.0, -15.0, 0.0, 15.0, 30.0, 46.0)   # ... and its upright ones
+FACE_WIRE = 0.0019
+
+
+def _table(tbl, x):
+    """Straight-line reading of [(x, value)], level beyond its ends."""
+    if x <= tbl[0][0]:
+        return tbl[0][1]
+    for (x0, v0), (x1, v1) in zip(tbl, tbl[1:]):
+        if x <= x1:
+            return _lerp(v0, v1, (x - x0) / (x1 - x0))
+    return tbl[-1][1]
+
+
+class Face:
+    """The face gear's surface under one helmet (its Shape and edge keys)."""
+
+    def __init__(self, sh, rim):
+        self.sh, self.rim = sh, rim
+        ctrl = [(a, keyed(rim, a) - 0.004) for a in (0.0, 15.0, 30.0, 44.0)] + FACE_SIDE
+        self.half = [(q.x, q.y) for q in spline([Vector(c) for c in ctrl], 110)]   # the outline's +x half, top to bottom
+        self.top_y = self.half[0][1]
+        brow, _ = surf_pt(sh, 0.0, keyed(rim, 0.0))
+        self.top_r = brow.z - sh.zc + 0.009
+
+    def front(self, y):
+        """How deep the surface is at height y: the table's, drawn in to just off the
+        helmet's own brow at the top."""
+        return _lerp(_table(FACE_FRONT, y), self.top_r, _smooth(0.0, self.top_y, y))
+
+    def pt(self, a, y):
+        s, c = math.sin(math.radians(a)), math.cos(math.radians(a))
+        r = 1.0 / ((abs(s) / _table(FACE_W, y)) ** FACE_P + (abs(c) / self.front(y)) ** FACE_P) ** (1.0 / FACE_P)
+        return Vector((s * r, y, self.sh.zc + c * r))
+
+    def a_max(self, y):
+        """How far round the outline reaches at height y (deg)."""
+        best = 0.0
+        for (a0, y0), (a1, y1) in zip(self.half, self.half[1:]):
+            if (y0 - y) * (y1 - y) <= 0 and y0 != y1:
+                best = max(best, _lerp(a0, a1, (y - y0) / (y1 - y0)))
+        return best
+
+    def y_range(self, a):
+        """(top, bottom) of the outline at azimuth a."""
+        a = abs(a)
+        ys = []
+        for (a0, y0), (a1, y1) in zip(self.half, self.half[1:]):
+            if (a0 - a) * (a1 - a) <= 0 and a0 != a1:
+                ys.append(_lerp(y0, y1, (a - a0) / (a1 - a0)))
+        if not ys:
+            return self.top_y, self.half[-1][1]
+        return max(ys), min(ys)
+
+    def loop(self):
+        """The whole outline as surface points, from the top center round by +x."""
+        pts = [self.pt(a, y) for a, y in self.half]
+        return pts + [self.pt(-a, y) for a, y in reversed(self.half[1:-1])]
+
+
+def wire(bm, pts, r, sides=5):
+    """A round wire through pts (game Vectors)."""
+    rings, prev = [], None
+    n = len(pts)
+    for i, q in enumerate(pts):
+        t = (pts[min(i + 1, n - 1)] - pts[max(i - 1, 0)]).normalized()
+        u = t.orthogonal().normalized() if prev is None else (prev - t * prev.dot(t)).normalized()
+        prev = u
+        rings.append(ring_pts(q, u, t.cross(u), r, r, sides))
+    tube(bm, rings)
+
+
+def _out(fc, q):
+    """Outward from the head at a point of the face surface (roughly its normal)."""
+    d = q - Vector((0.0, q.y * 0.5 - 0.02, fc.sh.zc))
+    return d.normalized()
+
+
+def _face_hw(bm, fc, chin_strip):
+    """The dark fittings both pieces share: a clip either side of the brow up onto the
+    shell, a clip at each side, the chin cup; `chin_strip` adds a guard band along the
+    bottom edge (the shield's)."""
+    sh = fc.sh
+    for s in (1.0, -1.0):
+        a = 22.0 * s
+        low = fc.pt(a, fc.y_range(a)[0] - 0.006)
+        high, n = surf_pt(sh, a, keyed(fc.rim, a) + 0.008)
+        along = high + n * 0.002 - low
+        side = Vector((math.cos(math.radians(a)), 0.0, -math.sin(math.radians(a))))
+        w = side.cross(along.normalized()).normalized()
+        rounded_box(bm, low + along * 0.5 + w * 0.001, side, along.normalized(), w, 0.0065, along.length * 0.5 + 0.004, 0.0022,
+                    segs=14, rings=5)
+        a = 66.0 * s
+        q = fc.pt(a, -0.034)
+        o = _out(fc, q)
+        t = Vector((0, 1, 0))
+        rounded_box(bm, q - o * 0.002, o.cross(t).normalized(), t, o, 0.0075, 0.012, 0.0032, segs=14, rings=5)
+    q = fc.pt(0.0, -0.126)
+    o = _out(fc, q)
+    u = Vector((1, 0, 0))
+    rounded_box(bm, q - o * 0.011, u, o.cross(u).normalized(), o, 0.03, 0.019, 0.008, segs=16, rings=6, p=3.0)
+    if chin_strip:
+        lp = [q for q in fc.loop() if q.y < -0.088]
+        lp.sort(key=lambda q: math.atan2(q.x, q.z - sh.zc))
+        strap_along(bm, lp, [_out(fc, q) for q in lp], 0.013, 0.0034)
+
+
+def build_face(key, sh, rim, offset=Vector()):
+    """The cage and the full shield for one helmet: {cage, cage_hw, shield, shield_hw}."""
+    fc = Face(sh, rim)
+    M = mats()
+
+    def cage(bm):
+        for y in FACE_BARS_Y:
+            a1 = fc.a_max(y)
+            k = max(8, int(a1 / 4.0))
+            wire(bm, [fc.pt(_lerp(-a1, a1, i / (2 * k)), y) for i in range(2 * k + 1)], FACE_WIRE)
+        for a in FACE_BARS_A:
+            y1, y0 = fc.y_range(a)
+            k = max(6, int((y1 - y0) / 0.009))
+            wire(bm, [fc.pt(a, _lerp(y1, y0, i / k)) for i in range(k + 1)], FACE_WIRE)
+        lp = fc.loop()[::2]
+        wire(bm, lp + [lp[0]], 0.0027, sides=6)
+    cg = new_object("%s_cage" % key, cage, offset)
+    cg.data.materials.append(material("FaceCage", (0.75, 0.77, 0.8), 0.25))
+    ch = new_object("%s_cage_hw" % key, lambda bm: _face_hw(bm, fc, False), offset)
+    ch.data.materials.append(M["dark"])
+
+    def shield(bm):
+        nu, nv = 36, 18
+        cols = []
+        for i in range(nu + 1):
+            a = _lerp(-69.0, 69.0, i / nu)
+            y1, y0 = fc.y_range(a)
+            cols.append([fc.pt(a, _lerp(y1, y0, j / nv)) for j in range(nv + 1)])
+        grid(bm, cols)
+    sd = new_object("%s_shield" % key, shield, offset)
+    solidify(sd, 0.0025, bevel=0.0008)
+    apply_all(sd)
+    # Breathing slots in front of the mouth.
+    slots = []
+    for a in (-13.0, 13.0):
+        for y in (-0.078, -0.092, -0.106):
+            q = fc.pt(a, y)
+            slots.append(stadium_cutter("cut", q, Vector((math.cos(math.radians(a)), 0.0, -math.sin(math.radians(a)))),
+                                        Vector((0, 1, 0)), 0.024, 0.0046, 0.02))
+    cut(sd, slots)
+    sd.data.materials.append(M["visor"])
+    shw = new_object("%s_shield_hw" % key, lambda bm: _face_hw(bm, fc, True), offset)
+    shw.data.materials.append(M["dark"])
+    return {"cage": cg, "cage_hw": ch, "shield": sd, "shield_hw": shw}
+
+
+FACE_HELMETS = {"a": (A_SHAPE, A_RIM), "b": (B_SHAPE, B_RIM), "c": (C_SHAPE, C_RIM)}
+
+
+# --- The Chupacabras' spines and eyes ----------------------------------------------------------
+
+# Per helmet: its shape; where the ridge starts on the brow and ends at the nape (y), and
+# how far off the plain shell it stands (on A's raised spine, B's raised panel); and its
+# visor as visor_shield was given it (top, gap, flare, the keys of its lower edge).
+CHUPA_HELMETS = {
+    "a": dict(sh=A_SHAPE, ridge=(0.1, 0.0, 0.0098), visor=(0.074, 0.007, 0.05, A_VISOR_BOTTOM)),
+    "b": dict(sh=B_SHAPE, ridge=(0.092, -0.008, 0.0046), visor=(0.069, 0.006, 0.03, B_VISOR_BOTTOM)),
+    "c": dict(sh=C_SHAPE, ridge=(0.088, -0.016, 0.0), visor=(0.066, 0.006, 0.04, C_VISOR_BOTTOM)),
+}
+CHUPA_SPINES = 9
+CHUPA_FANG = (13.0, 0.045, 0.0082, 0.0064, 0.011)   # a fang: azimuth, length, root half width / half depth, how far its tip curls in
+
+
+def _ridge(sh, y_front, y_back, grow, n):
+    """n + 1 points along the shell's middle line from the brow over the top to the nape,
+    evenly spaced, `grow` off the surface, with the outward normal at each."""
+    f = sh.profile(0.0, y_front, 120, grow)
+    b = sh.profile(180.0, y_back, 120, grow)
+    pts = f + list(reversed(b))[1:]
+    L = [0.0]
+    for p0, p1 in zip(pts, pts[1:]):
+        L.append(L[-1] + (p1 - p0).length)
+    out = []
+    for i in range(n + 1):
+        d = L[-1] * i / n
+        j = max(0, min(len(L) - 2, next((q for q in range(len(L) - 1) if L[q + 1] >= d), len(L) - 2)))
+        t = 0.0 if L[j + 1] == L[j] else (d - L[j]) / (L[j + 1] - L[j])
+        q = pts[j].lerp(pts[j + 1], t)
+        tng = (pts[min(j + 2, len(pts) - 1)] - pts[max(j - 1, 0)]).normalized()
+        out.append((q, Vector((1, 0, 0)).cross(tng).normalized(), tng))
+    return out
+
+
+def _visor_edge(spec, a):
+    """The middle of a helmet's visor's lower edge at azimuth a (between its two skins),
+    and the way out from the head there."""
+    sh = spec["sh"]
+    y_top, gap, flare, bottom = spec["visor"]
+    top, _ = surf_pt(sh, a, y_top)
+    y = keyed(bottom, a)
+    r = Vector((top.x, 0.0, top.z - sh.zc)).length + gap + flare * (y_top - y) - 0.00125
+    d = Vector((math.sin(math.radians(a)), 0.0, math.cos(math.radians(a))))
+    return Vector((d.x * r, y, sh.zc + d.z * r)), d
+
+
+def build_chupa(key, offset=Vector()):
+    """The pieces for one helmet: {spines, fangs}."""
+    spec = CHUPA_HELMETS[key]
+    sh = spec["sh"]
+
+    def spines(bm):
+        y_front, y_back, grow = spec["ridge"]
+        line = _ridge(sh, y_front, y_back, grow, 200)
+        for k in range(CHUPA_SPINES):
+            t = 0.04 + 0.92 * k / (CHUPA_SPINES - 1)
+            q, nrm, tng = line[int(round(t * 200))]
+            # Small on the brow, tallest over the back of the crown, smaller again to the nape.
+            tall = 0.02 + 0.044 * math.sin(math.pi * min(1.0, max(0.0, (t - 0.02) / 0.9)) ** 1.25) ** 1.1
+            along, across = 0.015 + tall * 0.22, 0.0078 + tall * 0.07
+            rings = []
+            for i in range(7):
+                u = i / 6.5
+                c = q - nrm * 0.003 + nrm * (tall * u) + tng * (tall * 0.5 * u ** 1.7)      # swept back
+                k_ = (1.0 - u) ** 0.85
+                rings.append(ring_pts(c, tng, Vector((1, 0, 0)), along * k_, across * k_, 10, 2.2))
+            tube(bm, rings)
+    sp = new_object("ch%s_spines" % key, spines, offset)
+    sp.data.materials.append(material("ChupaSpines", (0.9, 0.85, 0.72), 0.5))
+
+    def fangs(bm):
+        # Two long canines hung from the visor's lower edge, either side of the nose: fat
+        # where they meet the visor, curving in toward the lip as they come to a point.
+        a0, length, wide, deep, curl = CHUPA_FANG
+        for s in (1.0, -1.0):
+            root, out = _visor_edge(spec, s * a0)
+            side = Vector((out.z, 0.0, -out.x))
+            rings = []
+            for i in range(9):
+                t = i / 8.6
+                c = root + Vector((0, 0.003, 0)) - Vector((0, 1, 0)) * (length * t) - out * (curl * t * t)
+                k = (1.0 - t) ** 0.8 * (1.0 + 0.12 * math.sin(math.pi * min(1.0, t * 2.5)))     # a slight belly below the root
+                rings.append(ring_pts(c, side, out, wide * k, deep * k, 10, 2.1))
+            tube(bm, rings)
+    fg = new_object("ch%s_fangs" % key, fangs, offset)
+    fg.data.materials.append(material("ChupaFangs", (0.93, 0.9, 0.8), 0.35))
+    return {"spines": sp, "fangs": fg}
+
+
+CHUPA_ROLES = ["spines", "fangs"]
+
+
+# --- The Grays' alien visor --------------------------------------------------------------------
+
+ALIEN_A = (4.0, 78.0)              # a lens: from its inner corner beside the nose round to the temple (a visor stops near 64)
+ALIEN_IN_Y = 0.0                   # the inner corner's height (the eye itself is at 0.03: the lens slants up from here)
+ALIEN_SCREWS = {"a": A_SCREWS, "b": B_SCREWS, "c": C_SCREWS}
+
+
+def _alien_top(y_top, a):
+    """A lens's upper edge: up from the inner corner to the helmet's brow, along under it,
+    then down a little to the point at the temple."""
+    keys = [(ALIEN_A[0], ALIEN_IN_Y + 0.002), (8, 0.024), (14, y_top - 0.022), (22, y_top - 0.005), (30, y_top), (52, y_top),
+            (ALIEN_A[1], y_top - 0.03)]
+    return keyed(keys, a)
+
+
+def _alien_bottom(y_top, a):
+    """Its lower edge: down from the inner corner to the cheek, then up to the temple."""
+    keys = [(ALIEN_A[0], ALIEN_IN_Y - 0.002), (8, -0.018), (15, -0.034), (25, -0.042), (37, -0.031), (49, -0.009),
+            (60, 0.014), (71, y_top - 0.042), (ALIEN_A[1], y_top - 0.034)]
+    return keyed(keys, a)
+
+
+def _alien_bulge(a, y):
+    """How far a lens swells out of a visor's plain curve: an eye's dome."""
+    u = (abs(a) - 33.0) / 38.0
+    v = (y - 0.012) / 0.066
+    return 0.013 * max(0.0, 1.0 - u * u) * max(0.0, 1.0 - v * v)
+
+
+def build_alien(key, offset=Vector()):
+    """The alien visor for one helmet: {lens, hw}."""
+    spec = CHUPA_HELMETS[key]
+    sh = spec["sh"]
+    y_top, gap, flare, _bottom = spec["visor"]
+
+    def at(a, y, out=0.0):
+        top, _ = surf_pt(sh, a, y_top)
+        r = Vector((top.x, 0.0, top.z - sh.zc)).length + gap + flare * (y_top - y) + _alien_bulge(a, y) + out
+        return Vector((math.sin(math.radians(a)) * r, y, sh.zc + math.cos(math.radians(a)) * r))
+
+    def lens(bm):
+        nu, nv = 40, 10
+        for side in (1.0, -1.0):
+            rows = []
+            for i in range(nu + 1):
+                a = _lerp(ALIEN_A[0], ALIEN_A[1], i / nu)
+                y1, y0 = _alien_top(y_top, a), _alien_bottom(y_top, a)
+                rows.append([at(side * a, _lerp(y1, y0, j / nv)) for j in range(nv + 1)])
+            grid(bm, rows)
+    ln = new_object("al%s_lens" % key, lens, offset)
+    solidify(ln, 0.0025, bevel=0.0008)
+    apply_all(ln)
+    ln.data.materials.append(material("AlienLens", (0.02, 0.02, 0.03), 0.06))
+
+    def hw(bm):
+        # The bar over the nose between the two inner corners, and a clip at each temple,
+        # as the visor's.
+        bar = [at(_lerp(-ALIEN_A[0] - 1.5, ALIEN_A[0] + 1.5, i / 10), ALIEN_IN_Y + 0.006 * math.sin(math.pi * i / 10), -0.001) for i in range(11)]
+        wire(bm, bar, 0.0026, sides=6)
+        az, ys = ALIEN_SCREWS[key]
+        for s_ in (1.0, -1.0):
+            q, nr = surf_pt(sh, s_ * az, sum(ys) * 0.5)
+            t = (Vector((0, 1, 0)) - nr * nr.y).normalized()
+            rounded_box(bm, q + nr * 0.0058, nr.cross(t).normalized(), t, nr, 0.008, 0.016, 0.0026, segs=16, rings=5)
+    h = new_object("al%s_hw" % key, hw, offset)
+    h.data.materials.append(mats()["visor_hw"])
+    return {"lens": ln, "hw": h}
+
+
+ALIEN_ROLES = ["lens", "hw"]
+
+
+def build_aliens(do_export=False):
+    """The alien visor for all three helmets, each where its helmet stands in build_new's row."""
+    for o in list(bpy.data.objects):
+        if o.name.startswith(("ala_", "alb_", "alc_")):
+            bpy.data.objects.remove(o, do_unlink=True)
+    out = {}
+    for i, key in enumerate("abc"):
+        out[key] = build_alien(key, head_offset() + g((0.0, -0.5, 0.5)[i], 0.0, 0.0))
+        if do_export:
+            export(out[key], "alien_%s.glb" % key, ALIEN_ROLES)
+    return out
+
+
+def build_dress(do_export=False):
+    """The Chupacabras' dressing for all three helmets, each where its helmet stands in
+    build_new's row (A in the middle, B and C either side)."""
+    for o in list(bpy.data.objects):
+        if o.name.startswith(("cha_", "chb_", "chc_")):
+            bpy.data.objects.remove(o, do_unlink=True)
+    out = {}
+    for i, key in enumerate("abc"):
+        out[key] = build_chupa(key, head_offset() + g((0.0, -0.5, 0.5)[i], 0.0, 0.0))
+        if do_export:
+            export(out[key], "chupa_%s.glb" % key, CHUPA_ROLES)
+    return out
+FACE_ROLES = ["cage", "cage_hw", "shield", "shield_hw"]
+
+
+def build_new(do_export=False):
+    """Helmet C and the face gear for all three helmets, in a row beside where A stands
+    (A and B themselves are not rebuilt)."""
+    for o in list(bpy.data.objects):
+        if o.name.startswith(("cut_", "c_", "fa_", "fb_", "fc_")) and o.name not in (HEAD_OBJ,):
+            bpy.data.objects.remove(o, do_unlink=True)
+    c = build_c(head_offset() + g(0.5, 0.0, 0.0))
+    if do_export:
+        export(c, "helmet_c.glb")
+    faces = {}
+    for i, key in enumerate("abc"):
+        sh, rim = FACE_HELMETS[key]
+        faces[key] = build_face("f" + key, sh, rim, head_offset() + g((0.0, -0.5, 0.5)[i], 0.0, 0.0))
+        if do_export:
+            export(faces[key], "face_%s.glb" % key, FACE_ROLES)
+    return c, faces
+
+
 # --- Export --------------------------------------------------------------------------------
 
 ROLES = ["shell", "trim", "dark", "visor", "visor_hw"]
 
 
-def export(parts, filename):
-    """Exports one helmet, its parts named by role (the glTF node names build_gear.gd
-    reads), at the origin."""
-    objs = [parts[r] for r in ROLES]
+def export(parts, filename, roles=ROLES):
+    """Exports one helmet (or one helmet's face gear: FACE_ROLES), its parts named by role
+    (the glTF node names build_gear.gd reads), at the origin."""
+    objs = [parts[r] for r in roles]
     keep = [(o, o.name, o.location.copy()) for o in objs]
     for o in bpy.context.selected_objects:
         o.select_set(False)
-    for r, o in zip(ROLES, objs):
+    for r, o in zip(roles, objs):
         clash = bpy.data.objects.get(r)
         if clash is not None and clash not in objs:
             clash.name = r + "_tmp"
@@ -959,7 +1499,7 @@ def export(parts, filename):
         o.select_set(True)
     bpy.context.view_layer.objects.active = objs[0]
     path = os.path.join(OUT, filename)
-    bpy.ops.export_scene.gltf(filepath=path, export_format="GLB", use_selection=True,
+    bpy.ops.export_scene.gltf(filepath=path, export_format="GLB", use_selection=True, use_active_scene=True,
                               export_yup=True, export_apply=True, export_normals=True,
                               export_texcoords=False, export_materials="NONE")
     for o, name, loc in keep:
@@ -978,4 +1518,5 @@ def build_all(do_export=False):
     if do_export:
         export(a, "helmet_a.glb")
         export(b, "helmet_b.glb")
+    build_new(do_export)
     return a, b

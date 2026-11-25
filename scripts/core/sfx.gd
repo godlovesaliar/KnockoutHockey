@@ -9,6 +9,7 @@ extends Node
 ##   Sfx.announce("bighit", priority)               # play-by-play (assets/sound/announcer/)
 ##   Sfx.pa_chain(["pa_goal_whalers", "pa_scored_by", "pa_n17_big"])   # the arena PA
 ##   Sfx.play_music() / Sfx.stop_music(fade)        # the menu playlist (assets/sound/music/)
+##   Sfx.play_theme() / Sfx.theme_time() / Sfx.theme_to_bed() / Sfx.stop_theme(fade)   # the broadcast theme
 ##
 ## Positional sounds get quieter with distance from `listener` (the director keeps it on
 ## the puck, which is where the camera looks).
@@ -43,6 +44,18 @@ const ANNOUNCER_DB := 1.0
 ## Menu music: every track in this folder, shuffled, one after another.
 const MUSIC_DIR := "res://assets/sound/music/"
 const MUSIC_DB := -10.0
+## The TV package (made by tools/build_theme.py): the broadcast theme and the graphics'
+## sounds (tv_whoosh, tv_slam, tv_clash, tv_sting), loaded like the cut recordings.
+const TV_DIR := "res://assets/sound/tv/"
+const THEME_PATH := TV_DIR + "theme.ogg"
+## The theme's clock (build_theme.py's numbers): a two-beat pickup, eight bars of fanfare
+## (the broadcast open is cut to them, see theme_bar), then an eight-bar bed that loops.
+const THEME_BEAT := 60.0 / 130.0
+const THEME_BAR := THEME_BEAT * 4.0
+const THEME_PICKUP := THEME_BEAT * 2.0
+const THEME_BED_BAR := 9          ## the bed's first bar: the loop point
+const THEME_DB := -7.0            ## the fanfare, up front
+const THEME_BED_DB := -20.0       ## the bed, under the booth's welcome
 ## The arena PA: its own voice, through the building's speakers (the "PA" bus: a touch of
 ## filtering, a faint echo and room, light because the voice has its own reverb), on the crowd's volume. It dips
 ## under the booth so Steve and Bobby stay on top, the way a broadcast hears it.
@@ -90,6 +103,8 @@ var _organ_tween: Tween
 var _music: AudioStreamPlayer
 var _music_tween: Tween
 var _music_on := false
+var _theme: AudioStreamPlayer
+var _theme_tween: Tween
 var _playlist: Array[String] = []
 var _last_track := ""
 var _rng := RandomNumberGenerator.new()
@@ -144,6 +159,9 @@ func _ready() -> void:
 	_music.finished.connect(func() -> void:
 		if _music_on:
 			_next_track())
+	_theme = AudioStreamPlayer.new()
+	_theme.bus = "Music"
+	add_child(_theme)
 	_pa = AudioStreamPlayer.new()
 	_pa.bus = _pa_bus()
 	_pa.volume_db = PA_DB
@@ -193,6 +211,12 @@ func _pa_bus() -> String:
 
 func has(sound: String) -> bool:
 	return _streams.has(sound)
+
+
+## The stream behind `sound` (null: there is none, or sound is off), for a player that lives
+## outside Sfx (the resurfacer's engine loop).
+func stream_of(sound: String) -> AudioStream:
+	return _pick(sound) if _streams.has(sound) and not muted else null
 
 
 ## Plays a sound. `at` = Vector3.INF for non-positional.
@@ -248,6 +272,7 @@ func set_ambience(kind: String, volume_db := 0.0) -> void:
 
 
 func stop_crowd() -> void:
+	stop_theme(0.3)
 	_crowd.stop()
 	_ambience.stop()
 	end_reaction(0.2)
@@ -321,6 +346,7 @@ func stop_organ(fade := 1.5) -> void:
 ## Starts the menu music (or keeps it going: moving between menu screens doesn't
 ## restart the track). Tracks play shuffled, never the same one twice in a row.
 func play_music() -> void:
+	stop_theme(0.3)
 	if muted:
 		return
 	if _music_tween:
@@ -366,6 +392,90 @@ func _next_track() -> void:
 	_music.play()
 	_music_tween = create_tween()
 	_music_tween.tween_property(_music, "volume_db", MUSIC_DB, 1.5)
+
+
+# --- The broadcast theme ---------------------------------------------------------
+
+## Seconds into the theme where bar `n` starts (bar 1 is the first hit, after the pickup).
+func theme_bar(n: float) -> float:
+	return THEME_PICKUP + (n - 1.0) * THEME_BAR
+
+
+## Starts the broadcast theme `from` seconds in (0: the pickup into bar 1). It plays the
+## fanfare once, then loops its bed until stop_theme. False if there's no theme to play
+## (sound is off, or the file is missing): the open then runs on its own clock.
+func play_theme(from := 0.0) -> bool:
+	if muted:
+		return false
+	var stream := _theme_stream()
+	if stream == null:
+		return false
+	stream.loop = true
+	stream.loop_offset = theme_bar(THEME_BED_BAR)
+	if _theme_tween:
+		_theme_tween.kill()
+		_theme_tween = null
+	_theme.stream = stream
+	_theme.volume_db = THEME_DB
+	_theme.play(from)
+	if log_events:
+		print("[music] theme from %.2fs" % from)
+	return true
+
+
+## The theme's stream. `-- theme=<name>` plays assets/sound/tv/options/theme_<name>.ogg in
+## its place for a run (build_theme.py's `options`: themes to compare before one is picked).
+func _theme_stream() -> AudioStreamOggVorbis:
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("theme="):
+			var path := TV_DIR + "options/theme_%s.ogg" % a.substr(6)
+			if FileAccess.file_exists(path):
+				return AudioStreamOggVorbis.load_from_file(path)
+	return load(THEME_PATH) as AudioStreamOggVorbis if ResourceLoader.exists(THEME_PATH) else null
+
+
+func theme_playing() -> bool:
+	return _theme.playing
+
+
+## Where the theme is right now, in seconds (what's coming out of the speakers, so pictures
+## cut to it land on the beat); -1 when it isn't playing.
+func theme_time() -> float:
+	if not _theme.playing:
+		return -1.0
+	return _theme.get_playback_position() + AudioServer.get_time_since_last_mix() - AudioServer.get_output_latency()
+
+
+## Moves the theme to `db` over `fade` seconds.
+func theme_level(db: float, fade := 0.4) -> void:
+	if not _theme.playing:
+		return
+	if _theme_tween:
+		_theme_tween.kill()
+	_theme_tween = create_tween()
+	_theme_tween.tween_property(_theme, "volume_db", db, fade)
+
+
+## The open is over: on to the bed, quietly, under the booth. A theme still in its fanfare
+## (the open was skipped) jumps to the bed's first bar.
+func theme_to_bed() -> void:
+	if not _theme.playing:
+		return
+	var bed := theme_bar(THEME_BED_BAR)
+	if _theme.get_playback_position() < bed - 0.3:
+		_theme.seek(bed)
+		_theme.volume_db = THEME_BED_DB - 8.0
+	theme_level(THEME_BED_DB, 0.6)
+
+
+func stop_theme(fade := 2.0) -> void:
+	if not _theme.playing:
+		return
+	if _theme_tween:
+		_theme_tween.kill()
+	_theme_tween = create_tween()
+	_theme_tween.tween_property(_theme, "volume_db", -60.0, fade)
+	_theme_tween.tween_callback(_theme.stop)
 
 
 ## Says an announcer line (a random take, not the last one used). One voice, which doesn't
@@ -579,8 +689,8 @@ func announcer_quiet_for() -> float:
 
 ## True while a line or chain is playing, including the instant between a chain's parts
 ## (the player has stopped but `finished` hasn't queued the next part yet). Without
-## that, a long first part (an intro's home half over INTRO_MIN) let the matchup screen
-## close between the halves and the welcome cut the away half.
+## that, something waiting on the booth (the broadcast open, before it closes) could act
+## between the halves and the welcome would cut the away half.
 func announcing() -> bool:
 	return _voice.playing or not _voice_queue.is_empty()
 
@@ -713,26 +823,28 @@ func _pick(sound: String) -> AudioStream:
 	return s
 
 
-## Recorded clips replace synthesized sounds of the same name ("crowd" loops).
+## Recorded clips replace synthesized sounds of the same name ("crowd" loops); the TV
+## package's sounds (TV_DIR) are loaded the same way.
 func _load_recordings() -> void:
-	if not DirAccess.dir_exists_absolute(CUT_DIR):
-		return
 	var found := {}
-	for f in ResourceLoader.list_directory(CUT_DIR):
-		if not f.ends_with(".ogg"):
+	for dir: String in [CUT_DIR, TV_DIR]:
+		if not DirAccess.dir_exists_absolute(dir):
 			continue
-		var name := f.get_basename()
-		var cut := name.rfind("_")
-		if cut > 0 and name.substr(cut + 1).is_valid_int():
-			name = name.substr(0, cut)
-		var stream := load(CUT_DIR + f) as AudioStream
-		if stream == null:
-			continue
-		if name in ["crowd", "wind"] and stream is AudioStreamOggVorbis:
-			(stream as AudioStreamOggVorbis).loop = true
-		if not found.has(name):
-			found[name] = []
-		found[name].append(stream)
+		for f in ResourceLoader.list_directory(dir):
+			if not f.ends_with(".ogg") or dir + f == THEME_PATH:
+				continue
+			var name := f.get_basename()
+			var cut := name.rfind("_")
+			if cut > 0 and name.substr(cut + 1).is_valid_int():
+				name = name.substr(0, cut)
+			var stream := load(dir + f) as AudioStream
+			if stream == null:
+				continue
+			if name in ["crowd", "wind", "zamboni"] and stream is AudioStreamOggVorbis:
+				(stream as AudioStreamOggVorbis).loop = true
+			if not found.has(name):
+				found[name] = []
+			found[name].append(stream)
 	for name: String in found:
 		_streams[name] = found[name]
 

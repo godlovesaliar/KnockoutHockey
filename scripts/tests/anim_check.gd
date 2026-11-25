@@ -4,6 +4,9 @@ extends Node3D
 ##   `-- scene=skate|check|save sheet=<png>`
 ##   skate: a skater sprinting past, side on (`puck=1` carrying the puck, `coast=1` gliding)
 ##   check: a skater runs a check on another crossing in front (`big=1` harder)
+##   pin:   a board battle: a slow check, held, on a carrier at the boards (`push=<s>` the
+##          pinned pushes back that often, `dig=<s>` the pinner digs that often,
+##          `view=ice|along|high`)
 ##   save:  shots on the goalie at `at=<x>,<y>` (net frame: +x the goalie's left / glove
 ##          side, y up; m), `view=front|side`
 ## `every=<s>` between frames (default 0.07, game time), `frames=<n>` (default 16), `cols=<n>`,
@@ -53,6 +56,8 @@ func _ready() -> void:
 			_skate()
 		"check":
 			_check()
+		"pin":
+			_pin()
 		"save":
 			_save()
 
@@ -88,21 +93,65 @@ func _skate() -> void:
 
 func _check() -> void:
 	var big := _arg("big", "") != ""
-	var victim := _skater(1, 4, "male", func(_s: Skater, i: SkaterIntent, _tt: float) -> void:
-		i.move = Vector3(-0.5, 0, 0))
-	victim.place(Vector3(3.0, 0, 0), Vector3.LEFT)
-	var hitter := _skater(0, 27, _arg("body", "male"), func(sk: Skater, i: SkaterIntent, _tt: float) -> void:
-		var to := victim.global_position - sk.global_position
-		to.y = 0.0
-		i.move = to.normalized()
-		i.turbo = big
-		i.check_down = to.length() < 2.4 and sk.state == Skater.State.SKATE and sk.since_check_landed > 2.0)
-	hitter.place(Vector3(1.0, 0, -14), Vector3.BACK)
+	# `kind=shoulder|hip|shove|miss`: a hip check is thrown skating backward at a carrier
+	# coming up the ice, a shove from a near standstill, a miss at nobody. `right=1`: the
+	# hitter shoots right (which hand tucks). `view=side|far|front|high`, `zoom=<x>` (smaller =
+	# closer), `watch=hitter`.
+	var kind := _arg("kind", "shoulder")
+	var victim: Skater
+	var hitter: Skater
+	var thrown := [false]
+	if kind == "hip":
+		victim = _skater(1, 4, "male", func(_s: Skater, i: SkaterIntent, _tt: float) -> void:
+			i.move = Vector3.BACK * 0.8)
+		victim.place(Vector3(2.0, 0, -12), Vector3.BACK)
+		hitter = _skater(0, 27, _arg("body", "male"), func(sk: Skater, i: SkaterIntent, _tt: float) -> void:
+			var to := victim.global_position - sk.global_position
+			to.y = 0.0
+			i.backward = true
+			i.move = Vector3.BACK * 0.45
+			if to.length() < 2.0 and not thrown[0]:
+				i.move = to.normalized()
+				i.check_down = sk.state == Skater.State.SKATE
+				thrown[0] = i.check_down
+			elif sk.state == Skater.State.CHECK:
+				i.move = to.normalized())
+		hitter.place(Vector3(3.0, 0, -5), Vector3.FORWARD)
+	else:
+		var far := kind == "miss"
+		var still := _arg("still", "") != ""   # the victim stands still, dead ahead: a clean profile
+		victim = _skater(1, 4, "male", func(_s: Skater, i: SkaterIntent, _tt: float) -> void:
+			i.move = Vector3(-0.5, 0, 0) if kind == "shoulder" and not still else Vector3.ZERO)
+		victim.place(Vector3(3.0, 0, 0) if not far else Vector3(14.0, 0, 0), Vector3.LEFT)
+		hitter = _skater(0, 27, _arg("body", "male"), func(sk: Skater, i: SkaterIntent, tt: float) -> void:
+			var to := (victim.global_position if not far else Vector3(1.0, 0, 0)) - sk.global_position
+			to.y = 0.0
+			i.move = to.normalized() * (0.22 if kind == "shove" else 1.0) if not far else Vector3.BACK
+			i.turbo = big
+			if far:
+				i.check_down = tt > 1.6 and not thrown[0]
+				thrown[0] = thrown[0] or i.check_down
+			else:
+				i.check_down = to.length() < (1.35 if kind == "shove" else 2.4) and sk.state == Skater.State.SKATE and sk.since_check_landed > 2.0)
+		hitter.place(Vector3(1.0, 0, -14) if kind != "shove" else Vector3(2.4, 0, -4), Vector3.BACK)
+		if still and kind == "shoulder":
+			hitter.place(Vector3(3.0 + float(_arg("off", "0.25")), 0, -12), Vector3.BACK)
+	hitter.shoots_left = _arg("right", "") == ""
 	hitter.opponents = [victim]
 	victim.opponents = [hitter]
-	follow = victim
-	cam_off = Vector3(4.2, 0.5, -0.6)
-	look_off = Vector3(0, 0.7, -1.0)
+	follow = hitter if (_arg("watch", "") == "hitter" or kind == "miss") else victim
+	var watching := follow == hitter
+	match _arg("view", "side"):
+		"far":
+			cam_off = Vector3(-4.2, 0.5, 0.6)
+		"front":
+			cam_off = Vector3(0.6, 0.5, 4.6)
+		"high":
+			cam_off = Vector3(-2.5, 4.0, 3.5)
+		_:
+			cam_off = Vector3(4.2, 0.5, -0.6)
+	cam_off *= float(_arg("zoom", "1"))
+	look_off = Vector3(0, 0.8, 0) if watching else Vector3(0, 0.7, -1.0)
 	# Start the sheet a little before the check lands.
 	var start := 0.0
 	while start < 8.0:
@@ -195,3 +244,47 @@ func _physics_process(_delta: float) -> void:
 	var v := g.visual as GoalieVisual
 	print("%.2f g=%d eta=%.2f saves=%d act=%s %s w=%.2f off=%s dx=%.2f puckz=%.2f" % [Time.get_ticks_msec() / 1000.0, g.g, g.read_eta, g.save_count,
 		v._act_on, v._act_kind, v._act_w, v._save_offset() if v._act_on else Vector2.ZERO, g.net.to_local(g.global_position).x, g.net.to_local(puck.global_position).z])
+
+
+func _pin() -> void:
+	var wall := RinkSpec.HALF_W
+	var push := float(_arg("push", "0"))
+	var dig := float(_arg("dig", "0"))
+	var held := _skater(1, 4, "male", func(sk: Skater, i: SkaterIntent, tt: float) -> void:
+		if sk.state == Skater.State.PINNED and push > 0.0:
+			i.check_down = fmod(tt, push) < 1.0 / 120.0
+		elif sk.state == Skater.State.SKATE and sk.has_puck() and sk.battle == null:
+			i.move = Vector3.BACK * 0.25)
+	held.place(Vector3(wall - 0.9, 0, -2.0), Vector3.BACK)
+	var holder := _skater(0, 27, _arg("body", "male"), func(sk: Skater, i: SkaterIntent, tt: float) -> void:
+		var to := held.global_position - sk.global_position
+		to.y = 0.0
+		if sk.state == Skater.State.SKATE and tt < 6.0:
+			i.move = to.normalized() * 0.5
+			i.check_down = to.length() < 1.6
+		i.check_held = true
+		if sk.state == Skater.State.PIN and dig > 0.0:
+			i.deke_down = fmod(tt, dig) < 1.0 / 120.0)
+	holder.place(Vector3(wall - 4.5, 0, -4.0), Vector3.RIGHT)
+	holder.shoots_left = _arg("right", "") == ""
+	holder.opponents = [held]
+	held.opponents = [holder]
+	puck.place(held.puck_anchor())
+	puck.attach(held)
+	follow = held
+	match _arg("view", "ice"):
+		"along":
+			cam_off = Vector3(-0.9, 0.9, 4.2)
+		"high":
+			cam_off = Vector3(-4.0, 4.5, 2.5)
+		_:
+			cam_off = Vector3(-4.6, 0.9, 1.6)
+	cam_off *= float(_arg("zoom", "1"))
+	look_off = Vector3(-0.3, 0.8, 0)
+	var waited := 0.0
+	while waited < 8.0:
+		await get_tree().physics_frame
+		waited += get_physics_process_delta_time()
+		if holder.state == Skater.State.PIN:
+			break
+	_capture(float(_arg("start", "0")))

@@ -264,6 +264,17 @@ static func display_name(p: Dictionary) -> String:
 	return d if d != "" else ("%s %s" % [p.get("first", ""), p.get("last", "")]).strip_edges()
 
 
+## Head gear a league player wears whatever team they are on (a SkaterVisual head gear key,
+## as Skater.headgear), by display name. Dwayne "Cowboy" Robertson's hat is the Geese's
+## signature gear: the one player in the league who plays in a cowboy hat.
+const SIGNATURE_GEAR := {"Dwayne Robertson": "cowboy"}
+
+
+## A sheet player's own head gear (SIGNATURE_GEAR), "" for nearly everyone.
+static func signature_gear(p: Dictionary) -> String:
+	return str(SIGNATURE_GEAR.get(display_name(p), ""))
+
+
 static func _load() -> void:
 	if _loaded:
 		return

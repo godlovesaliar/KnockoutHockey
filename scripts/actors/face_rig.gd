@@ -22,8 +22,8 @@ const MOUTH_SHADER := preload("res://scenes/actors/mouth.gdshader")
 ## width. The bodies' lips are split along the seam (the mesh has an inner mouth), which
 ## is what lets the jaw open. Measured from the meshes; a new body needs its own entry.
 const MOUTH := {
-	"male": [Vector3(0.0, 1.6440, 0.0965), 0.0245],
-	"female": [Vector3(0.0, 1.5617, 0.0870), 0.0227],
+	"male": [Vector3(0.0, 1.6515, 0.1681), 0.0255],
+	"female": [Vector3(0.0, 1.5647, 0.1500), 0.0243],   # (4 mm behind the seam: the cavity showed through the hollow under her lower lip)
 }
 const MALE_EYE_TO_MOUTH := 0.0768   ## the face proportions below are tuned on the male body
 const JAW_OPEN := 0.22              ## jaw blend shape at 1 (rad)
@@ -55,7 +55,9 @@ var expression := "neutral"
 var _base_expression := "neutral"
 var _expr_left := 0.0
 
-var _v: SkaterVisual
+var _v: SkaterVisual      ## the player wearing the face (null: someone else, see create_for)
+var _skel: Skeleton3D
+var _kind := ""           ## body type
 var _d: Dictionary
 var _body_mi: MeshInstance3D
 var _eyes_mi: MeshInstance3D
@@ -82,30 +84,42 @@ static var _data := {}   ## body kind -> measurements, meshes and materials (sha
 
 ## Gives `v`'s body a face, if it has eyes. Returns null otherwise.
 static func create(v: SkaterVisual) -> FaceRig:
-	var eyes := v.skel.get_node_or_null("Eyes") as MeshInstance3D
-	var kind := v.skater.body_type
+	var s := v.skater
+	var f := create_for(v.skel, v.body, s.body_type, {"hair_color": s.hair_color, "eye_color": s.eye_color,
+			"skin_tone": s.skin_tone, "seed": hash([s.hair_color, s.eye_color, s.skin_tone, s.hair_style, s.number])})
+	if f != null:
+		f._v = v
+	return f
+
+
+## A face for any body built on the game's skeleton (`body`: its root, `skel` under it,
+## `kind` its body type), with `look`: {hair_color, eye_color, skin_tone, seed}. `variant`
+## names a different skin mesh of the same body type (the fans' bodies, which keep their
+## hands), so its face shapes are built and kept apart from the players'.
+static func create_for(skel: Skeleton3D, body: Node, kind: String, look: Dictionary, variant := "") -> FaceRig:
+	var eyes := skel.get_node_or_null("Eyes") as MeshInstance3D
 	if eyes == null or not MOUTH.has(kind):
 		return null
 	var f := FaceRig.new()
 	f.name = "Face"
-	f._setup(v, eyes)
+	f._setup(skel, body, kind, look, variant, eyes)
 	return f
 
 
-func _setup(v: SkaterVisual, eyes: MeshInstance3D) -> void:
-	_v = v
+func _setup(skel: Skeleton3D, body: Node, kind: String, look: Dictionary, variant: String, eyes: MeshInstance3D) -> void:
+	_skel = skel
+	_kind = kind
 	_eyes_mi = eyes
-	var kind := v.skater.body_type
-	for mi: MeshInstance3D in v.skel.find_children("*", "MeshInstance3D", false, false):
+	for mi: MeshInstance3D in skel.find_children("*", "MeshInstance3D", false, false):
 		if mi != eyes and not mi.name.begins_with("Outfit_"):
 			_body_mi = mi
-	_d = _body_data(kind, v.body, _body_mi.mesh, eyes.mesh)
+	_d = _body_data(kind, body, _body_mi.mesh, eyes.mesh, kind + variant)
 	_body_mi.mesh = _d.mesh
-	_rng.seed = hash([v.skater.hair_color, v.skater.eye_color, v.skater.skin_tone, v.skater.hair_style, v.skater.number])
-	v.attach_node("Head", self, Transform3D(Basis(), _d.mid))
+	_rng.seed = int(look.get("seed", 0))
+	_attach("Head", Transform3D(Basis(), _d.mid))
 
 	eyes.material_override = _d.eye_mat
-	eyes.set_instance_shader_parameter("eye_color", v.skater.eye_color)
+	eyes.set_instance_shader_parameter("eye_color", look.eye_color)
 
 	var r: float = _d.eye_r
 	for side in 2:
@@ -116,7 +130,7 @@ func _setup(v: SkaterVisual, eyes: MeshInstance3D) -> void:
 		lid.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		lid.position = (_d.eye[side] as Vector3) - (_d.mid as Vector3)
 		lid.scale = Vector3.ONE * r * 1.1
-		lid.set_instance_shader_parameter("tone", v.skater.skin_tone)
+		lid.set_instance_shader_parameter("tone", look.skin_tone)
 		add_child(lid)
 		_lids.append(lid)
 
@@ -125,7 +139,7 @@ func _setup(v: SkaterVisual, eyes: MeshInstance3D) -> void:
 	_brows.mesh = _d.brows
 	_brows.material_override = _d.brow_mat
 	_brows.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	var hc := v.skater.hair_color
+	var hc: Color = look.hair_color
 	# Brows run a little darker than the hair (blond and red hair especially); gray stays gray.
 	var bc := hc.darkened(0.25) if hc.s > 0.25 else hc.darkened(0.1)
 	_brows.set_instance_shader_parameter("brow_color", bc)
@@ -152,12 +166,27 @@ func _setup(v: SkaterVisual, eyes: MeshInstance3D) -> void:
 	_apply()
 
 
+## Rides `bone` (as SkaterVisual.attach_node places things: `rest_xform` in rest-pose
+## skeleton space, sharing the bone's attachment if it has one).
+func _attach(bone: String, rest_xform: Transform3D) -> void:
+	var att: BoneAttachment3D = null
+	for c in _skel.get_children():
+		if c is BoneAttachment3D and (c as BoneAttachment3D).bone_name == bone:
+			att = c
+	if att == null:
+		att = BoneAttachment3D.new()
+		att.bone_name = bone
+		_skel.add_child(att)
+	transform = _skel.get_bone_global_rest(_skel.find_bone(bone)).affine_inverse() * rest_xform
+	att.add_child(self)
+
+
 ## Facial hair rides the head bone rigidly; this gives it the jaw blend shape too, so the
 ## chin of a beard drops with the jaw.
 func follow_jaw(mi: MeshInstance3D) -> void:
-	var head := _v.skel.find_bone("Head")
-	var to_rest := _v.skel.get_bone_global_rest(head) * mi.transform
-	var key := "%s|%s" % [_v.skater.body_type, mi.mesh.resource_path]
+	var head := _skel.find_bone("Head")
+	var to_rest := _skel.get_bone_global_rest(head) * mi.transform
+	var key := "%s|%s" % [_kind, mi.mesh.resource_path]
 	if not _data.has(key):
 		_data[key] = _jaw_follower_mesh(mi.mesh, to_rest, _d)
 	mi.mesh = _data[key]
@@ -202,7 +231,7 @@ func react_to_clip(clip: String, seconds: float) -> void:
 
 
 func _process(delta: float) -> void:
-	if not is_visible_in_tree() or _v.bench_frozen:
+	if not is_visible_in_tree() or (_v != null and _v.bench_frozen):
 		return
 	var cam := get_viewport().get_camera_3d()
 	if cam != null and cam.global_position.distance_squared_to(global_position) > FAR * FAR:
@@ -330,9 +359,9 @@ static func _lid_mesh() -> SphereMesh:
 	return _lid_sphere
 
 
-static func _body_data(kind: String, body_root: Node, body_mesh: Mesh, eye_mesh: Mesh) -> Dictionary:
-	if _data.has(kind):
-		return _data[kind]
+static func _body_data(kind: String, body_root: Node, body_mesh: Mesh, eye_mesh: Mesh, key: String) -> Dictionary:
+	if _data.has(key):
+		return _data[key]
 	var d := {}
 	_measure_eyes(d, eye_mesh)
 	d.mouth = MOUTH[kind][0]
@@ -371,11 +400,12 @@ static func _body_data(kind: String, body_root: Node, body_mesh: Mesh, eye_mesh:
 	bm.shader = BROW_SHADER
 	bm.render_priority = 1
 	d.brow_mat = bm
-	_data[kind] = d
+	_data[key] = d
 	return d
 
 
-## Eyeball centers and radius (the mesh is two low-poly half spheres), and for gaze, where
+## Eyeball centers and radius (the mesh is the front of two balls, a little past half; our
+## own eyes are built to be read this way: eyeballs() in tools/blender/mpfb_body.py), and for gaze, where
 ## straight ahead lands on each eye's texture and how the UVs move as it turns.
 static func _measure_eyes(d: Dictionary, eye_mesh: Mesh) -> void:
 	var arr := eye_mesh.surface_get_arrays(0)

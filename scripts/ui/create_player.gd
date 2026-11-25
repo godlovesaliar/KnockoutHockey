@@ -19,8 +19,8 @@ const MENU_SCENE := "res://scenes/ui/MainMenu.tscn"
 const SKATER_SCENE := preload("res://scenes/actors/Skater.tscn")
 const GOALIE_SCENE := preload("res://scenes/actors/Goalie.tscn")
 
-const TABS := ["player", "skills", "look", "gear"]
-const TAB_NAMES := ["PLAYER", "SKILLS", "LOOK", "GEAR"]
+const TABS := ["player", "skills", "look", "head", "gear"]
+const TAB_NAMES := ["PLAYER", "SKILLS", "LOOK", "HEAD", "GEAR"]
 
 const TAB_POS := Vector2(40, 152)
 const TAB_SIZE := Vector2(170, 44)
@@ -32,6 +32,9 @@ const CARD := Rect2(1030, 40, 520, 150)
 const SPOT := Vector3(-3.0, 0.0, 4.0)   ## where the player stands (clear of the center dot and logo)
 const REBUILD_DELAY := 0.12      ## s after the last change before the player is rebuilt
 const LEAVE_WARN := 3.0          ## s the "unsaved changes" warning waits for a second back
+## Rows that show the player's own head gear, whatever the preview team wears on its heads
+## (the Campers' masks, the Luchadores' hoods).
+const HEADGEAR_ROWS := ["helmet", "face_pick", "visor_tint", "mask_paint", "mask_colors", "headgear", "crest", "eye_fx", "dangler"]
 
 ## Camera framings: what it looks at (see _cam_target), how far back, how high it looks
 ## down from (rad), and how far the subject sits right of center (share of half the width).
@@ -39,8 +42,10 @@ const SHOTS := {
 	"body": {"dist": 4.6, "pitch": 0.06, "shift": 0.5},
 	"face": {"dist": 1.1, "pitch": 0.02, "shift": 0.5},
 	"head": {"dist": 1.3, "pitch": 0.12, "shift": 0.5},
+	"mask": {"dist": 1.2, "pitch": 0.1, "shift": 0.5, "yaw": 0.5},
 	"back": {"dist": 2.3, "pitch": 0.1, "shift": 0.5, "yaw": PI},
 	"stick": {"dist": 1.05, "pitch": 0.55, "shift": 0.45},
+	"legs": {"dist": 2.5, "pitch": 0.12, "shift": 0.5, "yaw": 0.45},
 }
 
 var _p := {}                ## the player being edited (CustomPlayers format)
@@ -76,6 +81,7 @@ var _arena := {}
 var _cam: Camera3D
 var _skater: Skater
 var _rebuild_in := -1.0
+var _own_gear := false      ## a HEADGEAR_ROWS row is selected
 var _shot := "body"
 var _yaw := 0.0             ## mouse orbit on top of the framing's own angle
 var _drag := false
@@ -96,7 +102,7 @@ func _ready() -> void:
 	if _arg("position", "") != "":
 		CustomPlayers.set_position(_p, _arg("position", "C"))
 	_saved = JSON.stringify(_p)
-	_team = int(_arg("team", str(GameSettings.config.get("home_team", 0))))
+	_team = Store.open_team(int(_arg("team", str(GameSettings.config.get("home_team", 0)))))
 	_build_stage()
 
 	_input = MenuInput.new()
@@ -279,19 +285,62 @@ func _tab_rows(tab: String) -> Array:
 				{"key": "hair_color", "label": "HAIR COLOR", "kind": "choice", "shot": "face", "hint": "Also colors facial hair."},
 				{"key": "facial_hair", "label": "FACIAL HAIR", "kind": "choice", "shot": "face", "hint": "Men only."},
 			]
+		"head":
+			var preview := {"key": "preview_team", "label": "PREVIEW JERSEY", "kind": "choice", "shot": "head",
+				"hint": "Only for this screen: see the player in a team's uniform and head gear."}
+			var headgear := {"key": "headgear", "label": "HEAD GEAR", "kind": "choice", "shot": "head",
+				"hint": "A mask or hood instead of the %s, or a bare head, on any team. Sold in the Pro Shop." % ("goalie mask" if goalie else "helmet")}
+			var eyes := {"key": "eye_fx", "label": "EYES", "kind": "choice", "shot": "head",
+				"hint": "Their own eyes, or glowing red ones, whatever they wear. Sold in the Pro Shop."}
+			if goalie:
+				# No visor behind a cage: the mask's paint instead. (Crests and danglers are the skaters' so far.)
+				rows = [
+					{"key": "helmet", "label": "MASK", "kind": "choice", "shot": "head", "hint": "The goalie mask model. More in the Pro Shop."},
+					{"key": "mask_paint", "label": "MASK PAINT", "kind": "choice", "shot": "mask",
+						"hint": "Auto: the team's paint, or else one picked from their name. No paint on the Helmet & Cage."},
+					{"key": "mask_colors", "label": "PAINT COLORS", "kind": "choice", "shot": "mask",
+						"hint": "Which of their team's colors go where."},
+					headgear, eyes, preview,
+				]
+			else:
+				rows = [
+					{"key": "helmet", "label": "HELMET", "kind": "choice", "shot": "head",
+						"hint": "Modern two-piece or a classic one-piece shell. More in the Pro Shop."},
+					{"key": "face_pick", "label": "VISOR", "kind": "choice", "shot": "head",
+						"hint": "A shield over the eyes, or nothing. A full shield, a cage and more are in the Pro Shop."},
+					{"key": "visor_tint", "label": "VISOR TINT", "kind": "choice", "shot": "head",
+						"hint": "The visor's or full shield's color. Tints are sold in the Pro Shop."},
+					headgear,
+					{"key": "crest", "label": "HELMET CREST", "kind": "choice", "shot": "head",
+						"hint": "Something on top of the helmet: a ridge of spines. Sold in the Pro Shop."},
+					eyes,
+					{"key": "dangler", "label": "DANGLER", "kind": "choice", "shot": "head",
+						"hint": "Something hung under the visor: a pair of fangs. Sold in the Pro Shop."},
+					preview,
+				]
 		"gear":
 			rows = [
-				{"key": "helmet", "label": "MASK" if goalie else "HELMET", "kind": "choice", "shot": "head",
-					"hint": "The goalie mask model." if goalie else "Modern two-piece or a classic one-piece shell."},
-				{"key": "visor", "label": "VISOR", "kind": "choice", "shot": "head",
-					"hint": "Goalies wear a cage." if goalie else "A clear shield over the eyes."},
 				{"key": "stick", "label": "STICK", "kind": "choice", "shot": "stick",
 					"hint": "Graphics on a base color. Home and away are the team's home and road jersey colors."},
 				{"key": "tape", "label": "BLADE TAPE", "kind": "choice", "shot": "stick",
 					"hint": "Tape round the middle of the blade. Team color is the home jersey color."},
+				{"key": "gloves", "label": "GLOVES", "kind": "choice", "shot": "body",
+					"hint": "Standard gloves, or leather gauntlets from the Pro Shop's Old-Time Set."},
+				{"key": "skates", "label": "SKATES", "kind": "choice", "shot": "body",
+					"hint": "Standard skates, or leather boots on tube frames from the Pro Shop's Old-Time Set."},
+				{"key": "socks", "label": "SOCKS", "kind": "choice", "shot": "legs",
+					"hint": "Standard, taped below the knee and over the ankle, or the Old-Time Set's heavy wool (Pro Shop)."},
+				{"key": "pants", "label": "PANTS", "kind": "choice", "shot": "legs",
+					"hint": "Standard, the Old-Time Set's canvas, or long pants down to the skates. Both from the Pro Shop."},
 				{"key": "preview_team", "label": "PREVIEW JERSEY", "kind": "choice", "shot": "body",
 					"hint": "Only for this screen: see the player and the team-colored sticks in a team's uniform."},
 			]
+			if goalie:
+				# The goalie's gloves come with the pads.
+				rows[2] = {"key": "pads", "label": "PADS", "kind": "choice", "shot": "body",
+					"hint": "Standard, or the Old-Time Set's leather pads, waffle board and mitt (Pro Shop)."}
+				# (and the pads cover the socks)
+				rows = rows.filter(func(r: Dictionary) -> bool: return r.key != "socks")
 	rows.append({"key": "save", "label": "SAVE PLAYER", "kind": "action",
 		"hint": "New players go to Free Agency, where Edit Roster signs them to teams."})
 	if tab == "player" and _edit_index >= 0:
@@ -335,11 +384,13 @@ func _choices(key: String) -> Array:
 		"eyes":
 			return [range(CustomPlayers.EYE_NAMES.size()), CustomPlayers.EYE_NAMES]
 		"hair_style":
-			var v: Array = CustomPlayers.HAIR_STYLES.duplicate()
-			var n: Array = CustomPlayers.HAIR_STYLE_NAMES.duplicate()
-			if _p.gender != "Female":
-				v.pop_back()   # braid
-				n.pop_back()
+			var v := []
+			var n := []
+			var body := "female" if _p.gender == "Female" else "male"
+			for i in CustomPlayers.HAIR_STYLES.size():
+				if SkaterVisual.hair_fits(CustomPlayers.HAIR_STYLES[i], body):
+					v.append(CustomPlayers.HAIR_STYLES[i])
+					n.append(CustomPlayers.HAIR_STYLE_NAMES[i])
 			return [v, n]
 		"hair_color":
 			return [range(CustomPlayers.HAIR_COLOR_NAMES.size()), CustomPlayers.HAIR_COLOR_NAMES]
@@ -347,16 +398,76 @@ func _choices(key: String) -> Array:
 			return [CustomPlayers.FACIAL_HAIR, CustomPlayers.FACIAL_HAIR_NAMES]
 		"helmet":
 			if CustomPlayers.is_goalie(_p):
-				return [range(CustomPlayers.MASK_NAMES.size()), CustomPlayers.MASK_NAMES]
-			return [[0, 1], CustomPlayers.HELMET_NAMES]
-		"visor":
-			return [[true, false], ["Yes", "No"]]
+				# The masks that are bought (Store), and the one a saved goalie already wears.
+				var mv := []
+				var mn := []
+				for i in CustomPlayers.MASK_NAMES.size():
+					if Store.goalie_mask_open(i) or i == _kept_mask():
+						mv.append(i)
+						mn.append(CustomPlayers.MASK_NAMES[i])
+				return [mv, mn]
+			# The helmets that are bought (Store), and the one a saved skater already wears.
+			var hv := []
+			var hn := []
+			for i in CustomPlayers.HELMET_NAMES.size():
+				if Store.helmet_open(i) or i == _kept_helmet():
+					hv.append(i)
+					hn.append(CustomPlayers.HELMET_NAMES[i])
+			return [hv, hn]
+		"face_pick":
+			var fv := []
+			var fn := []
+			for i in CustomPlayers.FACE_PICKS.size():
+				var pick: String = CustomPlayers.FACE_PICKS[i]
+				if pick in ["none", "visor"] or Store.face_open(pick) or pick == str(_was("face", "")):
+					fv.append(pick)
+					fn.append(CustomPlayers.FACE_PICK_NAMES[i])
+			return [fv, fn]
+		"visor_tint":
+			var tv := []
+			var tn := []
+			for i in CustomPlayers.VISOR_TINTS.size():
+				var tint: String = CustomPlayers.VISOR_TINTS[i]
+				if tint == "" or Store.tints_open() or tint == str(_was("visor_tint", "")):
+					tv.append(tint)
+					tn.append(CustomPlayers.VISOR_TINT_NAMES[i])
+			return [tv, tn]
+		"headgear":
+			var hg := Store.headgear_choices(str(_was("headgear", "")))
+			hg[1][0] = "Standard"   # (the helmet or mask, or whatever the team wears)
+			return hg
+		"crest", "eye_fx", "dangler":
+			return Store.cosmetic_choices(key, str(_was(key, "")))
+		"gloves":
+			return Store.oldtime_choices(str(_was("gloves", "")), "Standard", "Leather Gauntlets")
+		"skates":
+			return Store.oldtime_choices(str(_was("skates", "")), "Standard", "Tube Skates")
+		"pads":
+			return Store.oldtime_choices(str(_was("pads", "")), "Standard", "Leather Pads")
+		"socks":
+			return Store.sock_choices(str(_was("socks", "")))
+		"pants":
+			return Store.pants_choices(str(_was("pants", "")))
+		"mask_paint":
+			var v := ["", GoalieVisual.MASK_PLAIN]
+			var n := ["Auto", "Plain"]
+			for d: Dictionary in GoalieVisual.MASK_PAINTS:
+				v.append(d.name)
+				n.append(d.label)
+			return [v, n]
+		"mask_colors":
+			var names := GoalieVisual.paint_scheme_names(str(_p.get("mask_paint", "")))
+			return [range(names.size()), names]
 		"stick":
+			# (the old-time wooden stick comes with the Pro Shop's Old-Time Set)
+			if Store.oldtime_open() or str(_was("stick", "")) == SkaterVisual.STICK_OLD:
+				return [SkaterVisual.STICK_STYLES + [SkaterVisual.STICK_OLD], SkaterVisual.STICK_STYLE_NAMES + [SkaterVisual.STICK_OLD_NAME]]
 			return [SkaterVisual.STICK_STYLES, SkaterVisual.STICK_STYLE_NAMES]
 		"tape":
 			return [SkaterVisual.TAPES, SkaterVisual.TAPE_NAMES]
 		"preview_team":
-			return [range(Teams.count()), range(Teams.count()).map(func(i: int) -> String: return Teams.full_name(i))]
+			var open := range(Teams.count()).filter(func(i: int) -> bool: return Store.team_open(i))   # (not the teams still locked in the shop)
+			return [open, open.map(func(i: int) -> String: return Teams.full_name(i))]
 	return [[], []]
 
 
@@ -372,19 +483,61 @@ func _value_of(key: String) -> Variant:
 		return CustomPlayers.height_in(_p)
 	if key == "weight_lbs":
 		return CustomPlayers.weight_lbs(_p)
+	if key == "face_pick":
+		return CustomPlayers.face_pick(_p)
 	return _p.get(key)
 
 
 ## Rows that don't apply right now (dimmed, and they don't change).
 func _row_off(key: String) -> bool:
+	# Their own mask or hood takes the helmet's place.
+	# (a crest and a dangler go on the helmet too)
+	if key in ["helmet", "face_pick", "visor_tint", "mask_paint", "mask_colors", "crest", "dangler"] and str(_p.get("headgear", "")) != "":
+		return true
 	match key:
 		"facial_hair":
 			return _p.gender == "Female"
-		"visor":
-			return CustomPlayers.is_goalie(_p)
+		"visor_tint":
+			# (nothing to tint; fangs bring a visor to hang from)
+			return CustomPlayers.face_pick(_p) in ["cage", "alien"] or (CustomPlayers.face_pick(_p) == "none" and str(_p.get("dangler", "")) == "")
+		"dangler":
+			return SkaterVisual.FACE_GEAR.has(CustomPlayers.face_pick(_p))   # (nowhere to hang it)
+		"mask_paint":
+			return not _mask_paintable()
+		"mask_colors":
+			return not _mask_paintable() or GoalieVisual.paint_design(str(_p.get("mask_paint", ""))).is_empty()
 		"delete":
 			return _edit_index < 0
 	return false
+
+
+## What the saved player has for `key` (`def` for a new one): it stays on offer here even
+## if it's locked in the store.
+func _was(key: String, def: Variant) -> Variant:
+	var saved: Variant = JSON.parse_string(_saved)
+	return saved.get(key, def) if saved is Dictionary and _edit_index >= 0 else def
+
+
+## The helmet model a saved skater already wears (-1: not a saved skater).
+func _kept_helmet() -> int:
+	var saved: Variant = JSON.parse_string(_saved)
+	if saved is Dictionary and _edit_index >= 0 and not CustomPlayers.is_goalie(saved):
+		return int(saved.get("helmet", 0))
+	return -1
+
+
+## The mask model a saved goalie already wears (-1: not a saved goalie).
+func _kept_mask() -> int:
+	var saved: Variant = JSON.parse_string(_saved)
+	if saved is Dictionary and _edit_index >= 0 and CustomPlayers.is_goalie(saved):
+		return int(saved.get("helmet", 0))
+	return -1
+
+
+## The chosen mask takes paint (the Helmet & Cage is a plain helmet).
+func _mask_paintable() -> bool:
+	var masks: Array = GoalieVisual.MASKS
+	return (masks[clampi(int(_p.get("helmet", 0)), 0, masks.size() - 1)] as Dictionary).has("paint")
 
 
 func _show_tab(k: int, quiet := false) -> void:
@@ -452,7 +605,7 @@ func _refresh() -> void:
 			"choice":
 				var ch := _choices(d.key)
 				var idx: int = ch[0].find(_value_of(d.key))
-				it.value = str(ch[1][idx]) if idx >= 0 else str(_value_of(d.key))
+				it.value = str(ch[1][idx]) if idx >= 0 else ("-" if d.key == "mask_colors" else str(_value_of(d.key)))
 			"action":
 				if d.key == "delete":
 					it.text = "PRESS AGAIN TO DELETE" if _delete_armed else d.label
@@ -470,6 +623,11 @@ func _select(i: int, quiet := false) -> void:
 	_shot = _rows[i].get("shot", "body") if i < _rows.size() else "body"
 	if TABS[_tab] == "skills":
 		_shot = "body"
+	var own: bool = i < _rows.size() and _rows[i].key in HEADGEAR_ROWS
+	if own != _own_gear:
+		_own_gear = own
+		if Teams.uniform_vs(_team, _team, false).has("headgear") and _rebuild_in < 0.0:
+			_rebuild_in = 0.0
 	if not quiet:
 		Sfx.play("click", Vector3.INF, -10.0, 1.4)
 
@@ -512,6 +670,13 @@ func _step(i: int, dir: int) -> void:
 			var was := CustomPlayers.is_goalie(_p)
 			CustomPlayers.set_position(_p, nv)
 			if was != CustomPlayers.is_goalie(_p):
+				# (the helmet number now means a mask model: not one that's still locked)
+				if not was and not Store.goalie_mask_open(int(_p.get("helmet", 0))) and int(_p.get("helmet", 0)) != _kept_mask():
+					_p.helmet = 0
+				# (... or a helmet model: one there is, and not one still locked)
+				if was and (int(_p.get("helmet", 0)) >= CustomPlayers.HELMET_NAMES.size()
+						or (not Store.helmet_open(int(_p.get("helmet", 0))) and int(_p.get("helmet", 0)) != _kept_helmet())):
+					_p.helmet = 0
 				_reshow()   # helmet / mask and shoots / catches rows change names
 		"skill_mode":
 			CustomPlayers.set_mode(_p, nv)
@@ -523,8 +688,13 @@ func _step(i: int, dir: int) -> void:
 			_p.gender = nv
 			if nv == "Female":
 				_p.facial_hair = ""
-			elif _p.hair_style == "braid":
+			if not SkaterVisual.hair_fits(_p.hair_style, "female" if nv == "Female" else "male"):
 				_p.hair_style = "messy"
+		"mask_paint":
+			_p.mask_paint = nv
+			_p.mask_colors = 0   # (each design has its own schemes)
+		"face_pick":
+			CustomPlayers.set_face_pick(_p, nv)
 		_:
 			_p[d.key] = nv
 	Sfx.play("click", Vector3.INF, -8.0, 1.6)
@@ -697,6 +867,8 @@ func _rebuild() -> void:
 	var s: Skater = (GOALIE_SCENE if goalie else SKATER_SCENE).instantiate()
 	var home := Teams.uniform_vs(_team, _team, false)
 	var road := Teams.uniform_vs(_team, _team, true)
+	if _own_gear:
+		home.erase("headgear")
 	s.uniform = home
 	s.team_color = home.jersey
 	s.club_colors = [home.jersey, road.jersey]
@@ -727,11 +899,13 @@ func _cam_target() -> Vector3:
 	var v := _skater.visual
 	match _shot:
 		"face":
-			return v.bone_world("Head") + Vector3(0, 0.07, 0)
-		"head":
-			return v.bone_world("Head") + Vector3(0, 0.02, 0)
+			return v.bone_shown("Head") + Vector3(0, 0.07, 0)
+		"head", "mask":
+			return v.bone_shown("Head") + Vector3(0, 0.02, 0)
 		"back":
 			return SPOT + Vector3(0, 1.2, 0)
+		"legs":
+			return SPOT + Vector3(0, 0.55, 0)
 		"stick":
 			# The middle of the blade: from the heel, half the model's heel-to-toe line.
 			var sh := v.shaft

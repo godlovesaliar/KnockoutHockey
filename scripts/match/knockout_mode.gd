@@ -47,6 +47,7 @@ var _fight: Fight
 var _ko := false
 var _t := 0.0
 var _leaving := false
+var _fake := false                    ## a made-up card (`kostep=`): pays nothing
 var _ui: CanvasLayer
 var _dim: ColorRect
 var _canvas: Control
@@ -82,6 +83,7 @@ func setup(d: MatchDirector) -> void:
 
 ## Fills in made-up results and jumps to a screen (layout checks only).
 func _fake_card(to: String) -> void:
+	_fake = true
 	var n := 1 if to == "result" else BOUTS + 1
 	for k in n:
 		var p: Array[Skater] = [_card[0][k % BOUTS], _card[1][k % BOUTS]]
@@ -259,12 +261,23 @@ func _final() -> void:
 	Sfx.announce_after("ko_series_react", 2.8, 2)
 	director._bench_react(w, "cheer", 1.0)
 	series_over.emit(w)
+	if director.show_hud and not director.humans.is_empty() and not _fake:
+		director.payout = Pucks.bank(Pucks.knockout_receipt(self))
 
 
 func _to_menu() -> void:
 	if _leaving:
 		return
 	_leaving = true
+	# The pucks the card paid, then the menu.
+	if director.payout.is_empty():
+		_leave()
+	else:
+		_ui.visible = false
+		director.open_payout("Back to Game Modes.", _leave, false)
+
+
+func _leave() -> void:
 	GameSettings.menu_list = "modes"
 	Sfx.stop_music(0.5)
 	get_tree().change_scene_to_file(MENU_SCENE)
@@ -372,13 +385,17 @@ func _draw_plates(ci: Control, w: float, winner: int) -> void:
 		MenuStyle.draw_slant(ci, plate, Color(col, a), 22)
 		MenuStyle.draw_slant(ci, Rect2(px, PLATE_Y + PLATE_H * 0.6, PLATE_W, PLATE_H * 0.4), Color(0, 0, 0, 0.2 * a), 9)
 		var logo := MenuStyle.team_logo(id)
+		var lw := MenuStyle.logo_slot(logo, PLATE_H + 20)   # (wide crests get a wider slot; the name moves over)
 		if logo:
-			ci.draw_texture_rect(logo, Rect2(px + 26, PLATE_Y - 10, PLATE_H + 20, PLATE_H + 20), false, Color(1, 1, 1, a))
+			MenuStyle.draw_logo(ci, logo, Rect2(px + 26, PLATE_Y - 10, lw, PLATE_H + 20), Color(1, 1, 1, a))
 		var info := Teams.team(id)
-		var nx := px + PLATE_H + 60.0
+		var nx := px + 40.0 + lw
 		ci.draw_string(MenuStyle.font(0.12), Vector2(nx, PLATE_Y + 34), str(info.city).to_upper(), HORIZONTAL_ALIGNMENT_LEFT, -1, 20, Color(1, 1, 1, 0.85 * a))
 		var name := str(info.name).to_upper()
-		var fs := 44 if MenuStyle.text_width(name, 44) < PLATE_W - PLATE_H - 90 else 34
+		var room := PLATE_W - (nx - px) - 30.0
+		var fs := 44 if MenuStyle.text_width(name, 44) < room else 34
+		while fs > 22 and MenuStyle.text_width(name, fs) > room:
+			fs -= 2
 		MenuStyle.draw_bold(ci, Vector2(nx, PLATE_Y + 80), name, fs, Color(1, 1, 1, a), 8, Color(MenuStyle.INK, a), 0.2, false)
 		var sx := px + PLATE_W + 14.0
 		MenuStyle.draw_slant(ci, Rect2(sx, PLATE_Y, SCORE_W, PLATE_H), Color(MenuStyle.INK, 0.95 * k), 22)
@@ -410,12 +427,16 @@ func _draw_fighters(ci: Control, w: float, pair: Array, winner: Skater, result: 
 		MenuStyle.draw_slant(ci, r, Color(MenuStyle.NAVY, 0.95 * a), 30)
 		MenuStyle.draw_slant(ci, Rect2(x, CARD_Y, CARD_W, 92), Color(col, a), 30 * 92.0 / CARD_H)
 		var logo := MenuStyle.team_logo(id)
+		var lw := MenuStyle.logo_slot(logo, 120.0)   # (wide crests get a wider slot, out to the left)
 		if logo:
-			ci.draw_texture_rect(logo, Rect2(x + CARD_W - 120, CARD_Y - 16, 120, 120), false, Color(1, 1, 1, a))
+			MenuStyle.draw_logo(ci, logo, Rect2(x + CARD_W - lw, CARD_Y - 16, lw, 120), Color(1, 1, 1, a))
 		var info := Teams.team(id)
 		ci.draw_string(MenuStyle.font(0.12), Vector2(x + 40, CARD_Y + 30), str(info.name).to_upper(), HORIZONTAL_ALIGNMENT_LEFT, -1, 20, Color(1, 1, 1, 0.85 * a))
 		var nm := MenuStyle.player_name(s)
-		var fs := 44 if MenuStyle.text_width(nm, 44) < CARD_W - 190 else 34
+		var room := CARD_W - 70.0 - lw
+		var fs := 44 if MenuStyle.text_width(nm, 44) < room else 34
+		while fs > 22 and MenuStyle.text_width(nm, fs) > room:
+			fs -= 2
 		MenuStyle.draw_bold(ci, Vector2(x + 36, CARD_Y + 76), nm, fs, Color(1, 1, 1, a), 8, Color(MenuStyle.INK, a), 0.2, false)
 		# Ratings: slanted bars, the team color filling to the value.
 		for i in STATS.size():

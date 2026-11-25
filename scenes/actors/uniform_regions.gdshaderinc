@@ -17,6 +17,16 @@ uniform int hem_stripes = 1;
 uniform int sleeve_stripes = 1;
 uniform int sock_stripes = 1;
 uniform bool alternate = false;                  // multi-stripe bands: every other stripe in accent
+// How the socks are striped (Teams.SOCK_PATTERNS): 0 `sock_stripes` stripes in `sock_band`;
+// 1 barber pole: even rings all the way down (`sock_stripes` + 2 of them; none at 0);
+// 2 two-tone: the lower sock in the trim color, `sock_stripes` thin stripes above it;
+// 3 block: one broad band (edged in the accent color with `alternate`).
+uniform int sock_pattern = 0;
+const float SOCK_POLE_TOP = 0.43;                // leg: where the barber pole's rings start
+const float SOCK_SPLIT = 0.67;                   // leg: where a two-tone sock changes color
+const float SOCK_FEATHER = 0.022;                // a two-tone sock's thin stripes, and the gaps
+const vec2 SOCK_BLOCK = vec2(0.55, 0.8);         // leg: the block
+const float SOCK_BLOCK_EDGE = 0.03;
 
 float region_band(float x, float lo, float hi) {
 	float w = max(fwidth(x) * 0.75, 0.002);
@@ -49,6 +59,34 @@ vec2 region_stripes(float f, vec2 band, int n) {
 	return vec2(total, odd);
 }
 
+// The socks' stripes at `f` along the leg, by `sock_pattern`: x and y as region_stripes.
+vec2 region_sock(float f) {
+	if (sock_pattern == 1) {
+		if (sock_stripes <= 0) {
+			return vec2(0.0);
+		}
+		// Rings and gaps of one width, from under the pants to the ankle.
+		float u = (f - SOCK_POLE_TOP) / (1.0 - SOCK_POLE_TOP) * float(sock_stripes + 2);
+		float w = clamp(fwidth(u) * 0.75, 0.002, 0.25);
+		float ring = 1.0 - smoothstep(0.25 - w, 0.25 + w, abs(fract(u + 0.25) - 0.5));
+		ring *= step(0.0, u);
+		return vec2(ring, ring * mod(floor(u + 0.25), 2.0));
+	}
+	if (sock_pattern == 2) {
+		float lower = 1.0 - region_below(f, SOCK_SPLIT);
+		float top = SOCK_SPLIT - SOCK_FEATHER * float(2 * sock_stripes);
+		float thin = region_stripes(f, vec2(top, SOCK_SPLIT - SOCK_FEATHER), sock_stripes).x;
+		return vec2(clamp(lower + thin, 0.0, 1.0), thin);
+	}
+	if (sock_pattern == 3) {
+		float block = region_band(f, SOCK_BLOCK.x, SOCK_BLOCK.y);
+		float edges = region_band(f, SOCK_BLOCK.x, SOCK_BLOCK.x + SOCK_BLOCK_EDGE)
+				+ region_band(f, SOCK_BLOCK.y - SOCK_BLOCK_EDGE, SOCK_BLOCK.y);
+		return vec2(block, min(edges, block));
+	}
+	return region_stripes(f, sock_band, sock_stripes);
+}
+
 // part = coverage of (jersey, pants, socks, gloves); skates = skate coverage;
 // trim = the share of jersey + socks drawn in the trim color (accent included);
 // accent = the part of that drawn in the accent color instead. Bare skin: all zero.
@@ -71,7 +109,7 @@ void uniform_regions_full(vec4 c, vec2 u, out vec4 part, out float skates, out f
 	vec3 pure = smoothstep(vec3(0.9), vec3(1.0), c.rgb);
 	vec2 hem = region_stripes(f, hem_band, hem_stripes) * pure.r * (1.0 - torso_pants);
 	vec2 sleeve = region_stripes(f, sleeve_band, sleeve_stripes) * pure.g;
-	vec2 sock = region_stripes(f, sock_band, sock_stripes) * pure.b * (1.0 - leg_pants);
+	vec2 sock = region_sock(f) * pure.b * (1.0 - leg_pants);
 	float cuff = pure.g * (1.0 - region_below(f, cuff_start));
 	trim = clamp(hem.x + sleeve.x + sock.x + cuff + collar, 0.0, 1.0);
 	accent = alternate ? clamp(hem.y + sleeve.y + sock.y, 0.0, 1.0) * (1.0 - collar) : 0.0;

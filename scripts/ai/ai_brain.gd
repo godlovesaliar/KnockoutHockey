@@ -9,6 +9,9 @@ var _shoot_hold := -1.0         ## > 0 while holding shoot for a wrist/slap shot
 var _shoot_aim := Vector3.ZERO
 var _one_timer_flight := -1
 var _rng := RandomNumberGenerator.new()
+var _pin_hold := 0.0            ## > 0: staying on the check button (a check near the boards that may become a pin)
+var _battle_wait := 0.0         ## board battle: s to the next push or dig
+var _kick_at := -2.0            ## pinned: the battle time to try kicking the puck out (-1: won't; -2: not in one)
 
 
 func _init(p_team_ai: TeamAI, seed_value := 0) -> void:
@@ -25,6 +28,14 @@ func update(s: Skater, i: SkaterIntent, delta: float) -> void:
 	var think := _think_left <= 0.0
 	if think:
 		_think_left = lerpf(0.26, 0.08, diff) * _rng.randf_range(0.8, 1.2)
+
+	if s.battle != null and (s.state == Skater.State.PIN or s.state == Skater.State.PINNED):
+		_battle(s, i, delta)
+		return
+	_kick_at = -2.0
+	if _pin_hold > 0.0:
+		_pin_hold -= delta
+		i.check_held = true
 
 	# Finish a shot already in progress.
 	if _shoot_hold >= 0.0:
@@ -223,7 +234,16 @@ func _pressure(s: Skater, i: SkaterIntent, think: bool) -> void:
 	var c := team_ai.puck.carrier
 	if c == null:
 		return
-	var target := c.global_position + c.velocity * 0.25
+	# A carrier on the boards: all but the most aggressive come at their open-ice shoulder
+	# and ease up on the way in, to pin them there instead of running them (speed decides
+	# which it is).
+	var cp := c.global_position
+	var on_boards := not (c is Goalie) and RinkSpec.sdf(cp.x, cp.z) > -BoardBattle.BOARD_DIST + 0.1
+	var wall := BoardBattle.wall_out(cp) if on_boards else Vector3.ZERO
+	var to_pin := on_boards and s.stats.aggression < 75.0 and s._pin_cooldown <= 0.0
+	var target := cp + c.velocity * 0.25
+	if to_pin:
+		target -= wall * 0.7
 	var to := target - s.global_position
 	to.y = 0.0
 	var d := to.length()
@@ -232,12 +252,27 @@ func _pressure(s: Skater, i: SkaterIntent, think: bool) -> void:
 		way.y = 0.0
 		i.move = way.normalized() if way.length() > 0.05 else to / d
 	i.turbo = d > 6.0 and s.stamina > 0.3
+	if to_pin and d < 3.5:
+		i.move *= 0.55
+		i.turbo = false
 	if not think:
 		return
 	var dir := to / maxf(d, 0.01)
 	var closing := (s.velocity - c.velocity).dot(dir)
 	var aggression := s.stats.aggression / 99.0
-	if d < 1.9 and closing > 2.0 and _rng.randf() < lerpf(0.25, 0.7, aggression):
+	var at_c := cp - s.global_position
+	at_c.y = 0.0
+	var dc := at_c.length()
+	var dir_c := at_c / maxf(dc, 0.01)
+	var closing_c := (s.velocity - c.velocity).dot(dir_c)
+	if to_pin and dc < 1.6 and dir_c.dot(wall) > BoardBattle.INTO_BOARDS + 0.1 and closing_c > 0.0 			and closing_c < BoardBattle.MAX_CLOSING - 0.5 and _rng.randf() < 0.5:
+		# On their open-ice side and not making a run at them: lean in (straight at them,
+		# staying on the button through the contact).
+		i.move = dir_c
+		i.check_down = true
+		i.check_held = true
+		_pin_hold = 0.7
+	elif d < 1.9 and closing > 2.0 and _rng.randf() < lerpf(0.25, 0.7, aggression):
 		i.check_down = true
 	elif d < 1.8 and _rng.randf() < lerpf(0.35, 0.75, team_ai.sharpness()):
 		i.deke_down = true # poke check (deke button without the puck)
@@ -253,4 +288,35 @@ func _maybe_hit_nearby(s: Skater, i: SkaterIntent, think: bool) -> void:
 	to.y = 0.0
 	if to.length() < 1.8 and _rng.randf() < 0.3:
 		i.move = to.normalized()
+		i.check_down = true
+
+
+## In a board battle (BoardBattle). Pinning: stays on the button and digs for the puck
+## now and then. Pinned: pushes back at a rate set by strength, and sometimes kicks the
+## puck up the boards toward the nearest teammate.
+func _battle(s: Skater, i: SkaterIntent, delta: float) -> void:
+	var b := s.battle
+	_battle_wait -= delta
+	if s.state == Skater.State.PIN:
+		i.check_held = true
+		if _battle_wait <= 0.0:
+			_battle_wait = lerpf(0.9, 0.6, team_ai.sharpness()) * _rng.randf_range(0.8, 1.3)
+			i.deke_down = true
+		return
+	if _kick_at < -1.5:
+		_kick_at = _rng.randf_range(0.5, 1.6) if _rng.randf() < 0.4 else -1.0
+	if _kick_at >= 0.0 and b.time >= _kick_at:
+		_kick_at = -1.0
+		i.pass_down = true
+		var best := INF
+		for m in s.teammates:
+			if not is_instance_valid(m) or m == s or m is Goalie or m.is_down():
+				continue
+			var to := m.global_position - s.global_position
+			to.y = 0.0
+			if to.length() < best:
+				best = to.length()
+				i.move = to.normalized()
+	elif _battle_wait <= 0.0:
+		_battle_wait = lerpf(0.4, 0.22, s.stats.strength / 99.0) * _rng.randf_range(0.8, 1.3)
 		i.check_down = true

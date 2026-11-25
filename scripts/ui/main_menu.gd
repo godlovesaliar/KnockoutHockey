@@ -2,7 +2,7 @@ extends Control
 ## Title screen: the chrome KNOCKOUT HOCKEY title over a live arena shot, a column of
 ## slanted menu bars, and a prompt bar along the bottom. Any keyboard or pad drives it
 ## (MenuInput); the mouse works too. GAME MODES, CUSTOMIZE and GAME EXTRAS open a second
-## list in place.
+## list in place. The player's pucks (Profile) show on a plate in the top right corner.
 ##
 ## `-- shot=<png> [wait=<s>] [sel=<n>] [list=modes|customize|extras]` saves a screenshot and quits.
 
@@ -15,12 +15,14 @@ const CREATE_TEAM_SCENE := "res://scenes/ui/CreateTeam.tscn"
 const CREATE_UNIFORM_SCENE := "res://scenes/ui/CreateUniform.tscn"
 const CREATE_ARENA_SCENE := "res://scenes/ui/CreateArena.tscn"
 const EDIT_ROSTER_SCENE := "res://scenes/ui/EditRoster.tscn"
+const STORE_SCENE := "res://scenes/ui/Store.tscn"
 
 const MAIN := [
 	{"id": "play", "text": "PLAY NOW", "hint": "Pick your teams and controllers, then drop the puck."},
 	{"id": "modes", "text": "GAME MODES", "hint": "Exhibition, practice and more."},
 	{"id": "season", "text": "SEASON MODE", "soon": true, "hint": "Take a team through a full season and the playoffs."},
 	{"id": "customize", "text": "CUSTOMIZE", "hint": "Create your own players, teams, arenas and uniforms."},
+	{"id": "store", "text": "PRO SHOP", "hint": "Spend your pucks on rinks, gear and more."},
 	{"id": "options", "text": "RULES AND OPTIONS", "hint": "Default rules, controls, audio and video."},
 	{"id": "extras", "text": "GAME EXTRAS", "hint": "Credits, records and unlockables."},
 	{"id": "quit", "text": "QUIT", "hint": "Back to the desktop."},
@@ -43,13 +45,13 @@ const CUSTOMIZE := [
 const EXTRAS := [
 	{"id": "credits", "text": "CREDITS", "hint": "Who made what: models, music, sound and code."},
 	{"id": "records", "text": "RECORDS", "soon": true, "hint": "Your best games and season records."},
-	{"id": "unlockables", "text": "UNLOCKABLES", "soon": true, "hint": "Secret teams, rinks and cheats."},
+	{"id": "unlockables", "text": "UNLOCKABLES", "hint": "Switch the extras you've bought in the Pro Shop on and off."},
 	{"id": "back", "text": "BACK", "hint": "Back to the main menu."},
 ]
 
-const ITEM_POS := Vector2(118, 346)
-const ITEM_SIZE := Vector2(560, 52)
-const ITEM_GAP := 10.0
+const ITEM_POS := Vector2(118, 326)
+const ITEM_SIZE := Vector2(560, 50)
+const ITEM_GAP := 8.0
 
 var _canvas: Control
 var _list: Control
@@ -59,6 +61,7 @@ var _index := 0
 var _main_index := 0
 var _input: MenuInput
 var _footer: Control
+var _wallet: Control
 var _heading: Label
 var _fade: ColorRect
 var _title: Control
@@ -125,6 +128,11 @@ func _ready() -> void:
 	_footer.draw.connect(_draw_footer)
 	_canvas.add_child(_footer)
 
+	_wallet = Control.new()
+	_wallet.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_wallet.draw.connect(_draw_wallet)
+	_canvas.add_child(_wallet)
+
 	_fade = ColorRect.new()
 	_fade.color = Color(0, 0, 0, 1)
 	_fade.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -150,6 +158,7 @@ func _process(delta: float) -> void:
 	_title.modulate.a = e
 	_title.scale = Vector2.ONE * (lerpf(1.25, 1.0, e) + sin(_t * 1.3) * 0.004)
 	_footer.queue_redraw()
+	_wallet.queue_redraw()
 
 
 func _show_list(entries: Array, select := 0) -> void:
@@ -236,6 +245,13 @@ func _accept() -> void:
 			_show_list(EXTRAS)
 		"options":
 			_go(OPTIONS_SCENE)
+		"store":
+			_go(STORE_SCENE)
+		"unlockables":
+			# The shop's EXTRAS tab, where each bought extra has its switch.
+			Store.shop_tab = "extras"
+			Store.shop_back = "extras"
+			_go(STORE_SCENE)
 		"credits":
 			_go(CREDITS_SCENE)
 		"create_player":
@@ -279,6 +295,11 @@ func _draw_footer() -> void:
 	var hint: String = _entries[_index].get("hint", "") if _index < _entries.size() else ""
 	MenuStyle.draw_footer(_footer, _canvas.size.x, hint,
 			[[_input.accept_label(), "SELECT"], [_input.back_label(), "BACK"]], _input.using_pad)
+
+
+## The player's pucks: a slanted ink plate in the top right corner, sliding in after the title.
+func _draw_wallet() -> void:
+	MenuStyle.draw_wallet(_wallet, _canvas.size.x - 60.0, 44.0, Profile.pucks(), ease(clampf((_t - 0.5) / 0.35, 0.0, 1.0), -2.0))
 
 
 func _arg(key: String, def: String) -> String:

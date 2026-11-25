@@ -19,7 +19,7 @@ import math
 import bpy
 from mathutils import Matrix, Vector
 
-BODY = r"C:\Users\Booker\Desktop\Knockout Hockey\assets\player\male_character_base_-_rigged.glb"
+BODY = r"C:\Users\Booker\Desktop\Knockout Hockey\assets\player\mpfb_male.glb"   # (tools/blender/mpfb_body.py)
 COLLECTION = "PoseRig"
 HEIGHT = 1.8
 SHOT = "left"          # left shot: blade on the character's left, right hand on top
@@ -85,10 +85,12 @@ def import_body():
     new = [o for o in bpy.data.objects if o not in before]
     for o in new:
         _link(o)
-    root = next(o for o in new if o.parent is None and o.type == "EMPTY")
+    # (the file has the rig, the body and the eyes side by side: one handle over them all)
+    root = bpy.data.objects.new("Skater", None)
+    _col().objects.link(root)
     for o in new:
-        if o.type == "MESH" and o.name.startswith("Icosphere"):
-            o.hide_set(True)   # a stray display sphere in the source file
+        if o.parent is None:
+            o.parent = root
     bpy.context.view_layer.update()
     body = max((o for o in new if o.type == "MESH"), key=lambda o: len(o.data.polygons))
     root.scale = root.scale * (HEIGHT / body.dimensions.z)

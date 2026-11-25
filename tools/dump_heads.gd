@@ -1,7 +1,7 @@
 extends SceneTree
 ## Writes each body's head (rest pose, skeleton space) and the current helmets as
 ## the game places them to OBJ files, for modeling new helmets in Blender.
-##   godot --headless --path . -s res://tools/dump_heads.gd -- out=<dir>
+##   godot --headless --path . -s res://tools/dump_heads.gd -- out=<dir> [bodies=male,female]
 
 const HELMETS := [
 	{"mesh": "res://assets/characters/helmet.res", "fit": 1.18, "raise": 0.2, "back": 0.04},
@@ -11,10 +11,13 @@ const HELMETS := [
 
 func _init() -> void:
 	var out := "."
+	var bodies := PackedStringArray(["male", "female"])
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("out="):
 			out = a.substr(4)
-	for b in ["male", "female"]:
+		if a.begins_with("bodies="):
+			bodies = a.substr(7).split(",", false)
+	for b in bodies:
 		var body: Node3D = (load("res://assets/characters/body_%s.scn" % b) as PackedScene).instantiate()
 		var skel: Skeleton3D = body.get_node("Skeleton3D")
 		var hs := float(body.get_meta("height", 1.8)) / 1.8

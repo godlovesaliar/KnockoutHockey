@@ -5,7 +5,8 @@ shader_type spatial;
 // texture (front_*) and how far the UVs move per radian of gaze (axes_*).
 
 uniform sampler2D eye_tex : source_color, filter_linear_mipmap, repeat_disable;
-// Iris centers in the texture (both bodies share the layout): right eye, left eye.
+// Iris centers in the texture: right eye, left eye. Every body's eye picture shares the
+// layout; our own (paint_eyes() in tools/blender/mpfb_body.py) is painted to it.
 uniform vec2 iris_r = vec2(0.290, 0.288);
 uniform vec2 iris_l = vec2(0.706, 0.700);
 uniform float iris_radius = 0.118;

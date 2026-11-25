@@ -3,8 +3,8 @@ render_mode cull_disabled;
 // Procedural mesh netting. UVs are in meters.
 
 uniform vec3 mesh_color : source_color = vec3(0.95, 0.95, 0.95);
-uniform float cells_per_meter = 11.0;
-uniform float thread = 0.14;
+uniform float cells_per_meter = 18.0;
+uniform float thread = 0.13;
 
 void fragment() {
 	vec2 g = UV * cells_per_meter;

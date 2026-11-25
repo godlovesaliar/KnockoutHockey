@@ -1,7 +1,13 @@
 class_name Teams
 ## The league's 39 teams in three conferences of thirteen (East, Central, West): the four
 ## launch teams, then the rest in the order their logos came in, then the nine expansion
-## teams. New teams go on the end: saved settings and created players keep team indices. Each team's colors dress its
+## teams. After them the classic teams (CLASSIC: the Boston Beacon and the Narragansett
+## Anchor, cut from the league and back as unlockables, then the Omaha Boxcar, the Butte
+## Copper, the Honolulu Clipper and the Detroit Jalopy: two from each part of the map):
+## in no conference (`region` says which part of the map
+## they are from), and dressed in the Old-Time Set (`kit`, `headgear`) with the Retro Dome
+## for a home (`home`).
+## New teams go on the end: saved settings and created players keep team indices. Each team's colors dress its
 ## players: jersey and its stripes (trim), pants, gloves, helmet, skates, and the back
 ## number's face and outline. `chant` names the crowd's chant clip (Sfx); `logo` is
 ## the crest (cut from the logo sheets by tools/build_logos.gd); `call` names the team's
@@ -364,16 +370,98 @@ const LIST := [
 			"number": Color(0.07, 0.38, 0.36), "number_outline": Color(0.95, 0.64, 0.06),
 		},
 	},
+	# Classic teams (2026-11-24): the two teams cut from the league on 2026-11-08, with the
+	# colors and designs they had. `kit` (SkaterVisual.OLD) and `headgear` put the whole
+	# team in the Old-Time Set, in leather hockey helmets ("guard"; "leather" is the flapped,
+	# football-looking one, which no league team wears) or bare-headed ("none");
+	# `socks` is their sock pattern (SOCK_PATTERNS; the old kit makes them wool, and the pants canvas);
+	# `home` is their home arena's id until one is picked for them (Arenas.home_of);
+	# `region` is the conference they'd be in, which orders them on menus.
+	{
+		"city": "Boston", "name": "Beacon", "abbr": "BOS", "conference": "Classic", "call": "beacon", "logo": "res://assets/characters/logo_beacon.png",
+		"kit": "old", "headgear": "guard", "socks": "barber", "home": "dome", "region": "East",
+		"colors": {
+			"jersey": Color(0.06, 0.1, 0.24), "trim": Color(0.88, 0.7, 0.28),
+			"pants": Color(0.06, 0.1, 0.24), "gloves": Color(0.06, 0.1, 0.24),
+			"helmet": Color(0.06, 0.1, 0.24), "skates": Color(0.05, 0.05, 0.06),
+			"number": Color(0.88, 0.7, 0.28), "number_outline": Color(0.95, 0.9, 0.78),
+		},
+	},
+	{
+		"city": "Narragansett", "name": "Anchor", "abbr": "NAR", "conference": "Classic", "call": "anchor", "logo": "res://assets/characters/logo_anchor.png",
+		"kit": "old", "headgear": "guard", "home": "dome", "region": "East",
+		"colors": {
+			"jersey": Color(0.09, 0.16, 0.33), "trim": Color(0.94, 0.87, 0.7),
+			"pants": Color(0.09, 0.16, 0.33), "gloves": Color(0.09, 0.16, 0.33),
+			"helmet": Color(0.09, 0.16, 0.33), "skates": Color(0.05, 0.05, 0.06),
+			"number": Color(0.87, 0.33, 0.22), "number_outline": Color(0.94, 0.87, 0.7),
+		},
+	},
+	# New classic teams (2026-11-24), made up for the part: the Boxcar in boxcar red with a
+	# broad cream band, bare-headed; the Copper in black with a copper yoke, leather
+	# helmets on; the Clipper in cream wool with sky blue and red stripes, bare-headed
+	# (sky blue on the road, by auto_road).
+	{
+		"city": "Omaha", "name": "Boxcar", "abbr": "OMA", "conference": "Classic", "call": "boxcar", "logo": "res://assets/characters/logo_boxcar.png",
+		"kit": "old", "headgear": "none", "socks": "block", "home": "dome", "region": "Central",
+		"colors": {
+			"jersey": Color(0.55, 0.17, 0.13), "trim": Color(0.94, 0.87, 0.7),
+			"pants": Color(0.08, 0.07, 0.07), "gloves": Color(0.55, 0.17, 0.13),
+			"helmet": Color(0.08, 0.07, 0.07), "skates": Color(0.05, 0.05, 0.06),
+			"number": Color(0.94, 0.87, 0.7), "number_outline": Color(0.08, 0.07, 0.07),
+		},
+	},
+	{
+		"city": "Butte", "name": "Copper", "abbr": "BUT", "conference": "Classic", "call": "copper", "logo": "res://assets/characters/logo_copper.png",
+		"kit": "old", "headgear": "guard", "socks": "two_tone", "home": "dome", "region": "West",
+		"colors": {
+			"jersey": Color(0.09, 0.08, 0.08), "trim": Color(0.76, 0.44, 0.2),
+			"pants": Color(0.09, 0.08, 0.08), "gloves": Color(0.09, 0.08, 0.08),
+			"helmet": Color(0.09, 0.08, 0.08), "skates": Color(0.05, 0.05, 0.06),
+			"number": Color(0.76, 0.44, 0.2), "number_outline": Color(0.93, 0.87, 0.72),
+		},
+	},
+	{
+		"city": "Honolulu", "name": "Clipper", "abbr": "HON", "conference": "Classic", "call": "clipper", "logo": "res://assets/characters/logo_clipper.png",
+		"kit": "old", "headgear": "none", "home": "dome", "region": "West",
+		"colors": {
+			"jersey": Color(0.93, 0.87, 0.72), "trim": Color(0.36, 0.62, 0.82),
+			"pants": Color(0.14, 0.33, 0.55), "gloves": Color(0.36, 0.62, 0.82),
+			"helmet": Color(0.14, 0.33, 0.55), "skates": Color(0.05, 0.05, 0.06),
+			"number": Color(0.14, 0.33, 0.55), "number_outline": Color(0.78, 0.2, 0.18),
+		},
+	},
+	# (the sixth: maroon with cream and brass stripes on the sleeves and socks, leather helmets on)
+	{
+		"city": "Detroit", "name": "Jalopy", "abbr": "DET", "conference": "Classic", "call": "jalopy", "logo": "res://assets/characters/logo_jalopy.png",
+		"kit": "old", "headgear": "guard", "socks": "barber", "home": "dome", "region": "Central",
+		"colors": {
+			"jersey": Color(0.4, 0.08, 0.13), "trim": Color(0.93, 0.87, 0.72),
+			"pants": Color(0.08, 0.07, 0.07), "gloves": Color(0.4, 0.08, 0.13),
+			"helmet": Color(0.08, 0.07, 0.07), "skates": Color(0.05, 0.05, 0.06),
+			"number": Color(0.93, 0.87, 0.72), "number_outline": Color(0.8, 0.62, 0.25),
+		},
+	},
 ]
 
 ## The league's three conferences, thirteen teams each (each team's `conference` above;
 ## the roster sheet's conference column agrees).
 const CONFERENCES := ["East", "Central", "West"]
+## The classic teams' `conference`: not one of the league's (Create Team doesn't offer
+## it), but they come up as a group of their own, after the West (GROUPS).
+const CLASSIC := "Classic"
+const GROUPS := ["East", "Central", "West", "Classic"]
 
-## Each conference's badge color on menus (team select).
+## Each conference's badge color on menus (team select); the classic teams' is leather.
 const CONFERENCE_COLORS := {
 	"East": Color(0.26, 0.52, 0.92), "Central": Color(0.92, 0.66, 0.14), "West": Color(0.86, 0.3, 0.22),
+	"Classic": Color(0.72, 0.5, 0.26),
 }
+
+
+## A team's conference as its badge reads: "EAST CONFERENCE", or "CLASSIC TEAM".
+static func conference_label(conference: String) -> String:
+	return "CLASSIC TEAM" if conference == CLASSIC else conference.to_upper() + " CONFERENCE"
 
 
 const CLASH := 0.3   ## jersey colors closer than this (RGB distance) clash
@@ -403,6 +491,13 @@ const DESIGNS := {
 		"vstripes": 20.0, "long_pants": true},
 }
 
+## How socks are striped (uniform_regions.gdshaderinc `sock_pattern`, by index): "band" the
+## design's stripes in its sock band, "barber" even rings all the way down, "two_tone" the
+## lower sock in the trim color, "block" one broad band. A team's `socks` names one (the
+## classic teams, Create Team); Create Uniform saves its own with the set.
+const SOCK_PATTERNS := ["band", "barber", "two_tone", "block"]
+const SOCK_PATTERN_NAMES := ["Stripes", "Barber Pole", "Two-Tone", "Block"]
+
 ## Each team's design, by `call`.
 const DESIGN_OF := {
 	"whalers": "triple", "geese": "yoke", "quahogs": "double", "lobsters": "triple",
@@ -415,13 +510,28 @@ const DESIGN_OF := {
 	"gilamonsters": "triple", "spuds": "yoke_stripe", "seagulls": "pinstripe", "geysers": "triple",
 	"chupacabras": "triple", "sweettea": "yoke", "deepdish": "pinstripe", "luchadores": "bold",
 	"northdakote": "triple", "jawns": "double", "campers": "hoops", "mountaingoats": "yoke_stripe",
-	"axolotls": "classic",
+	"axolotls": "classic", "beacon": "yoke", "anchor": "hoops",
+	"boxcar": "bold", "copper": "yoke_stripe", "clipper": "triple", "jalopy": "pinstripe",
 }
 
 ## Teams whose players wear a mask instead of a helmet, by `call` (SkaterVisual.MASKS):
 ## "lucha" a luchador hood (a few cuts and patterns, in the team's colors), "vintage" an
 ## old-school fiberglass goalie face mask (goalies too).
-const HEADGEAR_OF := {"luchadores": "lucha", "campers": "vintage"}
+## "florida" (a SkaterVisual.HATS key) Florida Man's backwards ball cap and sunglasses.
+## (The Geese's signature gear is one player's: Rosters.SIGNATURE_GEAR.)
+## "stunt" (a HATS key too) the Stuntmen's open-face stunt helmet, flame-painted.
+## "watch" (a HATS key) the Whalers' knit fisherman's watch cap.
+## "golf" (a HATS key) the Sweet Tea's golf visor.
+const HEADGEAR_OF := {"luchadores": "lucha", "campers": "vintage", "floridaman": "florida", "stuntmen": "stunt", "whalers": "watch", "sweettea": "golf"}
+## Cosmetics a league team wears, by slot (SkaterVisual.CRESTS / EYE_FX / DANGLERS), the
+## tint of its visors, and face gear for all its skaters (SkaterVisual.FACE_GEAR). The
+## Chupacabras' signature gear: a ridge of spines on the helmet, glowing red eyes, fangs
+## hung from a smoked visor. The Grays': the alien visor.
+const COSMETIC_SLOTS := ["crest", "eye_fx", "dangler"]
+const COSMETICS_OF := {
+	"chupacabras": {"crest": "spines", "eye_fx": "red", "dangler": "fangs", "visor_tint": "smoke"},
+	"grays": {"face": "alien"},
+}
 
 
 static func count() -> int:
@@ -510,6 +620,29 @@ static func uniform_of(mine_team: Dictionary, their_team: Dictionary, away: bool
 	var gear: String = mine_team.get("headgear", HEADGEAR_OF.get(mine_team.get("call", ""), ""))
 	if gear != "":
 		u["headgear"] = gear
+	# Cosmetics: a created team's own choices, a league team's signature gear.
+	var cos: Dictionary = COSMETICS_OF.get(mine_team.get("call", ""), {})
+	for k: String in COSMETIC_SLOTS + ["visor_tint", "face"]:
+		var v := str(mine_team.get(k, cos.get(k, "")))
+		if v != "":
+			u[k] = v
+	# The old-time kit (Create Team, and the classic teams): everyone's gloves, skates,
+	# sticks and goalie pads.
+	if str(mine_team.get("kit", "")) != "":
+		u["kit"] = str(mine_team.kit)
+	# Sock pattern and pants cut (the classic teams' socks; Create Team).
+	for k: String in ["socks", "pants_style"]:
+		if str(mine_team.get(k, "")) != "":
+			u[k] = str(mine_team[k])
+	if Store.oldtime_run():   # (`-- oldtime`: everyone in it, bare-headed, for testing)
+		u["kit"] = SkaterVisual.OLD
+		u["headgear"] = SkaterVisual.NO_HELMET
+	# Goalie mask paint: the team's choice (Create Team), in its home colors home and away.
+	if str(mine_team.get("mask_paint", "")) != "":
+		u["mask_paint"] = str(mine_team.mask_paint)
+		u["mask_colors"] = int(mine_team.get("mask_colors", 0))
+	if away:
+		u["home_colors"] = mine_team.colors
 	return u
 
 
@@ -556,9 +689,12 @@ static func auto_road(mine: Dictionary) -> Dictionary:
 
 ## A uniform's design parameters (Create Uniform's own, else the named design's).
 static func design_params(c: Dictionary) -> Dictionary:
-	if c.has("design_params"):
-		return c.design_params
-	return DESIGNS.get(c.get("design", "classic"), {})
+	var d: Dictionary = c.design_params if c.has("design_params") else DESIGNS.get(c.get("design", "classic"), {})
+	# The team's own sock pattern, unless the design (a Create Uniform set) has one.
+	if str(c.get("socks", "")) != "" and not d.has("sock_pattern"):
+		d = d.duplicate()
+		d["sock_pattern"] = maxi(SOCK_PATTERNS.find(str(c.socks)), 0)
+	return d
 
 
 ## Teams.LIST indices of the teams in a conference, in list order.
@@ -576,10 +712,17 @@ static func full_name(i: int) -> String:
 	return ("%s %s" % [t.city, t.name]).strip_edges()
 
 
-## Every team in menu order: East, then Central, then West, each in list order. Team
-## select steps through this, so a conference's teams come up together.
+## Every team in menu order: East, then Central, then West, then the classic teams, each
+## in list order. Team select steps through this, so a conference's teams come up together.
 static func menu_order() -> Array[int]:
 	var out: Array[int] = []
-	for c: String in CONFERENCES:
-		out.append_array(in_conference(c))
+	for c: String in GROUPS:
+		var group := in_conference(c)
+		if c == CLASSIC:
+			# (the classic teams by where they are from, East to West, then list order)
+			group.sort_custom(func(a: int, b: int) -> bool:
+				var ra := CONFERENCES.find(str(team(a).get("region", "")))
+				var rb := CONFERENCES.find(str(team(b).get("region", "")))
+				return ra < rb if ra != rb else a < b)
+		out.append_array(group)
 	return out

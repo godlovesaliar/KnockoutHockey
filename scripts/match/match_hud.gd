@@ -163,9 +163,10 @@ func _draw_summary() -> void:
 		ci.draw_rect(Rect2(x, ry, 400.0, SUM_ROW), col)
 		ci.draw_rect(Rect2(x, ry + SUM_ROW * 0.55, 400.0, SUM_ROW * 0.45), Color(0, 0, 0, 0.18))
 		var logo := MenuStyle.team_logo(id)
+		var lw := MenuStyle.logo_slot(logo, SUM_ROW - 8)   # (wide crests get a wider slot; the name moves over)
 		if logo:
-			ci.draw_texture_rect(logo, Rect2(x + 8, ry + 4, SUM_ROW - 8, SUM_ROW - 8), false)
-		MenuStyle.draw_bold(ci, Vector2(x + SUM_ROW + 12, ry + 44), str(Teams.team(id).name).to_upper(), 32, Color.WHITE, 6, MenuStyle.INK, 0.2, false)
+			MenuStyle.draw_logo(ci, logo, Rect2(x + 8, ry + 4, lw, SUM_ROW - 8))
+		MenuStyle.draw_bold(ci, Vector2(x + 20 + lw, ry + 44), str(Teams.team(id).name).to_upper(), 32, Color.WHITE, 6, MenuStyle.INK, 0.2, false)
 		var vals := [str(d.shots_on_goal(t)), str(d.stats.hits[t]), "%d/%d" % [d.stats.pp_goals[t], d.stats.penalties[1 - t]]]
 		for i in vals.size():
 			var v: String = vals[i]
@@ -198,9 +199,10 @@ func _draw_bug() -> void:
 		ci.draw_rect(Rect2(x, p.y, TEAM_W, ROW_H), col)
 		ci.draw_rect(Rect2(x, p.y + ROW_H * 0.55, TEAM_W, ROW_H * 0.45), Color(0, 0, 0, 0.18))
 		var logo := MenuStyle.team_logo(id)
+		var lw := MenuStyle.logo_slot(logo, ROW_H - 8)   # (wide crests get a wider slot; the abbreviation moves over)
 		if logo:
-			ci.draw_texture_rect(logo, Rect2(x + 6, p.y + 4, ROW_H - 8, ROW_H - 8), false)
-		MenuStyle.draw_bold(ci, Vector2(x + ROW_H + 2, p.y + 36), str(Teams.team(id).abbr), 28,
+			MenuStyle.draw_logo(ci, logo, Rect2(x + 6, p.y + 4, lw, ROW_H - 8))
+		MenuStyle.draw_bold(ci, Vector2(x + 10 + lw, p.y + 36), str(Teams.team(id).abbr), 28,
 				Color.WHITE, 6, MenuStyle.INK, 0.2, false)
 		# Score: white on ink.
 		var sx := x + TEAM_W
@@ -270,8 +272,9 @@ func _draw_banner() -> void:
 	var size := 76 if text.length() <= 14 else (58 if text.length() <= 24 else 44)
 	var tw := MenuStyle.text_width(text, size)
 	var logo: Texture2D = MenuStyle.team_logo(d.team_ids[team]) if team >= 0 else null
-	var w := tw + 140.0 + (120.0 if logo else 0.0)
 	var h := 112.0
+	var lw := MenuStyle.logo_slot(logo, h - 12)   # (wide crests get a wider slot; the bar grows with it)
+	var w := tw + 140.0 + (lw + 20.0 if logo else 0.0)
 	var y := 268.0
 	# Wipes in from the left: the bar grows, the text slides along with it.
 	var x := (cw - w) * 0.5
@@ -287,8 +290,8 @@ func _draw_banner() -> void:
 	var ta := clampf((k - 0.7) / 0.25, 0.0, 1.0)   # the text fades with the bar
 	var tx := x + 70.0
 	if logo:
-		ci.draw_texture_rect(logo, Rect2(x + 40, y + 6, h - 12, h - 12), false, Color(1, 1, 1, ta))
-		tx += 120.0
+		MenuStyle.draw_logo(ci, logo, Rect2(x + 40, y + 6, lw, h - 12), Color(1, 1, 1, ta))
+		tx += lw + 20.0
 	MenuStyle.draw_bold(ci, Vector2(tx, y + h * 0.5 + size * 0.36), text, size, Color(1, 1, 1, ta),
 			int(size * 0.2), Color(MenuStyle.INK, ta), 0.2, ta > 0.9)
 
@@ -302,8 +305,10 @@ func _draw_card() -> void:
 	var col := MenuStyle.team_color(d.team_ids[team]) if team >= 0 else MenuStyle.NAVY
 	var goal: bool = _card.kind == "goal"
 	var title: String = _card.title
-	var w := maxf(560.0, maxf(MenuStyle.text_width(title, 44) + 170, MenuStyle.text_width(_card.line, 20, 0.12) + 170))
 	var h := 104.0
+	var logo: Texture2D = MenuStyle.team_logo(d.team_ids[team]) if team >= 0 else Stinger.logo()
+	var lw := MenuStyle.logo_slot(logo, h - 8)   # (wide crests get a wider slot; the text moves over)
+	var w := maxf(560.0, maxf(MenuStyle.text_width(title, 44), MenuStyle.text_width(_card.line, 20, 0.12)) + 74 + lw)
 	var x := lerpf(-w - 60.0, 48.0, k)
 	var y := 690.0
 	# The tag: GOAL in red, PENALTY in amber, INJURY in white, stats in ice blue.
@@ -319,10 +324,9 @@ func _draw_card() -> void:
 	ci.draw_rect(Rect2(x, y, w, h * 0.6), col)
 	ci.draw_rect(Rect2(x, y + h * 0.6, w, h * 0.4), Color(0.03, 0.04, 0.09, 0.94))
 	ci.draw_rect(Rect2(x, y + h * 0.6 - 3, w, 3), tag_col)
-	var logo: Texture2D = MenuStyle.team_logo(d.team_ids[team]) if team >= 0 else Stinger.logo()
 	if logo:
-		ci.draw_texture_rect(logo, Rect2(x + 16, y + 4, h - 8, h - 8), false)
-	var tx := x + 130.0
+		MenuStyle.draw_logo(ci, logo, Rect2(x + 16, y + 4, lw, h - 8))
+	var tx := x + 34.0 + lw
 	MenuStyle.draw_bold(ci, Vector2(tx, y + 50), title, 44, Color.WHITE, 8, MenuStyle.INK, 0.2, false)
 	ci.draw_string(MenuStyle.font(0.12), Vector2(tx, y + h - 13), _card.line, HORIZONTAL_ALIGNMENT_LEFT, -1, 20, MenuStyle.ICE)
 

@@ -34,9 +34,13 @@ ORDER = {
                 "LSG", "CHI", "MIM", "KYM", "MBJ", "NSH", "WIS", "TXA", "OKE", "NDK"],
     "West": ["ROS", "HOL", "BAJ",  # Grays, Stuntmen, Chupacabras
              "POR", "ANC", "SEA", "RMG", "MON", "YEL", "MOJ", "XOC", "TAC", "BOI"],
+    # The classic teams (unlockables too, in no conference).
+    "Classic": ["BOS", "OMA", "BUT", "DET", "NAR", "HON"],  # Beacon, Boxcar, Copper, Jalopy, Anchor, Clipper
 }
 # Team overall by place in the conference.
 TARGETS = [86, 84, 82, 80, 78.5, 77, 75.5, 74, 72.5, 71, 69.5, 68, 66]
+# The classic teams' own targets: between a third seed and a fourth.
+GROUP_TARGETS = {"Classic": [82, 81.5, 81, 80.5, 80, 79.5]}
 
 # Style: skater stat changes, plus "G" for the starting goalie's stats.
 STYLES = {
@@ -60,6 +64,9 @@ TEAM_STYLE = {
     "ROS": "Hot Goalie", "HOL": "Bruisers", "BAJ": "Speed", "POR": "Bruisers",
     "ANC": "Lockdown", "SEA": "Snipers", "RMG": "Bruisers", "MON": "Playmakers",
     "YEL": "Snipers", "MOJ": "Lockdown", "XOC": "Playmakers", "TAC": "Playmakers", "BOI": "Lockdown",
+    # Classic
+    "BOS": "Speed", "NAR": "Lockdown", "OMA": "Lockdown", "BUT": "Bruisers", "HON": "Speed",
+    "DET": "Snipers",
 }
 
 
@@ -120,7 +127,7 @@ def main() -> None:
     for conf, abbrs in ORDER.items():
         for place, abbr in enumerate(abbrs):
             ps = by_team[abbr]
-            target = TARGETS[place]
+            target = GROUP_TARGETS.get(conf, TARGETS)[place]
             before = team_ovr([dict(p, overall=int(p["overall"])) for p in ps])
             base = styled(ps, STYLES[TEAM_STYLE[abbr]])
             # Find the shift that lands the team on its target (clamping makes it uneven).

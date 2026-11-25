@@ -35,19 +35,25 @@ const MASKS := [
 ## Paint jobs (tools/blender/goalie_mask_paint.py; scenes/actors/mask_paint.gdshader): a
 ## pattern texture per mask shape, res://assets/characters/masks/mask_<mask>_<name>.png,
 ## and the color schemes it suits. A scheme names the base, accent 1, accent 2 and detail
-## colors: P the team's jersey color, S its trim, W white, K black. Each goalie's design
-## and scheme come from their name and number, the same every game; one in five wears the
-## mask plain.
+## colors: P the team's home jersey color, S its trim, W white, K black (the same paint
+## home and away).
+##
+## Whose choice it is, first that has one: the goalie's own (Skater.mask_paint, from Create
+## Player), the team's (the uniform's `mask_paint`, from Create Team), or a design and
+## scheme from the goalie's name and number, the same every game, one in five plain.
+## A choice is a design's name with a scheme index, or MASK_PLAIN.
 const MASK_PAINTS := [
-	{"name": "flames", "schemes": ["WPSK", "KPSW", "PSWK"]},    # flames, their core, their edge
-	{"name": "beast", "schemes": ["PKKW", "PSKW", "SKKW"]},     # stripes, gums and brows, teeth and eyes
-	{"name": "wings", "schemes": ["WPKS", "PWKS"]},             # feathers, their edges, pinstripes
-	{"name": "burst", "schemes": ["WPSK", "PSWK", "KPSW"]},     # spikes, their hearts, their edges
-	{"name": "stars", "schemes": ["WPSW", "WSPW"]},             # field, bars, stars
-	{"name": "bolts", "schemes": ["WSPK", "KSPW"]},             # lightning, cloud, edges
-	{"name": "sweep", "schemes": ["WPSK", "PSWK", "KPSW"]},     # blades, their echoes, pinstripe
-	{"name": "stitches", "schemes": ["WPSK", "PSKW"]},          # (stitches are the detail color)
+	{"name": "flames", "label": "Flames", "schemes": ["WPSK", "KPSW", "PSWK"]},       # flames, their core, their edge
+	{"name": "beast", "label": "Beast", "schemes": ["PKKW", "PSKW", "SKKW"]},         # stripes, gums and brows, teeth and eyes
+	{"name": "wings", "label": "Wings", "schemes": ["WPKS", "PWKS"]},                 # feathers, their edges, pinstripes
+	{"name": "burst", "label": "Sunburst", "schemes": ["WPSK", "PSWK", "KPSW"]},      # spikes, their hearts, their edges
+	{"name": "stars", "label": "Stars & Bars", "schemes": ["WPSW", "WSPW"]},          # field, bars, stars
+	{"name": "bolts", "label": "Storm", "schemes": ["WSPK", "KSPW"]},                 # lightning, cloud, edges
+	{"name": "sweep", "label": "Sweep", "schemes": ["WPSK", "PSWK", "KPSW"]},         # blades, their echoes, pinstripe
+	{"name": "stitches", "label": "Stitches", "schemes": ["WPSK", "PSKW"]},           # (stitches are the detail color)
 ]
+const MASK_PLAIN := "plain"
+const SCHEME_COLOR_NAMES := {"P": "Primary", "S": "Secondary", "W": "White", "K": "Black"}
 const MASK_PAINT_SHADER := preload("res://scenes/actors/mask_paint.gdshader")
 const MASK_PAINT_DIR := "res://assets/characters/masks/"
 ## For tools (the character viewer's `paint=`): a design name every goalie wears, "plain"
@@ -55,25 +61,51 @@ const MASK_PAINT_DIR := "res://assets/characters/masks/"
 static var paint_override := ""
 
 
-## The paint material for a mask shell: `letter` the mask's (MASKS.paint), `seed` the
-## goalie's own number; null for a plain mask.
-static func mask_paint(letter: String, c: Dictionary, seed: int) -> ShaderMaterial:
-	var design: Dictionary = MASK_PAINTS[(seed / 5) % MASK_PAINTS.size()]
-	if paint_override != "":
-		design = {}
-		for d: Dictionary in MASK_PAINTS:
-			if d.name == paint_override:
-				design = d
-	elif seed % 5 == 0:
-		design = {}
+## The MASK_PAINTS entry called `name`, or {} (MASK_PLAIN, "", an unknown name).
+static func paint_design(name: String) -> Dictionary:
+	for d: Dictionary in MASK_PAINTS:
+		if d.name == name:
+			return d
+	return {}
+
+
+## What a design's color schemes are called in the creators' lists: its first accent on
+## its base ("Primary on White").
+static func paint_scheme_names(name: String) -> Array:
+	var out := []
+	for s: String in paint_design(name).get("schemes", []):
+		out.append("%s on %s" % [SCHEME_COLOR_NAMES[s[1]], SCHEME_COLOR_NAMES[s[0]]])
+	return out
+
+
+## The paint material for a mask shell: `letter` the mask's (MASKS.paint), `c` the uniform,
+## `seed` the goalie's own number, `own` and `own_scheme` the goalie's own choice (""
+## for none); null for a plain mask.
+static func mask_paint(letter: String, c: Dictionary, seed: int, own := "", own_scheme := 0) -> ShaderMaterial:
+	var choice := paint_override
+	var scheme_i := -1
+	if choice == "" and own != "":
+		choice = own
+		scheme_i = own_scheme
+	elif choice == "" and str(c.get("mask_paint", "")) != "":
+		choice = str(c.mask_paint)
+		scheme_i = int(c.get("mask_colors", 0))
+	var design := {}
+	if choice != "":
+		design = paint_design(choice)
+	elif seed % 5 != 0:
+		design = MASK_PAINTS[(seed / 5) % MASK_PAINTS.size()]
 	if design.is_empty():
 		return null
 	var path := "%smask_%s_%s.png" % [MASK_PAINT_DIR, letter, design.name]
 	if not ResourceLoader.exists(path):
 		return null
-	var scheme: String = design.schemes[(seed / 47) % (design.schemes as Array).size()]
-	# The team's two colors, kept apart: a trim too close to the jersey (or to white, where
-	# the scheme has white beside it) gives way to the other candidates.
+	var schemes: Array = design.schemes
+	var scheme: String = schemes[scheme_i] if scheme_i >= 0 and scheme_i < schemes.size() else schemes[(seed / 47) % schemes.size()]
+	# The team's two colors, from its home uniform (a mask isn't repainted for the road),
+	# kept apart: a trim too close to the jersey (or to white, where the scheme has white
+	# beside it) gives way to the other candidates.
+	c = c.get("home_colors", c)
 	var primary: Color = c.jersey
 	var secondary: Color = c.trim
 	for alt: Color in [c.trim, c.get("number_outline", c.trim), c.get("helmet", c.trim), primary.lightened(0.45), primary.darkened(0.5)]:
@@ -126,6 +158,16 @@ const PAD_MESH := preload("res://assets/characters/goalie_pad.res")
 const BOOT_MESH := preload("res://assets/characters/goalie_boot.res")    ## the pad's boot: same frame, rides the foot
 const THIGH_MESH := preload("res://assets/characters/goalie_thigh.res")
 const BLOCKER_MESH := preload("res://assets/characters/blocker.res")
+## The Old-Time Set's (SkaterVisual.OLD; Skater.pad_style or the team's kit): leather pads
+## stuffed in ribs, a waffle board and a mitt, in the modern pieces' frames
+## (tools/blender/goalie_gear.py build_old). All one brown leather: darker rolls and
+## bindings (the trim), a paler worn leather on the inside faces and palms.
+const PAD_OLD_MESH := preload("res://assets/characters/goalie_pad_old.res")
+const BOOT_OLD_MESH := preload("res://assets/characters/goalie_boot_old.res")
+const THIGH_OLD_MESH := preload("res://assets/characters/goalie_thigh_old.res")
+const BLOCKER_OLD_MESH := preload("res://assets/characters/blocker_old.res")
+const CATCHER_OLD_MESH := preload("res://assets/characters/goalie_catcher_old.res")
+const LEATHER_PAD := [Color(0.5, 0.31, 0.16), Color(0.6, 0.43, 0.26), Color(0.36, 0.2, 0.1)]
 const PAD_SHIN := 0.42
 ## The stick is held at its own lie (the blade-to-shaft angle of the model): the shaft
 ## runs down through the blocker hand to the ice at that angle, the paddle leaned back
@@ -187,10 +229,16 @@ func build(sk: Skater) -> void:
 func _build_gear() -> void:
 	var c := team_colors()
 	var head := anchor_box("head", "Head", Vector3(0.2, 0.25, 0.22) * hs)
-	if TEAM_MASKS.has(c.get("headgear", "")):
-		_build_team_mask(head, c)   # a team's mask (the Campers' vintage one) instead
+	var gear := head_gear(c)
+	if gear == NO_HELMET:
+		_build_bare_head(head)   # (as goalies played before the mask)
+	elif HATS.has(gear):
+		_build_hat(head, c, gear)   # (a team's hat, Florida Man's cap and shades, or the goalie's own)
+	elif gear != "":
+		_build_team_mask(head, c, gear)   # a team's mask (the Campers' vintage one) or the goalie's own instead
 	else:
 		_build_goalie_mask(head, c)
+	_add_eye_fx(head)   # (glowing eyes behind the cage; crests and danglers are the skaters' so far)
 	var chest := anchor_box("chest", "Spine2", Vector3(0.36, 0.2, 0.24) * hs)
 	var cc := chest.get_center()
 	var cr := Vector3(maxf(chest.size.x * 0.75, 0.3 * hs), 0.2 * hs, maxf(chest.size.z * 0.75, 0.2 * hs))
@@ -206,10 +254,10 @@ func _build_gear() -> void:
 	var hips := anchor_box("hips", "Hips", Vector3(0.34, 0.2, 0.24) * hs)
 	var hipc := hips.get_center()
 	if goalie_jersey == null:
-		attach("Spine2", _cloth_mesh(_sphere(), cc, Basis.from_scale(cr)), cloth, cc, Basis.from_scale(cr))
+		_print_extra.append(attach("Spine2", _cloth_mesh(_sphere(), cc, Basis.from_scale(cr)), cloth, cc, Basis.from_scale(cr)))
 		var belly_at := Vector3(hipc.x, lerpf(hipc.y, cc.y, 0.5), lerpf(hipc.z, cc.z, 0.5) + 0.03 * hs)
 		var belly_b := Basis.from_scale(Vector3(0.22, 0.16, 0.17) * hs)
-		attach("Spine", _cloth_mesh(_sphere(), belly_at, belly_b), cloth, belly_at, belly_b)
+		_print_extra.append(attach("Spine", _cloth_mesh(_sphere(), belly_at, belly_b), cloth, belly_at, belly_b))
 	var hips_at := hipc - Vector3(0, 0.07 * hs, 0)
 	var hips_b := Basis.from_scale(Vector3(maxf(hips.size.x * 0.62, 0.23 * hs), 0.18 * hs, maxf(hips.size.z * 0.7, 0.17 * hs)))
 	attach("Hips", _cloth_mesh(_sphere(), hips_at, hips_b), cloth, hips_at, hips_b)
@@ -222,26 +270,29 @@ func _build_gear() -> void:
 	# Leg pads and thigh rises: white with the team color on the rolls and knee stack, grey
 	# leather landing pads inside (glove.gdshader, like the skater gloves).
 	var pad_mat := glove_material(Color(0.93, 0.93, 0.9), c.jersey)
+	var old := old_time(skater.pad_style)
+	if old:
+		pad_mat = leather_material(LEATHER_PAD[0], LEATHER_PAD[1], LEATHER_PAD[2])
 	for side in ["Left", "Right"]:
 		var knee := bone_pos(side + "Leg")
 		var ankle := bone_pos(side + "Foot")
 		var shin := knee.distance_to(ankle) / PAD_SHIN
 		var mirror := 1.0 if side == "Left" else -1.0
-		attach(side + "Leg", PAD_MESH, pad_mat, ankle, _pad_basis(knee - ankle, mirror) * Basis.from_scale(Vector3(hs, shin, hs))).name = side + "Pad"
+		attach(side + "Leg", PAD_OLD_MESH if old else PAD_MESH, pad_mat, ankle, _pad_basis(knee - ankle, mirror) * Basis.from_scale(Vector3(hs, shin, hs))).name = side + "Pad"
 		# The boot rides the foot, so the skate under it can flex without poking through.
-		attach(side + "Foot", BOOT_MESH, pad_mat, ankle, _pad_basis(knee - ankle, mirror) * Basis.from_scale(Vector3.ONE * hs)).name = side + "PadBoot"
+		attach(side + "Foot", BOOT_OLD_MESH if old else BOOT_MESH, pad_mat, ankle, _pad_basis(knee - ankle, mirror) * Basis.from_scale(Vector3.ONE * hs)).name = side + "PadBoot"
 		# The thigh rise stands up from the pad in line with the shin (rigid with it, as on
 		# real pads): riding the thigh, it opened a gap over the knee in the crouch.
-		attach(side + "Leg", THIGH_MESH, pad_mat, knee, _pad_basis(knee - ankle, mirror) * Basis.from_scale(Vector3.ONE * hs))
+		attach(side + "Leg", THIGH_OLD_MESH if old else THIGH_MESH, pad_mat, knee, _pad_basis(knee - ankle, mirror) * Basis.from_scale(Vector3.ONE * hs))
 	# Catcher on the left hand (pocket along the hand frame's +Z, which faces the shooter
 	# in the ready pose); blocker on the right. Both white with team-color trim, like the pads.
 	var lh := bone_pos("LeftHand")
 	var ld := (lh - bone_pos("LeftForeArm")).normalized()
 	var lf := limb_frame("LeftForeArm", "LeftHand")
-	attach("LeftHand", CATCHER_MESH, pad_mat, lh + ld * 0.02 * hs, lf * Basis.from_scale(Vector3.ONE * hs))
+	attach("LeftHand", CATCHER_OLD_MESH if old else CATCHER_MESH, pad_mat, lh + ld * 0.02 * hs, lf * Basis.from_scale(Vector3.ONE * hs)).name = "Catcher"
 	var rh := bone_pos("RightHand")
 	var rf := limb_frame("RightForeArm", "RightHand")
-	attach("RightHand", BLOCKER_MESH, pad_mat, rh, rf * Basis.from_scale(Vector3.ONE * hs))
+	attach("RightHand", BLOCKER_OLD_MESH if old else BLOCKER_MESH, pad_mat, rh, rf * Basis.from_scale(Vector3.ONE * hs)).name = "Blocker"
 	# The body's own fingers would poke out of the blocker and catcher: fold them away.
 	rig.hide_fingers = true
 	add_skates(c)
@@ -308,7 +359,7 @@ func _build_goalie_mask(head: AABB, c: Dictionary) -> void:
 	}
 	if spec.has("paint"):
 		var seed := absi(("%s %s %d" % [skater.first_name, skater.last_name, skater.number]).hash())
-		var painted := mask_paint(spec.paint, c, seed)
+		var painted := mask_paint(spec.paint, c, seed, skater.mask_paint, skater.mask_colors)
 		if painted != null:
 			mats["shell"] = painted
 	var surfaces: Array = spec.surfaces

@@ -13,8 +13,12 @@ signal hit_landed(attacker: Skater, victim: Skater, power: float, kind: StringNa
 signal poke_succeeded(skater: Skater, victim: Skater)
 ## A possible infraction; the director decides whether the referee calls it.
 signal foul_committed(offender: Skater, victim: Skater, kind: StringName)
+## A puck battle on the boards (BoardBattle) starts and ends; `result` is how (BoardBattle.finish).
+signal pin_started(pinner: Skater, pinned: Skater)
+signal pin_ended(pinner: Skater, pinned: Skater, result: StringName)
 
-enum State { SKATE, WINDUP, FOLLOW_THROUGH, DEKE, CHECK, POKE, STUMBLE, DOWN }
+## PIN: holding an opponent against the boards; PINNED: held there (both: `battle`).
+enum State { SKATE, WINDUP, FOLLOW_THROUGH, DEKE, CHECK, POKE, STUMBLE, DOWN, PIN, PINNED }
 
 # --- Skating feel ---
 const TURN_SLOW := 14.0           ## rad/s turn rate when nearly stopped
@@ -59,8 +63,13 @@ const DEKE_COOLDOWN := 0.55
 const DEKE_RETURN := 0.45         ## after a deke, puck drifts back to the forehand
 
 # --- Checking ---
-const CHECK_TIME := 0.3
+const CHECK_LEAD_IN := 0.06       ## s the hit loads before it can land
+const CHECK_TIME := 0.36          ## the lead-in, then 0.3 s in which it can land
 const CHECK_LUNGE := 3.0          ## m/s burst along the check direction
+const SHOVE_SPEED := 3.0          ## m/s closing on the target when the check starts: slower is a shove
+const WHIFF_TIME := 0.35          ## s off balance after a check that hit nothing
+const WHIFF_ACCEL := 0.45         ## acceleration while off balance
+const HITSTOP := {&"check": 0.045, &"big_hit": 0.06}   ## s both bodies hold at the point of impact
 const CHECK_COOLDOWN := 0.7
 const CHECK_RANGE := 1.25
 const CHECK_CONE := 1.22          ## 70 degrees
@@ -118,11 +127,24 @@ var windup_time := 0.0
 var shot_charge := 0.0
 var last_shot_kind: StringName = &""
 var fall_side := 1.0              ## which way a knockdown topples (visual)
-## Body checks, for the visual. Checker: which shoulder leads the check (+1 right, -1 left)
-## and seconds since the last one landed. Victim: the push direction (flat, world), how
-## hard (after balance) and seconds since.
+## Body checks, for the visual. Checker: which shoulder (or hip) leads the check (+1 right,
+## -1 left), what kind it is (&"shoulder"; &"hip", thrown skating backward; &"shove", from
+## a near standstill), seconds since the last one landed, what it did and how hard, and
+## seconds since the last one that hit nothing. Victim: the push direction (flat, world),
+## how hard (after balance) and seconds since.
 var check_lead := 1.0
+var check_kind: StringName = &"shoulder"
 var since_check_landed := 10.0
+var landed_kind: StringName = &""
+var landed_power := 0.0
+var since_check_missed := 10.0
+var hitstop := 0.0                ## s left held in place by a hit (given or taken)
+## The puck battle on the boards this skater is in (State.PIN / PINNED), and its jostles
+## for the visual: a count that goes up with each one, and its push (flat, world).
+var battle: BoardBattle
+var pin_bump := 0
+var pin_bump_dir := Vector3.ZERO
+var _pin_cooldown := 0.0
 var hit_dir := Vector3.ZERO
 var hit_power := 0.0
 var since_hit := 10.0
@@ -156,14 +178,32 @@ var weight_kg := 0.0
 var uniform := {}                ## team palette (Teams.LIST colors); empty = derived from team_color
 var crest: Texture2D             ## team logo on the jersey front (null = none)
 var skin_tone := Color(0.91, 0.73, 0.60)   ## sRGB; see SkaterVisual.SKIN_TONES
+var mask_paint := ""             ## goalies: their own mask paint (a GoalieVisual.MASK_PAINTS name or MASK_PLAIN), "" = the team's or one from their name
+var mask_colors := 0             ## ... and which of the design's color schemes
 var gear_style := 0              ## helmet model (goalies: mask model): an index, or a roll (SkaterVisual.gear_roll); see SkaterVisual.HELMETS / GoalieVisual.MASKS
+var headgear := ""               ## a mask worn instead of the helmet (SkaterVisual.TEAM_MASKS key) whatever the team wears; "" = the team's way
 var visor := true                ## a visor on the helmet (skaters); see Skater.visor_for
-var hair_style := ""              ## SkaterVisual.HAIR_STYLES / "braid"; "" = none showing
-var facial_hair := ""             ## "beard", "moustache" or ""
+var visor_tint := ""             ## its tint (SkaterVisual.VISOR_TINTS: "" clear, "smoke", "amber", "mirror", "gold"); the full shield's too
+## Cosmetics, each its own slot: "" = as the team does (its uniform's key of the same
+## name; nothing, for nearly every team), else this player's own (SkaterVisual.cosmetic).
+var helmet_crest := ""           ## on top of the helmet (SkaterVisual.CRESTS): "spines"
+var eye_fx := ""                 ## the eyes (SkaterVisual.EYE_FX): "red" = glowing red
+var dangler := ""                ## hung under the visor (SkaterVisual.DANGLERS): "fangs"; the slot a goalie's throat dangler will share
+var face_gear := ""              ## worn on the helmet in place of the visor (SkaterVisual.FACE_GEAR): "" none, "shield" a full clear shield, "cage" a wire cage
+var hair_style := ""              ## SkaterVisual.HAIR_STYLES; "" = none showing
+var facial_hair := ""             ## SkaterVisual.FACIAL_HAIR, or ""
 var hair_color := Color(0.16, 0.1, 0.06)
 var eye_color := Color(0.34, 0.2, 0.09)   ## sRGB; see SkaterVisual.EYE_COLORS
 var stick_style := "black"        ## SkaterVisual.STICK_STYLES: "wood", "black", "black_white", ...
 var stick_tape := "white"         ## SkaterVisual.TAPES: "white", "black", "team" or "none"
+## The Old-Time Set (SkaterVisual.OLD): "" = as the team does (the standard gear, unless
+## the team's uniform says `kit` = "old"), "old" = this player's own old-time piece.
+var glove_style := ""             ## "old": leather gauntlets
+var skate_style := ""             ## "old": leather boots on tube frames
+var pad_style := ""               ## goalies: "old" = leather pads, a waffle board and a mitt
+## The legs (SkaterVisual.dress_legs), likewise "" = as the team does.
+var sock_style := ""              ## "taped": clear tape round the shins; "old": heavy wool
+var pants_style := ""             ## "old": canvas; "long": long pants down over the socks
 ## The club's home and road jersey colors, for team-colored sticks and tape (empty: the
 ## uniform's jersey on white).
 var club_colors: Array[Color] = []
@@ -234,6 +274,7 @@ func place(pos: Vector3, face := Vector3.FORWARD) -> void:
 	_set_state(State.SKATE)
 	_pass_hold = -1.0
 	_juke_speed = 0.0
+	hitstop = 0.0
 	reset_physics_interpolation()
 	if visual:
 		visual.snap()
@@ -401,6 +442,13 @@ func _stop_walk() -> void:
 func _clear_motion_flags() -> void:
 	stopping = false
 	turn_speed = 0.0
+	# The same goes for a check: its timers only run in _tick_timers, and the visual poses
+	# from them, so a skater frozen or walked off mid-hit would hold the hit pose.
+	since_check_landed = 10.0
+	since_check_missed = 10.0
+	hitstop = 0.0
+	if state == State.CHECK or state == State.PIN or state == State.PINNED:
+		_set_state(State.SKATE)
 
 
 ## Back to normal play after a scripted walk: physics, processing, interpolation.
@@ -439,6 +487,8 @@ func _physics_process(delta: float) -> void:
 
 
 func _set_state(s: State) -> void:
+	if battle != null and s != State.PIN and s != State.PINNED:
+		battle.abort()   # knocked, whistled or walked out of a board battle
 	state = s
 	_state_time = 0.0
 	if s != State.WINDUP:
@@ -450,7 +500,9 @@ func _tick_timers(delta: float) -> void:
 	_shoot_buffer = maxf(0.0, _shoot_buffer - delta)
 	_deke_cooldown = maxf(0.0, _deke_cooldown - delta)
 	_check_cooldown = maxf(0.0, _check_cooldown - delta)
+	_pin_cooldown = maxf(0.0, _pin_cooldown - delta)
 	since_check_landed += delta
+	since_check_missed += delta
 	since_hit += delta
 	_poke_cooldown = maxf(0.0, _poke_cooldown - delta)
 	if _deke_return > 0.0:
@@ -518,6 +570,7 @@ func _update_actions(delta: float) -> void:
 		State.CHECK:
 			_check_contact()
 			if state == State.CHECK and _state_time >= CHECK_TIME:
+				since_check_missed = 0.0
 				_set_state(State.SKATE)
 		State.POKE:
 			if not _poke_done and _state_time >= POKE_HIT_AT:
@@ -528,6 +581,19 @@ func _update_actions(delta: float) -> void:
 		State.STUMBLE, State.DOWN:
 			if _state_time >= _down_time:
 				_set_state(State.SKATE)
+		State.PIN:
+			_pass_hold = -1.0
+			if battle == null:
+				_set_state(State.SKATE)
+			else:
+				battle.tick(delta)
+		State.PINNED:
+			# The pinner's tick runs the battle; this only catches one that stopped running.
+			_pass_hold = -1.0
+			if battle == null:
+				_set_state(State.SKATE)
+			elif _state_time > BoardBattle.MAX_TIME + 0.5:
+				battle.abort()
 
 
 func _juke(dir: Vector3, burst: float, duration: float) -> void:
@@ -777,6 +843,7 @@ func _begin_check() -> void:
 	# there, the one away from the stick blade.
 	check_lead = -forehand_side()
 	var best := 3.5
+	var closing := flat_speed()
 	for o in opponents:
 		if not is_instance_valid(o) or o.is_down():
 			continue
@@ -784,12 +851,23 @@ func _begin_check() -> void:
 		to.y = 0.0
 		if to.length() < best and to.length() > 0.05 and to.normalized().dot(_check_dir) > 0.2:
 			best = to.length()
+			closing = (velocity - o.velocity).dot(to.normalized())
 			var across := to.dot(right_dir())
 			if absf(across) > 0.08:
 				check_lead = signf(across)
+	# Skating backward: a hip check, the body staying turned as it is. Barely closing on
+	# the target: a shove. Otherwise the shoulder.
+	if intent.backward:
+		check_kind = &"hip"
+	elif closing < SHOVE_SPEED:
+		check_kind = &"shove"
+	else:
+		check_kind = &"shoulder"
 
 
 func _check_contact() -> void:
+	if _state_time < CHECK_LEAD_IN:
+		return
 	for o in opponents:
 		if not is_instance_valid(o) or o.state == State.DOWN:
 			continue
@@ -806,6 +884,10 @@ func _check_contact() -> void:
 		var power := maxf(closing, 0.0) * PlayerStats.lerp_stat(stats.checking, 0.85, 1.25) + 2.0
 		if momentum:
 			power *= 1.1
+		if BoardBattle.can_start(self, o, dir, closing):
+			# Slow contact into the boards, still on the button: a pin, not a hit.
+			BoardBattle.new().start(self, o)
+			return
 		var had_puck := o.has_puck() or o._since_puck < 0.8
 		var from_behind := dir.dot(o.heading) > 0.55
 		var result := o.receive_hit(power, dir, self)
@@ -820,6 +902,10 @@ func _check_contact() -> void:
 		velocity *= 0.4
 		_juke_speed = 0.0
 		since_check_landed = 0.0
+		landed_kind = result.kind
+		landed_power = o.hit_power
+		hitstop = HITSTOP.get(result.kind, 0.0)
+		o.hitstop = hitstop
 		_set_state(State.SKATE)
 		return
 
@@ -1047,8 +1133,18 @@ func top_speed() -> float:
 
 
 func _update_movement(delta: float) -> void:
+	if battle != null and (state == State.PIN or state == State.PINNED):
+		# A board battle: held on its spot.
+		var to_spot := battle.stand(self) - global_position
+		to_spot.y = 0.0
+		velocity = (to_spot * 14.0).limit_length(6.0)
+		stopping = false
+		turn_speed = 0.0
+		return
 	var top := top_speed()
 	var accel := PlayerStats.lerp_stat(stats.acceleration, 10.0, 17.0) * (1.3 if turbo_active else 1.0) * fatigue_mult()
+	if since_check_missed < WHIFF_TIME:
+		accel *= WHIFF_ACCEL
 	var turn_fast := PlayerStats.lerp_stat(stats.agility, 3.0, 5.0)
 	if has_puck():
 		turn_fast *= PlayerStats.lerp_stat(stats.puck_handling, 0.85, 1.0)
@@ -1109,6 +1205,9 @@ func _update_heading(delta: float) -> void:
 	var spd := hv.length()
 	if stopping or state == State.DOWN:
 		return
+	if battle != null and (state == State.PIN or state == State.PINNED):
+		heading = _rotate_toward(heading, battle.facing(self), 12.0 * delta)
+		return
 	if intent.backward and state == State.SKATE:
 		if spd > 0.6:
 			heading = _rotate_toward(heading, -hv / spd, 10.0 * delta)
@@ -1118,7 +1217,8 @@ func _update_heading(delta: float) -> void:
 	if state == State.WINDUP and intent.move.length() > 0.3:
 		heading = _rotate_toward(heading, intent.move.normalized(), 6.0 * delta)
 	elif state == State.CHECK:
-		heading = _rotate_toward(heading, _check_dir, 14.0 * delta)
+		if check_kind != &"hip":
+			heading = _rotate_toward(heading, _check_dir, 14.0 * delta)
 	elif spd > 0.6:
 		heading = _rotate_toward(heading, hv / spd, 18.0 * delta)
 	elif intent.move.length() > 0.15:
@@ -1133,6 +1233,10 @@ static func _rotate_toward(from: Vector3, to: Vector3, max_angle: float) -> Vect
 
 
 func _move(delta: float) -> void:
+	if hitstop > 0.0:
+		# A hit just landed: both bodies stay where they met for a few ticks, then fly.
+		hitstop -= delta
+		return
 	var juke := _juke_dir * _juke_speed
 	_juke_speed = maxf(0.0, _juke_speed - delta * _juke_decay)
 	velocity += juke

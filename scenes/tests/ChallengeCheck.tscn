@@ -1,0 +1,6 @@
+[gd_scene format=3]
+
+[ext_resource type="Script" path="res://scripts/tests/challenge_check.gd" id="1_cc"]
+
+[node name="ChallengeCheck" type="Node"]
+script = ExtResource("1_cc")

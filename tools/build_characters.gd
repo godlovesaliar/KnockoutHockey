@@ -36,12 +36,15 @@ const CMU_MAP := {"LowerBack": "Spine", "Spine": "Spine1", "Spine1": "Spine2"}
 
 const BODIES := [
 	{"name": "ybot", "file": "res://assets/animations/Y Bot.fbx", "height": 1.80, "map": {}},
-	{"name": "male", "file": "res://assets/player/Hombre_Base (1).fbx", "height": 1.84, "map": CMU_MAP,
-		"skin": "res://assets/player/male_character_base_-_rigged_1.png", "flip_v": true,
-		"eyes": "res://assets/player/male_character_base_-_rigged_0.png"},
-	{"name": "female", "file": "res://assets/player/Mujer_Base.fbx", "height": 1.75, "map": {},
-		"skin": "res://assets/player/female_character_base_-_rigged_0.png", "flip_v": true,
-		"eyes": "res://assets/player/female_character_base_-_rigged_1.png"},
+	# Our own bodies, generated with MPFB (tools/blender/mpfb_body.py): the male on MPFB's
+	# "cmu_mb" rig, the female on its "mixamo" one. The eyes (the "eyes" mesh) and their
+	# picture come from the same script, the skin pictures from tools/blender/skin_paint.py.
+	{"name": "male", "file": "res://assets/player/mpfb_male.glb", "height": 1.84, "map": CMU_MAP,
+		"skin": "res://assets/player/mpfb_male_skin.png",
+		"eyes": "res://assets/player/own_eyes.png"},
+	{"name": "female", "file": "res://assets/player/mpfb_female.glb", "height": 1.75, "map": {},
+		"skin": "res://assets/player/mpfb_female_skin.png",
+		"eyes": "res://assets/player/own_eyes.png"},
 ]
 
 var _clips := []   ## [{name, anim, skel}] loaded once
@@ -148,10 +151,11 @@ func _build_body(spec: Dictionary) -> Skeleton3D:
 	var meshes: Array[MeshInstance3D] = []
 	var eyes: MeshInstance3D = null   # the small eyeball mesh, kept when the body has an eye texture
 	for mi: MeshInstance3D in sk.find_children("*", "MeshInstance3D", true, false):
-		if (mi.mesh.surface_get_arrays(0)[Mesh.ARRAY_VERTEX] as PackedVector3Array).size() >= MIN_MESH_VERTS:
-			meshes.append(mi)
-		elif spec.has("eyes") and mi.name.to_lower().contains("low-poly"):
+		# (the "<body>_eyes" mesh: finer than MIN_MESH_VERTS, so the name is asked first)
+		if spec.has("eyes") and mi.name.to_lower().ends_with("eyes"):
 			eyes = mi
+		elif (mi.mesh.surface_get_arrays(0)[Mesh.ARRAY_VERTEX] as PackedVector3Array).size() >= MIN_MESH_VERTS:
+			meshes.append(mi)
 
 	# Height from the mesh itself (bones can stop short of the top of the head).
 	var lo := INF
@@ -284,8 +288,7 @@ func _build_body(spec: Dictionary) -> Skeleton3D:
 			# the body's own fingers only ever showed through those (in replays, which don't
 			# carry the rig's finger tricks). Gone from the skin and the uniform shell alike.
 			_drop_hands(arr, dom)
-			# The skin textures come from the glTF versions of these bodies; the FBX exports
-			# store their texture coordinates upside down relative to them.
+			# (`flip_v`: a body whose file stores its texture coordinates upside down)
 			if spec.get("flip_v", false) and arr[Mesh.ARRAY_TEX_UV] != null:
 				var uv: PackedVector2Array = arr[Mesh.ARRAY_TEX_UV]
 				for i in uv.size():

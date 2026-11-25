@@ -11,6 +11,8 @@ render_mode cull_disabled;
 //   2 two-tone    `graphic` on `base`: the top of the shaft (the grip) in the graphic
 //                 color, a band of slashes down the middle of the shaft, and a sleeve
 //                 over the hosel above the blade
+//   3 old wood    the old-time wooden stick: the wood of style 0 under an amber varnish,
+//                 with a painted band and two pinstripes in `graphic` low on the shaft
 // Tape layer: the butt-end knob (above `knob_from`) in `knob_color`; on the blade a wrap
 // of `tape_color` round its middle only (`tape_span`, shares of the heel-to-toe length),
 // the heel and toe showing the stick's own finish either side. `bare_blade`: no tape at
@@ -52,7 +54,7 @@ float noise2(vec2 p) {
 void body_finish(out vec3 col, out float rough) {
 	float h = lp.y / shaft_len;
 	bool on_blade = lp.y < 0.04 && lp.z > 0.01;   // the blade drops away from the heel toward +Z
-	if (style == 0) {
+	if (style == 0 || style == 3) {
 		// Grain runs along the shaft (and on along the blade): stretched noise warped a
 		// little, light and dark bands with fine pores.
 		// x: along the grain, y: across it (the shaft's length / the blade's length).
@@ -68,6 +70,13 @@ void body_finish(out vec3 col, out float rough) {
 			col *= 0.78;
 		}
 		rough = 0.5;
+		if (style == 3) {
+			col *= vec3(0.9, 0.78, 0.62);
+			rough = 0.38;
+			if (!on_blade && ((h > 0.2 && h < 0.25) || abs(h - 0.185) < 0.0045 || abs(h - 0.265) < 0.0045)) {
+				col = graphic;
+			}
+		}
 	} else {
 		col = base;
 		rough = 0.32;

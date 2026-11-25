@@ -21,7 +21,7 @@ const CONTROLS := [
 	["Skate", "L-STICK", "W A S D", "ARROWS"],
 	["Pass (tap) · saucer (hold) · switch player on defense", "CROSS", "J", "NUM 1"],
 	["Shoot (tap wrist, hold slap) · hook on defense", "SQUARE", "K", "NUM 2"],
-	["Check (hold for a bigger hit)", "CIRCLE", "L", "NUM 3"],
+	["Check · hold it on a slow check into the boards to pin", "CIRCLE", "L", "NUM 3"],
 	["Deke · poke check on defense", "TRIANGLE", "I", "NUM 5"],
 	["Turbo", "R2", "SHIFT", "NUM 0"],
 	["Skate backwards (hold)", "L2", "Q", "NUM 6"],
@@ -32,6 +32,7 @@ const CONTROLS := [
 const TIPS := [
 	"One-timer: hold shoot while a pass is on its way.   Goalie with the puck: Cross pass out, Square clear, Triangle cover.",
 	"Fights: Cross jab · Square cross · Triangle hook · hold L1 for body shots · Circle grab (holding: Cross body shot, Square hook, Triangle uppercut) · mash Circle to break free or hang on · hold R1 block (+L1 low) · stick up / down slips · rocked? cover up (R1), back off or tie up until it passes.",
+	"Boards: pinning, stay on Check · Triangle digs for the puck · Square shoves off.   Pinned: mash Check to break free · Cross kicks it out · L1 shields it.",
 ]
 
 const ITEM_POS := Vector2(118, 250)
@@ -285,7 +286,7 @@ static func draw_controls_chart(ci: CanvasItem, w: float, y := 175.0) -> void:
 	var row_h := 48.0
 	var cols := [x + pw * 0.56, x + pw * 0.68, x + pw * 0.84]
 	var f := MenuStyle.font(0.12)
-	ci.draw_rect(Rect2(x, y, pw, 70 + row_h * CONTROLS.size() + 112), Color(0.03, 0.05, 0.1, 0.82))
+	ci.draw_rect(Rect2(x, y, pw, 70 + row_h * CONTROLS.size() + 48 + 32 * TIPS.size()), Color(0.03, 0.05, 0.1, 0.82))
 	ci.draw_rect(Rect2(x, y, pw, 3), MenuStyle.RED)
 	for c in 3:
 		ci.draw_string(f, Vector2(cols[c], y + 44), ["PAD", "KEYBOARD 1", "KEYBOARD 2"][c],

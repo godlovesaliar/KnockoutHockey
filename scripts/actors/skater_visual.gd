@@ -30,9 +30,29 @@ const SKIN_TONES: Array[Color] = [
 	Color(0.68, 0.48, 0.33), Color(0.50, 0.34, 0.23), Color(0.34, 0.22, 0.15),
 ]
 const SKATE_LIFT := 0.08          ## skate blade height under the boot (tools/blender/skate_gear.py SOLE)
-## Hair and facial hair (tools/build_hair.gd): meshes in head space, tinted per player.
+## Hair and facial hair, the project's own (tools/blender/hair_gear.py via
+## tools/build_hair.gd): meshes in head space, built per body ("<id>", "<id>_female") and
+## for under a helmet ("..._helm"), tinted per player.
 const HAIR_DIR := "res://assets/characters/hair/"
-const HAIR_STYLES := ["messy", "buzz", "shaggy", "mop", "quiff"]   ## anyone; women also "braid"
+const HAIR_STYLES := ["buzz", "fade", "messy", "quiff", "part", "slick", "curly", "afro", "mop", "shaggy",
+		"flow", "mullet", "mohawk", "balding", "topknot", "ponytail", "braid", "long", "bob"]
+const HAIR_WOMEN := ["braid", "long", "bob"]   ## styles only women wear
+const HAIR_MEN := ["balding"]                  ## ...and only men
+const FACIAL_HAIR := ["beard", "playoff", "chinstrap", "chops", "goatee", "moustache", "horseshoe",
+		"handlebar", "soulpatch"]              ## men only
+## How often random_look picks each style, men and women ("" = bare: nobody is, hair shows
+## when the helmet comes off). On darker skin tones HAIR_DARK_LEAN multiplies these.
+const HAIR_ODDS_MEN := {"messy": 3.0, "flow": 3.0, "quiff": 2.5, "buzz": 2.0, "shaggy": 2.0, "part": 2.0,
+		"mop": 1.5, "mullet": 1.5, "slick": 1.5, "curly": 1.5, "fade": 1.5, "balding": 0.8, "afro": 0.5,
+		"ponytail": 0.4, "topknot": 0.4, "mohawk": 0.3}
+const HAIR_ODDS_WOMEN := {"ponytail": 4.0, "braid": 3.0, "long": 3.0, "bob": 2.0, "flow": 1.5, "shaggy": 1.5,
+		"curly": 1.2, "mop": 1.0, "messy": 1.0, "topknot": 1.0, "slick": 0.8, "part": 0.5, "mullet": 0.5,
+		"afro": 0.4, "quiff": 0.4, "buzz": 0.3, "fade": 0.2, "mohawk": 0.2}
+const HAIR_DARK_LEAN := {"afro": 6.0, "fade": 3.0, "curly": 2.5, "buzz": 1.5, "flow": 0.3, "mop": 0.3,
+		"shaggy": 0.3, "part": 0.3, "quiff": 0.3, "mullet": 0.3, "long": 0.4, "bob": 0.4}
+## Men's facial hair: [id, share of players]; the rest are clean shaven.
+const FACIAL_ODDS := [["beard", 0.13], ["goatee", 0.08], ["moustache", 0.08], ["playoff", 0.05],
+		["chinstrap", 0.05], ["chops", 0.03], ["horseshoe", 0.03], ["handlebar", 0.03], ["soulpatch", 0.02]]
 const HAIR_COLORS: Array[Color] = [
 	Color(0.05, 0.04, 0.035), Color(0.13, 0.08, 0.05), Color(0.26, 0.16, 0.09),
 	Color(0.42, 0.29, 0.17), Color(0.74, 0.58, 0.36), Color(0.48, 0.2, 0.09), Color(0.55, 0.53, 0.5),
@@ -99,9 +119,24 @@ var _jolt := Vector2.ZERO
 var _jolt_v := Vector2.ZERO
 var _seen_hit := 10.0
 var _fight_mode := false   ## set_fight_mode: fights keep the pelvis over the feet too
-## Checking: 0..1 pose weights, the load into the hit and the drive through it.
+## Checking: 0..1 pose weights. The load (coiled into the hit), the drive up and through
+## it, and the stumble forward after one that hit nothing. `_check_size` scales the drive
+## by what the hit did; `_check_tilt` is the whole body's pitch and roll for it (rad).
 var _check_load := 0.0
 var _check_drive := 0.0
+var _check_whiff := 0.0
+var _check_size := 1.0
+var _check_tilt := Vector2.ZERO
+var _seen_landed := 10.0
+## Board battles: 0..1 pose weights for the one pinning and the one pinned, the pitch
+## and roll for it, the last jostle shown, and where the puck lay and which side the
+## pinner stood (kept for the ease out, once the battle is gone).
+var _pin_w := 0.0
+var _pinned_w := 0.0
+var _pin_tilt := Vector2.ZERO
+var _seen_bump := 0
+var _pin_puck := Vector3.ZERO
+var _pin_side := 1.0
 var _stride := 0.0
 var _stride_amt := 0.0
 var _free_arm := 0.0
@@ -143,7 +178,35 @@ static var _visor: StandardMaterial3D
 const HELMETS := [
 	{"mesh": preload("res://assets/characters/helmet.res")},
 	{"mesh": preload("res://assets/characters/helmet_b.res")},
+	{"mesh": preload("res://assets/characters/helmet_c.res")},   # C: the round '80s bucket (the Pro Shop's)
 ]
+const HELMET_ROLLS := 2   ## a rolled gear_style (league players) only ever gives one of the first two
+## Face gear worn on the helmet in place of its visor (Skater.face_gear; the Pro Shop's
+## "Cage & Full Shield"): one mesh per helmet, in that helmet's frame, hung on it as a
+## child so it comes off with the helmet. Surfaces: cage 0 the wire, 1 its dark clips and
+## chin cup; shield 0 the clear shield (tinted as a visor is), 1 its dark fittings.
+const FACE_GEAR := {
+	"cage": [preload("res://assets/characters/face_cage_a.res"), preload("res://assets/characters/face_cage_b.res"),
+			preload("res://assets/characters/face_cage_c.res")],
+	"shield": [preload("res://assets/characters/face_shield_a.res"), preload("res://assets/characters/face_shield_b.res"),
+			preload("res://assets/characters/face_shield_c.res")],
+	# The Grays' signature gear: a pair of great black slanted eyes, a bulging mirrored lens
+	# over each of the player's own (0 the lenses, 1 the bar over the nose and the clips).
+	"alien": [preload("res://assets/characters/face_alien_a.res"), preload("res://assets/characters/face_alien_b.res"),
+			preload("res://assets/characters/face_alien_c.res")],
+}
+## Visor tints (Skater.visor_tint; the Pro Shop's "Tinted Visors"): a see-through color and
+## its roughness, or for the mirrors the color seen straight on and the one it turns to
+## at a glancing angle (visor_mirror.gdshader).
+const VISOR_TINTS := {
+	"": {"color": Color(0.55, 0.65, 0.75, 0.35), "rough": 0.1},
+	"smoke": {"color": Color(0.05, 0.055, 0.065, 0.74), "rough": 0.08},
+	"amber": {"color": Color(0.96, 0.6, 0.1, 0.46), "rough": 0.08},
+	"mirror": {"mirror": [Color(0.2, 0.48, 0.95), Color(0.72, 0.3, 0.9)]},
+	"gold": {"mirror": [Color(0.98, 0.7, 0.16), Color(0.95, 0.24, 0.08)]},
+}
+const VISOR_MIRROR_SHADER := preload("res://scenes/actors/visor_mirror.gdshader")
+const SHIELD_MIRROR_LOW := -0.028   ## the full shield's mirror band ends here (about where a visor's bottom edge is)
 const HELMET_CROWN := 0.1447
 const HELMET_HEAD_W := 0.1939
 ## Skater.gear_style for a player who didn't choose their gear: GEAR_ROLL plus a random
@@ -159,7 +222,8 @@ static func gear_roll(r: int) -> int:
 ## "lucha": luchador hoods, A full, B open below the nose, C crested (surfaces 0 hood,
 ## 1 crest), each also fitted to the female head; each player's cut, pattern and color
 ## order come from their name and number. "vintage": an old-school fiberglass goalie face
-## mask (0 shell, 1 chevrons, 2 straps), goalies too.
+## mask (0 shell, 1 chevrons, 2 straps), goalies too. A body with no set of its own wears
+## the male's.
 const TEAM_MASKS := {
 	"lucha": {
 		"male": [preload("res://assets/characters/lucha_a.res"), preload("res://assets/characters/lucha_b.res"),
@@ -169,6 +233,91 @@ const TEAM_MASKS := {
 	},
 	"vintage": {"male": [preload("res://assets/characters/vintage_mask.res")]},
 }
+## Hats (Teams.HEADGEAR_OF, Skater.headgear; tools/blender/hat_gear.py via
+## tools/build_gear.gd): head gear that isn't a mask. A hat is set on the crown as a helmet
+## is, by the head's width, and it comes off in a fight as a helmet does. Under it the
+## player's whole hairstyle shows, cut off at the hat's edge (hat_hair.gdshader): `edge` is
+## that edge as a plane in the helmets' frame, the height at z = 0 and its rise per meter
+## toward the face (a little under the real edge, so no hair comes through just above it).
+##   "florida"  Florida Man's ball cap, worn backwards (0 crown in the jersey color, 1 bill,
+##              button, seams and strap in the trim color), with wraparound sunglasses
+##              (`eyes`: 0 frame, 1 mirrored lens) set on the eyes and hung on the cap, so
+##              they come off with it
+##   "cowboy"   a cowboy hat (0 felt, 1 the band in the jersey color)
+##   "stunt"    the Stuntmen's open-face stunt helmet: a deep round shell over the ears and
+##              the nape, the face open (0 the shell, flame-painted in the team's colors:
+##              flame_material; 1 the peak and its snaps; 2 the edge, liner and strap)
+##   "watch"    the Whalers' knit fisherman's watch cap: a ribbed crown and a deep folded
+##              cuff, worn over the tops of the ears (0 the knit in the jersey color, 1 a
+##              stripe round the cuff in the trim color)
+##   "beanie"   a winter knit beanie: a tall ribbed crown, a deep cuff down over the tops
+##              of the ears, a pom on top (0 the knit in the jersey color, 1 two stripes
+##              round the crown and the pom in the trim color)
+##   "leather"  an old leather helmet, as football players wore: a padded band round the
+##              head with straps over the crown, a flap over each ear, a chin strap
+##              (LEATHER_HELMET: 0 the hide, 1 the darker padding, binding and strap, 2 the
+##              ear holes); it comes with the Old-Time Set
+##   "guard"    a leather head guard, the hockey helmet of the same years: a broad band
+##              of stiff leather round the head with a short tab over each ear, a felt
+##              lining, a cross of padded leather straps over the top of the head and
+##              nothing between them, a thin chin strap (GUARD_HELMET: 0 the leather,
+##              1 the felt and the stitching, 2 the chin strap and rivets). The hair shows
+##              below the band, and pressed flat in the open crown (`crown`). With the
+##              Old-Time Set too
+##   "golf"     the Sweet Tea's golf visor: a band round the head, a tall panel in front
+##              and a strap behind, with a see-through tinted bill (0 the band in the
+##              jersey color, 1 the bill, brim_material in the trim color, 2 the piping and
+##              the tab at the back in the trim color). The top of the head is open:
+##              `open` is the band's upper edge, a plane as `edge` is, and the hair shows
+##              again above it
+const HATS := {
+	"florida": {"mesh": preload("res://assets/characters/hat_cap.res"), "eyes": preload("res://assets/characters/hat_shades.res"),
+		"edge": Vector2(0.052, 0.07)},   # (low across the forehead: a fringe cut at the strap was a row of scraps in the opening)
+	"cowboy": {"mesh": preload("res://assets/characters/hat_cowboy.res"), "edge": Vector2(0.068, 0.0)},
+	# (its edge is far from level: the hair is cut at the height of its back and sides, so
+	# none shows in the face opening either)
+	"stunt": {"mesh": preload("res://assets/characters/hat_stunt.res"), "edge": Vector2(-0.058, 0.0)},
+	# (its edge slopes: across the forehead in front, low on the back of the skull)
+	"watch": {"mesh": preload("res://assets/characters/hat_watch.res"), "edge": Vector2(0.047, 0.14)},
+	"beanie": {"mesh": preload("res://assets/characters/hat_beanie.res"), "edge": Vector2(0.023, 0.27)},
+	# (cut at the height of its back, above the flaps: none shows in the face opening)
+	"leather": {"mesh": preload("res://assets/characters/hat_leather.res"), "edge": Vector2(0.0, 0.0)},
+	# (its band's lower edge: hat_gear.py GUARD_RIM)
+	"guard": {"mesh": preload("res://assets/characters/hat_guard.res"), "edge": Vector2(0.051, 0.12), "crown": true},
+	"golf": {"mesh": preload("res://assets/characters/hat_golf.res"), "edge": Vector2(0.054, 0.12), "open": Vector2(0.0925, 0.238)},
+}
+const HAT_CLOSED := Vector2(1000.0, 0.0)   ## `open` for a hat with a crown: no hair shows above it
+const LEATHER_HELMET := [Color(0.5, 0.32, 0.17), Color(0.29, 0.175, 0.09), Color(0.05, 0.035, 0.03)]
+const BALD_ON_TOP := ["balding"]   ## hairstyles with a bare crown: no scalp cap in an open crown
+const GUARD_HELMET := [Color(0.42, 0.21, 0.11), Color(0.84, 0.78, 0.62), Color(0.17, 0.1, 0.06)]
+const FLAME_SHADER := preload("res://scenes/actors/flame_paint.gdshader")
+const HAT_HAIR_SHADER := preload("res://scenes/actors/hat_hair.gdshader")
+## Cosmetics: small extras, each in its own slot, worn with whatever else the player has
+## on. A skater's own choice (Skater.helmet_crest / eye_fx / dangler), else the team's (its
+## uniform's `crest` / `eye_fx` / `dangler`): cosmetic(). The Chupacabras wear one of each.
+##   CRESTS    on top of the helmet, one mesh per helmet (HELMETS order), hung on it like
+##             the face gear: "spines", a ridge of spines from the brow to the nape, in the
+##             trim color. Only on a helmet (not a hat, a mask or a goalie's mask).
+##   EYE_FX    the eyes: "red", glowing red: a glow on each of the body's own eyes
+##             (eye_glow.gdshader) and a small red light in front of the brow that reddens
+##             the face round them. On the head, not the helmet: anyone can have them,
+##             whatever they wear, and they stay when the helmet comes off.
+##   DANGLERS  hung under the visor, one mesh per helmet: "fangs", two long canines either
+##             side of the nose. A skater with no visor is given one to hang them from;
+##             with a cage or a full shield there is nowhere to hang them. (The slot a
+##             goalie's throat dangler will share, hung under the mask.)
+const CRESTS := {
+	"spines": [preload("res://assets/characters/crest_spines_a.res"), preload("res://assets/characters/crest_spines_b.res"),
+			preload("res://assets/characters/crest_spines_c.res")],
+}
+const DANGLERS := {
+	"fangs": {"color": Color(0.93, 0.9, 0.8), "meshes": [preload("res://assets/characters/dangler_fangs_a.res"),
+			preload("res://assets/characters/dangler_fangs_b.res"), preload("res://assets/characters/dangler_fangs_c.res")]},
+}
+const EYE_FX := {"red": Color(1.0, 0.06, 0.03)}
+const EYE_GLOW_SHADER := preload("res://scenes/actors/eye_glow.gdshader")
+const COWBOY_FELT := Color(0.72, 0.59, 0.4)
+const SHADES_MIRROR := [Color(0.98, 0.5, 0.1), Color(0.95, 0.25, 0.55)]   ## the sunglasses' lens: sunset orange turning pink
 ## Hood patterns (lucha_mask.gdshader: red accent 1, green accent 2, blue accent 3). New
 ## ones are painted over assets/characters/masks/lucha_uv_guide.png and added here.
 const LUCHA_PATTERNS := [
@@ -189,7 +338,34 @@ const SKATE_MESH := preload("res://assets/characters/skate.res")
 const GLOVE_MESH := preload("res://assets/characters/glove.res")   ## a right glove, origin at the wrist, sized for 1.8 m
 const CUFF_MESH := preload("res://assets/characters/glove_cuff.res")   ## the glove's cuff: rides the forearm, not the hand
 const FIST_MESH := preload("res://assets/characters/fist.res")     ## a bare right fist for fights, same axes as the glove
-const SKATE_LEN := 0.3         ## skate length for a 1.8 m body
+## The Old-Time Set (the Pro Shop's "gear_oldtime"): a wooden stick, leather gauntlets and
+## leather boots on tube frames, each laid out as the modern piece it replaces (the same
+## Blender scripts' build_old), plus playing bare-headed. A skater wears a piece when their
+## own style says OLD (Skater.glove_style / skate_style; goalies pad_style) or, with none
+## of their own, when their team's uniform has `kit` = OLD (Create Team); see old_time().
+const OLD := "old"
+## Leg wear (dress_legs): a player's own (Skater.sock_style / pants_style) or the team's.
+## Taped socks are anyone's; long pants are the Pro Shop's "gear_longpants" (a uniform's
+## `pants_style` puts a whole team in them). The old-time kit's wool socks and canvas pants
+## are OLD, like its other pieces.
+const SOCKS_TAPED := "taped"
+const PANTS_LONG := "long"
+const NO_HELMET := "none"         ## head gear (Skater.headgear / a uniform's `headgear`): nothing on the head
+const STICK_OLD := "oldtime"      ## Skater.stick_style for the wooden stick (kept out of STICK_STYLES: generated players don't roll it)
+const STICK_OLD_NAME := "Old-Time Wood"
+const STICK_OLD_MESH := preload("res://assets/characters/stick_old.res")
+const SKATE_OLD_MESH := preload("res://assets/characters/skate_old.res")   ## 0 the boot, 1 the tube frame and runner
+const GLOVE_OLD_MESH := preload("res://assets/characters/glove_old.res")
+const CUFF_OLD_MESH := preload("res://assets/characters/glove_cuff_old.res")
+## Leather (leather_material): the gauntlets' tan and darker palm (their bound rim is the
+## team's color); the skates' tan, their dark toe cap, heel and quarters, cream laces.
+const LEATHER_GLOVE := [Color(0.62, 0.42, 0.23), Color(0.4, 0.26, 0.14)]
+const LEATHER_SKATE := [Color(0.6, 0.4, 0.21), Color(0.25, 0.15, 0.08), Color(0.9, 0.87, 0.78)]
+const SKATE_LEN := 0.34        ## skate length for a 1.8 m body (the model's own: tools/blender/skate_gear.py)
+const GLOVE_SLEEVE := 0.05     ## how far short of the wrist the sleeve ends inside the glove's cuff (1.8 m body)
+const GLOVE_SLEEVE_OLD := 0.1  ## ... inside the old-time gauntlet's longer, narrower cone (it poked through nearer the wrist)
+const CANVAS_SLIM := Vector2(0.96, 0.9)   ## canvas pants against the padded shell: the hips' width, the thighs'
+const SKATE_SOCK := 0.25      ## where the sock ends on the skate model, above the ice: just over the boot's collar
 const DIGITS := preload("res://assets/characters/digits.png")   ## tools/build_digits.gd
 const DIGIT_FILL := 0.84        ## share of a digit-sheet cell's height the digit fills
 const LETTERS := preload("res://assets/characters/letters.png")   ## tools/build_letters.gd
@@ -198,15 +374,13 @@ const NUMBER_LOWER := 0.15       ## m the back number sits below where it used t
 const NAME_HEIGHT := 0.056       ## nameplate cap height for a 1.8 m body
 const NAME_GAP := 0.012          ## m between the nameplate and the top of the number
 const NAME_MAX_W := 0.24        ## widest nameplate (longer names are squeezed to fit): kept
-                                 ## off the back's sides, where the decal fades with the curve
+                                 ## off the back's sides, where the print fades with the curve
 const NICKNAME_MAX := 8          ## nicknames this short go on the back instead of the last name
 const NUMBER_HEIGHT := 0.24     ## back number height for a 1.8 m body
 const CREST_WIDTH := 0.34       ## jersey crest box width for a 1.8 m body (the widest a crest gets)
 const CREST_MAX_H := 0.9         ## ...and its height, as a share of that width
 const CREST_INK := 0.6           ## the logo's own (opaque) area, as a share of the box: crests of
                                  ## any shape come out the same visual size, inside the box
-const DECAL_NORMAL_FADE := 0.5   ## Decal.normal_fade for crests, names and numbers: fades only
-                                 ## where the jersey turns well away (sides), not on the chest's curve
 const STICK_PUCK := 0.16       ## where on the blade the puck sits, from the heel corner (m): mid-blade
 const GRIP_OFFSET := 0.065     ## wrist to the glove's knuckle line, for a 1.8 m body...
 const GRIP_PALM := 0.05        ## ...and in toward the palm to the middle of the fist
@@ -256,6 +430,8 @@ const HELMET_SPEED := 2.6
 const HELMET_LIFT := (2.25 - HELMET_FROM) / HELMET_SPEED   ## s: the hands come off the head, the helmet with the right one
 const HELMET_DROP := (2.78 - HELMET_FROM) / HELMET_SPEED   ## s: let go
 const HELMET_END := (3.15 - HELMET_FROM) / HELMET_SPEED    ## s: the clip fades out (about 1 s)
+var _print_mats: Array[ShaderMaterial] = []    ## this player's own copies of the uniform material (_print_materials)
+var _print_extra: Array[MeshInstance3D] = []   ## chest bulk under a jersey with no model of its own: printed on like it
 static var _numbers := {}         ## "number|fill|outline" -> ImageTexture
 static var _crest_ink := {}       ## crest texture path -> share of it that is opaque
 static var _names := {}           ## "NAME|fill|outline" -> [ImageTexture, cap height share]
@@ -274,6 +450,7 @@ func build(sk: Skater) -> void:
 	physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_OFF
 	_build_body()
 	_build_gear()
+	dress_legs()
 	_build_stick()
 	_build_markers()
 	# Simpler copies of every piece for when the player is small on screen (MeshLod).
@@ -327,17 +504,85 @@ static func without_visor(m: Mesh) -> Mesh:
 	return _no_visor[m]
 
 
-static func visor_material() -> StandardMaterial3D:
-	if _visor == null:
-		_visor = StandardMaterial3D.new()
-		_visor.albedo_color = Color(0.55, 0.65, 0.75, 0.35)
-		_visor.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-		_visor.roughness = 0.1
-		_visor.cull_mode = BaseMaterial3D.CULL_DISABLED
-		# After the brows (FaceRig draws them at priority 1, over the skin), so the
-		# shield tints them like the rest of the face behind it.
-		_visor.render_priority = 2
-	return _visor
+## The visor's material for a tint (VISOR_TINTS; "" = clear), or with `full` the full
+## shield's: the same, but a mirror is coated only in a band over the eyes (below
+## SHIELD_MIRROR_LOW, a height in the helmets' frame, it stays clear).
+static func visor_material(tint := "", full := false) -> Material:
+	if not VISOR_TINTS.has(tint):
+		tint = ""
+	if tint == "" and _visor != null:
+		return _visor
+	var spec: Dictionary = VISOR_TINTS[tint]
+	var key := "visor|%s|%s" % [tint, full and spec.has("mirror")]
+	if _materials.has(key):
+		return _materials[key]
+	var out: Material
+	if spec.has("mirror"):
+		var sm := ShaderMaterial.new()
+		sm.shader = VISOR_MIRROR_SHADER
+		sm.set_shader_parameter("face_color", spec.mirror[0])
+		sm.set_shader_parameter("edge_color", spec.mirror[1])
+		sm.set_shader_parameter("clear_below", SHIELD_MIRROR_LOW if full else -1000.0)
+		out = sm
+	else:
+		var m := StandardMaterial3D.new()
+		m.albedo_color = spec.color
+		m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		m.roughness = spec.rough
+		m.cull_mode = BaseMaterial3D.CULL_DISABLED
+		out = m
+	# After the brows (FaceRig draws them at priority 1, over the skin), so the
+	# shield tints them like the rest of the face behind it.
+	out.render_priority = 2
+	_materials[key] = out
+	if tint == "":
+		_visor = out as StandardMaterial3D
+	return out
+
+
+## The alien visor's lenses: a black mirror (visor_mirror.gdshader: near black face on, a
+## cold blue sheen at a glancing angle and where it would catch the lights).
+static func alien_lens_material() -> ShaderMaterial:
+	if not _materials.has("alien"):
+		var m := ShaderMaterial.new()
+		m.shader = VISOR_MIRROR_SHADER
+		m.set_shader_parameter("face_color", Color(0.012, 0.014, 0.02))
+		m.set_shader_parameter("edge_color", Color(0.2, 0.36, 0.7))
+		m.set_shader_parameter("clear_below", -1000.0)
+		m.render_priority = 2
+		_materials["alien"] = m
+	return _materials["alien"]
+
+
+## Glowing eyes' material (eye_glow.gdshader) in a color: drawn after a visor, so a dark
+## shield doesn't dim them.
+static func eye_glow_material(color: Color) -> ShaderMaterial:
+	var key := "eyeglow|" + color.to_html()
+	if not _materials.has(key):
+		var m := ShaderMaterial.new()
+		m.shader = EYE_GLOW_SHADER
+		m.set_shader_parameter("color", color)
+		m.render_priority = 3
+		_materials[key] = m
+	return _materials[key]
+
+
+static var _quad: QuadMesh
+
+## A 1 x 1 quad (the eye glows: sized by their node, turned to the camera by their shader).
+static func _unit_quad() -> QuadMesh:
+	if _quad == null:
+		_quad = QuadMesh.new()
+		_quad.size = Vector2.ONE
+	return _quad
+
+
+## The HELMETS index a gear_style stands for: a created player's own choice, or for a
+## roll (gear_roll) one of the first HELMET_ROLLS, as it always was.
+static func helmet_index(gear_style: int) -> int:
+	if gear_style >= GEAR_ROLL:
+		return gear_style % HELMET_ROLLS
+	return posmod(gear_style, HELMETS.size())
 
 
 ## [PackedScene, AnimationLibrary] for a body type built by tools/build_characters.gd.
@@ -358,6 +603,16 @@ func bone_pos(bone: String) -> Vector3:
 ## Where a bone is now, in world space (as last posed).
 func bone_world(bone: String) -> Vector3:
 	return skel.global_transform * skel.get_bone_global_pose(skel.find_bone(bone)).origin
+
+
+## Where a bone is drawn right now, in world space: what's attached to it follows the pose
+## the rig finished the frame with, which bone_world misses (a goalie's crouch: the
+## creators' close-ups were aimed over the goalie's head).
+func bone_shown(bone: String) -> Vector3:
+	for c in skel.get_children():
+		if c is BoneAttachment3D and (c as BoneAttachment3D).bone_name == bone:
+			return (c as BoneAttachment3D).global_position
+	return bone_world(bone)
 
 
 ## Mesh-based gear anchor from the build step ("head", "chest", "hips"): the AABB of
@@ -399,7 +654,7 @@ static func uniform_material(c: Dictionary, darken := 1.0) -> ShaderMaterial:
 	var design: String = c.get("design", "classic")
 	var accent: Color = c.get("number_outline", Color.BLACK)
 	var params := Teams.design_params(c)
-	var key := "%s|%s|%s|%s|%s|%s|%s|%s|%.2f" % [c.jersey.to_html(), c.trim.to_html(), c.pants.to_html(), c.gloves.to_html(), c.skates.to_html(), accent.to_html(), design, str(params) if c.has("design_params") else "", darken]
+	var key := "%s|%s|%s|%s|%s|%s|%s|%s|%s|%.2f" % [c.jersey.to_html(), c.trim.to_html(), c.pants.to_html(), c.gloves.to_html(), c.skates.to_html(), accent.to_html(), design, str(params) if c.has("design_params") else "", str(c.get("socks", "")), darken]
 	if _materials.has(key):
 		return _materials[key]
 	var m := ShaderMaterial.new()
@@ -428,6 +683,65 @@ static func glove_material(color: Color, trim := Color(0.94, 0.94, 0.92)) -> Sha
 		m.set_shader_parameter("palm", color.darkened(0.45).lerp(Color(0.3, 0.29, 0.28), 0.3))
 		_materials[key] = m
 	return _materials[key]
+
+
+## Leather for the Old-Time Set (glove.gdshader with `leather`): `shell` the piece's main
+## leather, `dark` its second leather (the model's G channel: palms, toe caps, worn inside
+## faces), `trim` its bindings or laces.
+static func leather_material(shell: Color, dark: Color, trim: Color) -> ShaderMaterial:
+	var key := "leather|%s|%s|%s" % [shell.to_html(), dark.to_html(), trim.to_html()]
+	if not _materials.has(key):
+		var m := ShaderMaterial.new()
+		m.shader = GLOVE_SHADER
+		m.set_shader_parameter("shell", shell)
+		m.set_shader_parameter("palm", dark)
+		m.set_shader_parameter("trim", trim)
+		m.set_shader_parameter("leather", 1.0)
+		_materials[key] = m
+	return _materials[key]
+
+
+## Whether this skater wears the old-time version of a piece: `style` is their own choice
+## for it (Skater.glove_style, skate_style or pad_style); with none, the team's kit decides.
+func old_time(style: String) -> bool:
+	return style == OLD or (style == "" and str(team_colors().get("kit", "")) == OLD)
+
+
+## What this skater wears on the legs, as uniform.gdshader's `pants_style`: 0 the padded
+## shell, 1 old-time canvas, 2 long pants. Their own choice (Skater.pants_style), else the
+## team's: its uniform's `pants_style`, or canvas with the old-time kit.
+func pants_kind() -> int:
+	var own := skater.pants_style
+	if own == PANTS_LONG or (own == "" and str(team_colors().get("pants_style", "")) == PANTS_LONG):
+		return 2
+	return 1 if old_time(own) else 0
+
+
+## ... and as its `sock_style`: 0 knit, 1 taped, 2 old-time wool.
+func sock_kind() -> int:
+	if skater.sock_style == SOCKS_TAPED:
+		return 1
+	return 2 if old_time(skater.sock_style) else 0
+
+
+## Puts this skater's pants and socks on everything of theirs the uniform is drawn on
+## (per instance: the team's material stays shared).
+func dress_legs() -> void:
+	var pants := float(pants_kind())
+	var socks := float(sock_kind())
+	for mi: MeshInstance3D in skel.find_children("*", "MeshInstance3D", true, false):
+		var m := mi.material_override as ShaderMaterial
+		if m != null and m.shader == UNIFORM_SHADER:
+			mi.set_instance_shader_parameter("pants_style", pants)
+			mi.set_instance_shader_parameter("sock_style", socks)
+
+
+## The gloves this skater wears: [hand mesh, cuff mesh, material] (a fight drops copies).
+func glove_gear() -> Array:
+	var c := team_colors()
+	if old_time(skater.glove_style):
+		return [GLOVE_OLD_MESH, CUFF_OLD_MESH, leather_material(LEATHER_GLOVE[0], LEATHER_GLOVE[1], c.jersey)]
+	return [GLOVE_MESH, CUFF_MESH, glove_material(c.gloves, c.trim)]
 
 
 ## Bare-skin material for a built body (its texture, tinted to `tone`).
@@ -462,27 +776,216 @@ static func skin_material(body_root: Node, tone: Color) -> ShaderMaterial:
 
 func _build_gear() -> void:
 	var c := team_colors()
-	var glove := glove_material(c.gloves, c.trim)
+	var glove: Material = glove_gear()[2]
 	var skin := MeshUtil.material(skater.skin_tone, 0.62)
 	# Chest and hip bulk wear the uniform material, so the yoke, stripes and fabric carry
 	# across them and the jersey layer (see _cloth_mesh).
 	var cloth := uniform_material(c)
 	# Offsets are relative to the body's own joints (rest pose: +Z forward, +X = left).
 	var head := anchor_box("head", "Head", Vector3(0.2, 0.25, 0.22) * hs)
-	if TEAM_MASKS.has(c.get("headgear", "")):
-		_build_team_mask(head, c)
+	var gear := head_gear(c)
+	if gear == NO_HELMET:
+		_build_bare_head(head)
+	elif HATS.has(gear):
+		_build_hat(head, c, gear)
+	elif gear != "":
+		_build_team_mask(head, c, gear)
 	else:
 		_build_helmet(head, c)
+	_add_eye_fx(head)
 	var chest := anchor_box("chest", "Spine2", Vector3(0.36, 0.2, 0.24) * hs)
 	_build_body_gear(c, cloth, glove, skin, chest)
+
+
+## A hat (HATS) in place of the helmet: fitted and worn as one (it is `_helmet`, and
+## `_mask` stays empty), so it comes off in a fight.
+func _build_hat(head: AABB, c: Dictionary, gear: String) -> void:
+	var spec: Dictionary = HATS[gear]
+	var fit: float = head.size.x / HELMET_HEAD_W
+	var on := Transform3D(Basis.from_scale(Vector3.ONE * fit),
+			Vector3(head.get_center().x, head.end.y - HELMET_CROWN * fit, head.get_center().z))
+	var hm := attach("Head", spec.mesh, null, on.origin, on.basis)
+	hm.material_override = null
+	hm.name = "Helmet"   # tools and views find the head gear by name
+	match gear:
+		"cowboy":
+			hm.set_surface_override_material(0, MeshUtil.material(COWBOY_FELT, 0.9))
+			hm.set_surface_override_material(1, MeshUtil.material(c.jersey, 0.7))
+		"stunt":
+			hm.set_surface_override_material(0, flame_material(c))
+			hm.set_surface_override_material(1, MeshUtil.material(Color(0.92, 0.92, 0.9), 0.35))
+			hm.set_surface_override_material(2, MeshUtil.material(Color(0.05, 0.05, 0.06), 0.6))
+		"watch", "beanie":
+			hm.set_surface_override_material(0, MeshUtil.material(c.jersey, 0.97))
+			hm.set_surface_override_material(1, MeshUtil.material(c.trim, 0.97))
+		"leather":
+			hm.set_surface_override_material(0, MeshUtil.material(LEATHER_HELMET[0], 0.55))
+			hm.set_surface_override_material(1, MeshUtil.material(LEATHER_HELMET[1], 0.5))
+			hm.set_surface_override_material(2, MeshUtil.material(LEATHER_HELMET[2], 0.7))
+		"guard":
+			hm.set_surface_override_material(0, MeshUtil.material(GUARD_HELMET[0], 0.5))
+			hm.set_surface_override_material(1, MeshUtil.material(GUARD_HELMET[1], 0.95))
+			hm.set_surface_override_material(2, MeshUtil.material(GUARD_HELMET[2], 0.55))
+		"golf":
+			hm.set_surface_override_material(0, MeshUtil.material(c.jersey, 0.85))
+			hm.set_surface_override_material(1, brim_material(c.trim))
+			hm.set_surface_override_material(2, MeshUtil.material(c.trim, 0.7))
+		_:
+			hm.set_surface_override_material(0, MeshUtil.material(c.jersey, 0.85))
+			hm.set_surface_override_material(1, MeshUtil.material(c.trim, 0.8))
+	if spec.has("eyes"):
+		# The sunglasses: on this body's eyes (the masks' fit), but hung on the hat.
+		var sh := MeshInstance3D.new()
+		sh.name = "Shades"
+		sh.mesh = spec.eyes
+		hm.add_child(sh)
+		sh.transform = on.affine_inverse() * _eye_fit(head)
+		sh.set_surface_override_material(0, MeshUtil.material(Color(0.04, 0.04, 0.045), 0.3))
+		sh.set_surface_override_material(1, shades_material())
+	_helmet = hm
+	_helmet_rest = hm.transform
+	_add_hair(head)
+	# Under the hat: not the cut pressed flat for a helmet (and its scalp cap), but a copy
+	# of the whole hairstyle that ends at the hat's edge. Off comes the hat, and the
+	# hairstyle itself shows.
+	if spec.get("crown", false):
+		# An open crown (the head guard's): there the pressed-flat cut and the scalp cap
+		# stay, drawn only over the hat's edge, so they show between the straps and not
+		# below the band, where the whole hairstyle does.
+		for h in _hair_helm.duplicate():
+			var mi := h as MeshInstance3D
+			if mi.name == "HairCap" and skater.hair_style in BALD_ON_TOP:
+				# (the cap would give a bald crown a full head of hair)
+				_hair_helm.erase(h)
+				h.queue_free()
+			elif mi.name == "HairCap":
+				mi.material_override = crown_cap_material(skater.hair_color, spec.edge)
+			else:
+				mi.material_override = hat_hair_material(skater.hair_style, skater.hair_color, spec.edge, HAT_CLOSED, true)
+	else:
+		for h in _hair_helm:
+			h.queue_free()
+		_hair_helm.clear()
+	var hair := skel.find_child("Hair_" + skater.hair_style, true, false) as MeshInstance3D
+	if hair != null and skater.hair_style != "":
+		if not (hair in _hair_full):
+			_hair_full.append(hair)
+		var under := hair.duplicate() as MeshInstance3D
+		under.name = "HairHat"
+		under.material_override = hat_hair_material(skater.hair_style, skater.hair_color, spec.edge, spec.get("open", HAT_CLOSED))
+		hair.get_parent().add_child(under)
+		_hair_helm.append(under)
+	_show_hair(true)
+
+
+## Hair that ends at a hat's edge (hat_hair.gdshader): hair_material's look, with `edge`
+## (HATS) turned into a plane in the hair model's space, and `open` into a second one over
+## which the hair shows again (a hat open on top). Hair models have their origin on the
+## crown and are HELMET_HEAD_W wide to the unit, whatever the body.
+## `above`: only the hair over the edge (the pressed-flat cut in an open crown).
+static func hat_hair_material(id: String, color: Color, edge: Vector2, open := HAT_CLOSED, above := false) -> ShaderMaterial:
+	var key := "hathair|%s|%s|%s|%s|%s" % [id, color.to_html(), edge, open, above]
+	if not _materials.has(key):
+		var base := hair_material(id, color)
+		var m := ShaderMaterial.new()
+		m.shader = HAT_HAIR_SHADER
+		m.set_shader_parameter("tint", base.albedo_color)
+		if base.albedo_texture != null:
+			m.set_shader_parameter("strands", base.albedo_texture)
+			m.set_shader_parameter("has_strands", true)
+		m.set_shader_parameter("clip_n", Vector3(0.0, 1.0, -edge.y))
+		m.set_shader_parameter("clip_d", (edge.x - HELMET_CROWN) / HELMET_HEAD_W)
+		m.set_shader_parameter("open_n", Vector3(0.0, 1.0, -open.y))
+		m.set_shader_parameter("open_d", (open.x - HELMET_CROWN) / HELMET_HEAD_W)
+		m.set_shader_parameter("above", above)
+		_materials[key] = m
+	return _materials[key]
+
+
+## The scalp cap where it shows in an open crown: _cap_material's color, drawn only over
+## the hat's `edge` (the cap is in the head gear's own frame, in meters).
+static func crown_cap_material(color: Color, edge: Vector2) -> ShaderMaterial:
+	var key := "crowncap|%s|%s" % [color.to_html(), edge]
+	if not _materials.has(key):
+		var m := ShaderMaterial.new()
+		m.shader = HAT_HAIR_SHADER
+		m.set_shader_parameter("tint", _cap_material(color).albedo_color)
+		m.set_shader_parameter("clip_n", Vector3(0.0, 1.0, -edge.y))
+		m.set_shader_parameter("clip_d", edge.x)
+		m.set_shader_parameter("above", true)
+		_materials[key] = m
+	return _materials[key]
+
+
+## The golf visor's bill: see-through plastic tinted in a team's trim color.
+static func brim_material(color: Color) -> StandardMaterial3D:
+	var key := "brim|%s" % color.to_html()
+	if not _materials.has(key):
+		var m := MeshUtil.material(Color(color, 0.7), 0.12)
+		m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		m.render_priority = 2   # (after the brows, as the helmet's visor is)
+		_materials[key] = m
+	return _materials[key]
+
+
+## Flame paint for a team (flame_paint.gdshader): the helmet color for the shell, flames
+## in the trim color (the jersey's, if the trim is too close to the shell to show), their
+## cores and pinstripe in a pale version of the number outline.
+static func flame_material(c: Dictionary) -> ShaderMaterial:
+	var base: Color = c.helmet
+	var flame: Color = c.trim
+	if Vector3(flame.r - base.r, flame.g - base.g, flame.b - base.b).length() < 0.33:
+		flame = c.jersey
+	var core: Color = (c.get("number_outline", Color.WHITE) as Color).lerp(Color(0.97, 0.97, 0.94), 0.45)
+	if Vector3(core.r - flame.r, core.g - flame.g, core.b - flame.b).length() < 0.3:
+		core = Color(0.97, 0.97, 0.94) if flame.get_luminance() < 0.6 else Color(0.06, 0.06, 0.07)
+	var key := "flame|%s|%s|%s" % [base.to_html(), flame.to_html(), core.to_html()]
+	if not _materials.has(key):
+		var m := ShaderMaterial.new()
+		m.shader = FLAME_SHADER
+		m.set_shader_parameter("base_color", base)
+		m.set_shader_parameter("flame_color", flame)
+		m.set_shader_parameter("core_color", core)
+		_materials[key] = m
+	return _materials[key]
+
+
+## The sunglasses' mirrored lens (visor_mirror.gdshader, in SHADES_MIRROR's colors).
+static func shades_material() -> ShaderMaterial:
+	if not _materials.has("shades"):
+		var m := ShaderMaterial.new()
+		m.shader = VISOR_MIRROR_SHADER
+		m.set_shader_parameter("face_color", SHADES_MIRROR[0])
+		m.set_shader_parameter("edge_color", SHADES_MIRROR[1])
+		m.set_shader_parameter("clear_below", -1000.0)
+		m.render_priority = 2
+		_materials["shades"] = m
+	return _materials["shades"]
+
+
+## No head gear at all (NO_HELMET, the Old-Time Set): the whole head of hair, as when a
+## helmet comes off in a fight. Goalies too.
+func _build_bare_head(head: AABB) -> void:
+	_mask = NO_HELMET
+	_add_hair(head)
 
 
 ## Helmet model (tools/build_gear.gd): sized to the head's width, shell over the crown.
 func _build_helmet(head: AABB, c: Dictionary) -> void:
 	var helmet := MeshUtil.material(c.helmet, 0.35)
 	var dark := MeshUtil.material(Color(0.06, 0.06, 0.07), 0.4)
-	var hspec: Dictionary = HELMETS[skater.gear_style % HELMETS.size()]
-	var hmesh: Mesh = hspec.mesh if skater.visor else without_visor(hspec.mesh)
+	var hi := helmet_index(skater.gear_style)
+	var hspec: Dictionary = HELMETS[hi]
+	# A cage or a full shield takes the visor's place.
+	# (their own, else the team's: the Grays' alien visors)
+	var face := skater.face_gear if FACE_GEAR.has(skater.face_gear) else str(c.get("face", ""))
+	if not FACE_GEAR.has(face):
+		face = ""
+	var crest := cosmetic("crest")
+	var dangler := cosmetic("dangler") if face == "" else ""   # (it hangs from the visor)
+	var visor := (skater.visor or DANGLERS.has(dangler)) and face == ""
+	var tint := skater.visor_tint if skater.visor_tint != "" else str(c.get("visor_tint", ""))   # (their own, else the team's)
+	var hmesh: Mesh = hspec.mesh if visor else without_visor(hspec.mesh)
 	var fit: float = head.size.x / HELMET_HEAD_W
 	var hat := Vector3(head.get_center().x, head.end.y - HELMET_CROWN * fit, head.get_center().z)
 	var hm := attach("Head", hmesh, null, hat, Basis.from_scale(Vector3.ONE * fit))
@@ -491,18 +994,91 @@ func _build_helmet(head: AABB, c: Dictionary) -> void:
 	hm.set_surface_override_material(0, helmet)
 	hm.set_surface_override_material(1, MeshUtil.material(Color(0.92, 0.92, 0.9), 0.4))
 	hm.set_surface_override_material(2, dark)
-	if skater.visor:
-		hm.set_surface_override_material(3, visor_material())
+	if visor:
+		hm.set_surface_override_material(3, visor_material(tint))
 		hm.set_surface_override_material(4, MeshUtil.material(Color(0.08, 0.08, 0.09), 0.35))
+	if face != "":
+		# In the helmet's own frame, on the helmet: it comes off with it in a fight.
+		var fg := MeshInstance3D.new()
+		fg.name = "FaceGear"
+		fg.mesh = FACE_GEAR[face][hi]
+		hm.add_child(fg)
+		match face:
+			"shield":
+				fg.set_surface_override_material(0, visor_material(tint, true))
+			"alien":
+				fg.set_surface_override_material(0, alien_lens_material())
+			_:
+				fg.set_surface_override_material(0, MeshUtil.material(Color(0.8, 0.82, 0.85), 0.28, 0.85))   # chromed wire
+		fg.set_surface_override_material(1, dark)
+	# Cosmetics on the helmet (they come off with it too).
+	if CRESTS.has(crest):
+		var cr := MeshInstance3D.new()
+		cr.name = "Crest"
+		cr.mesh = CRESTS[crest][hi]
+		hm.add_child(cr)
+		cr.material_override = MeshUtil.material(c.trim, 0.5)
+	if DANGLERS.has(dangler):
+		var dg := MeshInstance3D.new()
+		dg.name = "Dangler"
+		dg.mesh = DANGLERS[dangler].meshes[hi]
+		hm.add_child(dg)
+		dg.material_override = MeshUtil.material(DANGLERS[dangler].color, 0.35)
 	_helmet = hm
 	_helmet_rest = hm.transform
 	_add_hair(head)
 
 
+## What a skater wears in a cosmetic slot ("crest", "eye_fx" or "dangler"; "" = nothing):
+## their own, else the team's.
+func cosmetic(slot: String) -> String:
+	var own: String = {"crest": skater.helmet_crest, "eye_fx": skater.eye_fx, "dangler": skater.dangler}.get(slot, "")
+	return own if own != "" else str(team_colors().get(slot, ""))
+
+
+## Glowing eyes (EYE_FX): the glows and their light, on the head at this body's own eyes
+## (their box in the skeleton's rest space: two balls side by side, each as wide as the
+## box is tall). Goalies too.
+func _add_eye_fx(head: AABB) -> void:
+	var fx := cosmetic("eye_fx")
+	if not EYE_FX.has(fx):
+		return
+	var fit: float = head.size.x / HELMET_HEAD_W
+	var eyes := skel.get_node_or_null("Eyes") as MeshInstance3D
+	var box := eyes.mesh.get_aabb() if eyes != null else AABB(
+			Vector3(head.get_center().x - 0.05 * fit, head.end.y - 0.132 * fit, head.get_center().z + 0.068 * fit), Vector3(0.1, 0.035, 0.02) * fit)
+	var front := box.end.z + 0.004 * fit
+	for side: float in [-1.0, 1.0]:
+		var glow := MeshInstance3D.new()
+		glow.name = "EyeGlowL" if side > 0.0 else "EyeGlowR"   # (+X is the body's left)
+		glow.mesh = _unit_quad()
+		glow.material_override = eye_glow_material(EYE_FX[fx])
+		glow.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		attach_node("Head", glow, Transform3D(Basis.from_scale(Vector3(0.095, 0.07, 1.0) * fit),
+				Vector3(box.get_center().x + side * (box.size.x - box.size.y) * 0.5, box.get_center().y, front)))
+	# What they light: the brow, the sockets, the nose and cheeks, the inside of a visor.
+	var lamp := OmniLight3D.new()
+	lamp.name = "EyeLight"
+	lamp.light_color = (EYE_FX[fx] as Color).lerp(Color(1.0, 0.25, 0.1), 0.2)
+	lamp.light_energy = 2.3
+	lamp.omni_range = 0.115 * fit   # (the face and the brow's underside: not the helmet's vents, which lit up from inside)
+	lamp.omni_attenuation = 1.3
+	lamp.light_specular = 0.3
+	lamp.shadow_enabled = false
+	attach_node("Head", lamp, Transform3D(Basis.IDENTITY, Vector3(box.get_center().x, box.get_center().y - 0.004 * fit, front + 0.016 * fit)))
+
+
+## The head gear worn in place of a helmet (a TEAM_MASKS or HATS key, or NO_HELMET for a
+## bare head; "" = none, a helmet): the player's own (Create Player), else the team's.
+func head_gear(c: Dictionary) -> String:
+	var gear: String = skater.headgear if skater.headgear != "" else str(c.get("headgear", ""))
+	return gear if TEAM_MASKS.has(gear) or HATS.has(gear) or gear == NO_HELMET else ""
+
+
 ## A team mask (TEAM_MASKS) in place of the helmet, set on the eyes. Luchador hoods cover
 ## the hair and follow the jaw; the vintage face mask leaves the hair as it is.
-func _build_team_mask(head: AABB, c: Dictionary) -> void:
-	_mask = c.headgear
+func _build_team_mask(head: AABB, c: Dictionary, gear: String) -> void:
+	_mask = gear
 	var h := absi(("%s %s %d" % [skater.first_name, skater.last_name, skater.number]).hash())
 	var by_body: Dictionary = TEAM_MASKS[_mask]
 	var meshes: Array = by_body.get(skater.body_type, by_body.male)
@@ -561,7 +1137,7 @@ func _build_body_gear(c: Dictionary, cloth: Material, glove: Material, skin: Mat
 	# Bodies with a modelled jersey (tools/blender/build_jersey.py) already carry the
 	# shoulder and chest bulk in its shape; the pad ball would poke through it.
 	if not body.get_meta("jersey", false):
-		attach("Spine2", _cloth_mesh(_sphere(), chest_at, Basis.from_scale(cr)), cloth, chest_at, Basis.from_scale(cr))
+		_print_extra.append(attach("Spine2", _cloth_mesh(_sphere(), chest_at, Basis.from_scale(cr)), cloth, chest_at, Basis.from_scale(cr)))
 	# Hockey pants: a slim band around the pelvis plus a padded shell on each thigh that
 	# moves with the leg (one big pelvis ball stuck out behind like a diaper when the
 	# skater bent forward).
@@ -570,6 +1146,10 @@ func _build_body_gear(c: Dictionary, cloth: Material, glove: Material, skin: Mat
 	# The pants pads fill out with the build like the body under them (BodyBuild.GIRTH).
 	var bh := 1.0 + float(BodyBuild.GIRTH.Hips) * body_size.y
 	var bt := 1.0 + float(BodyBuild.GIRTH.LeftUpLeg) * body_size.y
+	# Old-time canvas pants carry less padding than the shell.
+	if pants_kind() == 1:
+		bh *= CANVAS_SLIM.x
+		bt *= CANVAS_SLIM.y
 	var hips_b := Basis.from_scale(Vector3(maxf(hips.size.x * 0.53, 0.17 * hs) * bh, 0.1 * hs, maxf(hips.size.z * 0.46, 0.115 * hs) * bh))
 	attach("Hips", _cloth_mesh(_sphere(), hips_at, hips_b), cloth, hips_at, hips_b)
 	for side in ["Left", "Right"]:
@@ -586,14 +1166,21 @@ func _build_body_gear(c: Dictionary, cloth: Material, glove: Material, skin: Mat
 		var arm_dir := (hand - bone_pos(side + "ForeArm")).normalized()
 		var lf := limb_frame(side + "ForeArm", side + "Hand")
 		var gb := Basis(-lf.z, lf.y, lf.x) if side == "Right" else Basis(-lf.z, lf.y, -lf.x)
-		_gloves.append(attach(side + "Hand", GLOVE_MESH, glove, hand + arm_dir * 0.01 * hs, gb * Basis.from_scale(Vector3.ONE * hs)))
+		var gg := glove_gear()
+		_gloves.append(attach(side + "Hand", gg[0], glove, hand + arm_dir * 0.01 * hs, gb * Basis.from_scale(Vector3.ONE * hs)))
 		# The cuff hangs on the forearm, so it stays on the arm while the hand turns.
-		_cuffs.append(attach(side + "ForeArm", CUFF_MESH, glove, hand + arm_dir * 0.01 * hs, gb * Basis.from_scale(Vector3.ONE * hs)))
+		_cuffs.append(attach(side + "ForeArm", gg[1], glove, hand + arm_dir * 0.01 * hs, gb * Basis.from_scale(Vector3.ONE * hs)))
 		var fist := attach(side + "Hand", FIST_MESH, skin, hand + arm_dir * 0.01 * hs, gb * Basis.from_scale(Vector3.ONE * hs))
 		fist.visible = false
 		_fists.append(fist)
 	# The body's own fingers would poke out of both: the rig folds them away.
 	rig.hide_fingers = true
+	# The glove's flared cuff takes the end of the sleeve, which is wider than the cuff is
+	# at the wrist: while gloves are worn the sleeve stops inside the cuff (uniform.gdshader
+	# `sleeve_end`, a position along the arm: 1 at the wrist).
+	var arm := bone_pos("LeftArm").distance_to(bone_pos("LeftForeArm")) + bone_pos("LeftForeArm").distance_to(bone_pos("LeftHand"))
+	for mi: MeshInstance3D in skel.find_children("Outfit_*", "MeshInstance3D", false, false):
+		mi.set_instance_shader_parameter("sleeve_end", 1.0 - (GLOVE_SLEEVE_OLD if old_time(skater.glove_style) else GLOVE_SLEEVE) * hs / arm)
 	add_skates(c)
 	_add_number(cc + Vector3(0, (-0.04 - number_drop(c)) * hs, -cr.z), NUMBER_HEIGHT * hs)
 	# Under a modelled jersey's laced V collar: lower and a little smaller, so the crest
@@ -608,16 +1195,17 @@ func _add_hair(head: AABB, facial := true) -> void:
 	var top := Vector3(head.get_center().x, head.end.y, head.get_center().z)
 	var b := Basis.from_scale(Vector3.ONE * head.size.x)
 	for id: String in [skater.hair_style, skater.facial_hair if facial else ""]:
-		var path := HAIR_DIR + id + ".res"
-		if id == "" or not ResourceLoader.exists(path):
+		var path := hair_mesh_path(id, skater.body_type)
+		if id == "" or path == "":
 			continue
 		var mi := attach("Head", load(path), hair_material(id, skater.hair_color), top, b)
 		mi.name = "Hair_" + id
 		if id == skater.facial_hair and face != null:
 			face.follow_jaw(mi)
-		# Hairstyles have a flattened copy for under the helmet (facial hair doesn't).
-		var helm_path := HAIR_DIR + id + "_helm.res"
-		if ResourceLoader.exists(helm_path):
+		# Hairstyles have a flattened copy for under the helmet (facial hair doesn't; a
+		# bare head never needs it).
+		var helm_path := hair_mesh_path(id, skater.body_type, true)
+		if helm_path != "" and _mask != NO_HELMET:
 			var hm := attach("Head", load(helm_path), hair_material(id, skater.hair_color), top, b)
 			hm.name = "HairHelm_" + id
 			_hair_full.append(mi)
@@ -750,10 +1338,50 @@ func _fall_helmet(delta: float) -> void:
 	_helmet.global_transform = xf
 
 
-## The PUBG strand textures are white strands on black, which reads as dark sketch lines
-## on an opaque mesh. Squeeze them into a narrow light band (gaps at HAIR_FLAT_LOW, strands
-## at 1.0) so the hair is a near-flat color with a faint strand grain, like the rest of
-## the character. Mipmapped so the grain doesn't shimmer at a distance. Cached per file.
+## The mesh for a style on a body ("" if there is none): the body's own fit, else the male
+## one. `helm`: the version pressed under a helmet.
+static func hair_mesh_path(id: String, body_type: String, helm := false) -> String:
+	if id == "":
+		return ""
+	var tail := "_helm.res" if helm else ".res"
+	if body_type == "female" and ResourceLoader.exists(HAIR_DIR + id + "_female" + tail):
+		return HAIR_DIR + id + "_female" + tail
+	return HAIR_DIR + id + tail if ResourceLoader.exists(HAIR_DIR + id + tail) else ""
+
+
+## Whether a body type wears a hairstyle (some are women's or men's only).
+static func hair_fits(id: String, body_type: String) -> bool:
+	return not (id in HAIR_MEN if body_type == "female" else id in HAIR_WOMEN)
+
+
+## A hairstyle for `roll` (any integer, e.g. rng.randi()), by HAIR_ODDS_*.
+static func pick_hair(roll: int, body_type: String, dark_skin: bool) -> String:
+	var odds: Dictionary = HAIR_ODDS_WOMEN if body_type == "female" else HAIR_ODDS_MEN
+	var total := 0.0
+	for id: String in odds:
+		total += float(odds[id]) * (float(HAIR_DARK_LEAN.get(id, 1.0)) if dark_skin else 1.0)
+	var x := float(posmod(roll, 100003)) / 100003.0 * total
+	for id: String in odds:
+		x -= float(odds[id]) * (float(HAIR_DARK_LEAN.get(id, 1.0)) if dark_skin else 1.0)
+		if x < 0.0:
+			return id
+	return "messy"
+
+
+## Facial hair for `r` (0..1), by FACIAL_ODDS ("" = clean shaven).
+static func pick_facial(r: float) -> String:
+	for f: Array in FACIAL_ODDS:
+		r -= float(f[1])
+		if r < 0.0:
+			return f[0]
+	return ""
+
+
+## The strand grain (strands.png, made by tools/blender/hair_gear.py) is white strands on
+## black, which reads as dark sketch lines on an opaque mesh. Squeeze it into a narrow light
+## band (gaps at HAIR_FLAT_LOW, strands at 1.0) so the hair is a near-flat color with a
+## faint strand grain, like the rest of the character. Mipmapped so the grain doesn't
+## shimmer at a distance. Cached per file.
 const HAIR_FLAT_LOW := 0.86
 const HAIR_FLAT_MEAN := 0.93
 static var _flat_hair: Dictionary = {}
@@ -777,11 +1405,13 @@ static func _flat_hair_texture(path: String) -> Texture2D:
 	return t
 
 
-static func hair_material(id: String, color: Color) -> StandardMaterial3D:
-	var key := "hair|%s|%s" % [id, color.to_html()]
+## Every style shares one material per color: the strand grain along each lock (the meshes'
+## UVs) and the shading in their vertex colors (dark volume, lighter locks).
+static func hair_material(_id: String, color: Color) -> StandardMaterial3D:
+	var key := "hair|" + color.to_html()
 	if not _materials.has(key):
 		var m := StandardMaterial3D.new()
-		var tex := HAIR_DIR + id + ".png"
+		var tex := HAIR_DIR + "strands.png"
 		if ResourceLoader.exists(tex):
 			m.albedo_texture = _flat_hair_texture(tex)
 			# The flattened strands average about HAIR_FLAT_MEAN: lift the tint to land on `color`.
@@ -789,6 +1419,7 @@ static func hair_material(id: String, color: Color) -> StandardMaterial3D:
 			m.albedo_color = Color(minf(color.r * k, 1.0), minf(color.g * k, 1.0), minf(color.b * k, 1.0))
 		else:
 			m.albedo_color = color
+		m.vertex_color_use_as_albedo = true
 		m.roughness = 0.7
 		m.cull_mode = BaseMaterial3D.CULL_DISABLED
 		_materials[key] = m
@@ -799,20 +1430,17 @@ static func hair_material(id: String, color: Color) -> StandardMaterial3D:
 ## hair_color, eye_color}. Darker skin tones lean to darker hair and brown eyes; some
 ## players go gray.
 static func random_look(rng: RandomNumberGenerator, body_type: String, skin: Color) -> Dictionary:
-	var styles: Array = HAIR_STYLES.duplicate()
 	var facial := ""
-	if body_type == "female":
-		styles.append_array(["braid", "braid", "shaggy", "mop"])
-	else:
-		var r := rng.randf()
-		facial = "beard" if r < 0.2 else ("chinstrap" if r < 0.3 else ("moustache" if r < 0.5 else ""))
+	if body_type != "female":
+		facial = pick_facial(rng.randf())
+	var dark := skin.get_luminance() < 0.45
 	var colors := HAIR_COLORS.size() - 1   # gray is its own roll
-	if skin.get_luminance() < 0.45:
+	if dark:
 		colors = 2
 	var color := HAIR_COLORS[rng.randi() % colors]
 	if rng.randf() < 0.08:
 		color = HAIR_COLORS[HAIR_COLORS.size() - 1]
-	var style: String = styles[rng.randi() % styles.size()]
+	var style := pick_hair(rng.randi(), body_type, dark)
 	# Eye color from a side generator seeded off this one, so adding it didn't change
 	# anyone's existing looks (or the draws callers make after this).
 	var er := RandomNumberGenerator.new()
@@ -866,8 +1494,12 @@ func set_fight_mode(on: bool) -> void:
 ## ahead of the ankle.
 func add_skates(c: Dictionary) -> void:
 	# The boot uses the glove shader (tools/blender/skate_gear.py bakes its shading): the
-	# skate color, greyer side panels, the holder, laces and tongue felt in white.
-	var boot := glove_material(c.skates)
+	# skate color, greyer side panels, the holder, laces and tongue felt in white. The
+	# old-time skate (the same frame and size): tan leather with a dark toe cap and heel,
+	# on a steel tube frame.
+	var old := old_time(skater.skate_style)
+	var model: Mesh = SKATE_OLD_MESH if old else SKATE_MESH
+	var boot := leather_material(LEATHER_SKATE[0], LEATHER_SKATE[1], LEATHER_SKATE[2]) if old else glove_material(c.skates)
 	var steel := MeshUtil.material(Color(0.8, 0.82, 0.85), 0.25)
 	var k: float = SKATE_LEN * hs / SKATE_MESH.get_aabb().size.z
 	for side in ["Left", "Right"]:
@@ -878,7 +1510,7 @@ func add_skates(c: Dictionary) -> void:
 		# of pushing the leg out through its front.
 		var sk := MeshInstance3D.new()
 		sk.name = side + "Skate"
-		sk.mesh = _skate_mesh(xf)
+		sk.mesh = _skate_mesh(model, xf)
 		var skin := Skin.new()
 		for b in [side + "Foot", side + "Leg"]:
 			skin.add_named_bind(b, skel.get_bone_global_rest(skel.find_bone(b)).affine_inverse())
@@ -887,6 +1519,15 @@ func add_skates(c: Dictionary) -> void:
 		sk.skeleton = NodePath("..")
 		sk.set_surface_override_material(0, boot)
 		sk.set_surface_override_material(1, steel)
+	# The boot's shaft is as slim as an ankle, so the padded sock can't go down inside it:
+	# it ends over the boot's collar, and the foot under the boot is not drawn
+	# (uniform.gdshader `sock_end`, a position along the leg: 1 at the ankle joint).
+	var ankle := bone_pos("LeftFoot")
+	var knee := bone_pos("LeftLeg")
+	var leg := bone_pos("LeftUpLeg").distance_to(knee) + knee.distance_to(ankle)
+	var sock_end := 1.0 - (SKATE_SOCK * k - SKATE_LIFT - ankle.y) / leg
+	for mi: MeshInstance3D in skel.find_children("Outfit_*", "MeshInstance3D", false, false):
+		mi.set_instance_shader_parameter("sock_end", sock_end)
 
 
 ## Upper boot: where the skate starts following the shin, and where it follows it fully
@@ -895,15 +1536,15 @@ const SKATE_FLEX := Vector2(0.13, 0.22)
 static var _skate_meshes := {}
 
 
-## The skate model placed by `xf` (skeleton space), weighted to two binds: 0 the foot,
-## 1 the shin, blending up the boot's shaft. Shared per placement.
-static func _skate_mesh(xf: Transform3D) -> ArrayMesh:
-	var key := str(xf)
+## A skate model placed by `xf` (skeleton space), weighted to two binds: 0 the foot,
+## 1 the shin, blending up the boot's shaft. Shared per model and placement.
+static func _skate_mesh(model: Mesh, xf: Transform3D) -> ArrayMesh:
+	var key := model.resource_path + str(xf)
 	if _skate_meshes.has(key):
 		return _skate_meshes[key]
 	var out := ArrayMesh.new()
-	for s in SKATE_MESH.get_surface_count():
-		var arr := SKATE_MESH.surface_get_arrays(s)
+	for s in model.get_surface_count():
+		var arr := model.surface_get_arrays(s)
 		var v: PackedVector3Array = arr[Mesh.ARRAY_VERTEX]
 		var nr: PackedVector3Array = arr[Mesh.ARRAY_NORMAL]
 		var bones := PackedInt32Array()
@@ -928,22 +1569,20 @@ static func _skate_mesh(xf: Transform3D) -> ArrayMesh:
 	return out
 
 
-## Back number: a Decal projected forward onto the jersey from just behind `at` (a point
-## on the back's surface, T-pose), so the digits wrap with the jersey and the pads under
-## it instead of floating on a flat card. Surfaces facing away (the chest) are faded
-## out by normal_fade.
 ## Yoke designs carry the back number a little lower, clear of the yoke.
 static func number_drop(c: Dictionary) -> float:
 	var d := Teams.design_params(c)
 	return 0.06 if float(d.get("yoke_r", 0.0)) > 0.0 else 0.0
 
 
+## Back number, printed on the jersey (_print) around `at` (a point on the back, T-pose),
+## and the nameplate above it.
 func _add_number(at: Vector3, height: float) -> void:
 	var c := team_colors()
 	at.y -= NUMBER_LOWER * hs
 	var tex := number_texture(skater.number, c.number, c.number_outline)
 	var h := height / DIGIT_FILL
-	_back_decal(tex, Vector2(h * tex.get_width() / float(tex.get_height()), h), at)
+	_print("number", tex, Vector2(h * tex.get_width() / float(tex.get_height()), h), at)
 	# The nameplate above it, in the number's colors.
 	var nm := back_name(skater)
 	if nm == "":
@@ -954,22 +1593,45 @@ func _add_number(at: Vector3, height: float) -> void:
 	var nw := nh * ntex.get_width() / float(ntex.get_height())
 	nw = minf(nw, NAME_MAX_W * hs)                          # long names: squeezed
 	var name_at := at + Vector3(0, (height * 0.5 + NAME_GAP * hs + NAME_HEIGHT * hs * 0.5), 0)
-	_back_decal(ntex, Vector2(nw, nh), name_at)
+	_print("name", ntex, Vector2(nw, nh), name_at)
 
 
-## A Decal on the back: projected forward onto the jersey from just behind `at` (T-pose),
-## `size` (width, height) in meters.
-func _back_decal(tex: Texture2D, size: Vector2, at: Vector3) -> void:
-	var d := Decal.new()
-	d.texture_albedo = tex
-	d.size = Vector3(size.x, 0.36 * hs, size.y)
-	d.normal_fade = DECAL_NORMAL_FADE
-	d.upper_fade = 0.05
-	d.lower_fade = 0.05
-	# Projects along its -Y: here body +Z (into the back). Texture right = the
-	# character's right (body -X), texture down = body down.
-	var b := Basis(Vector3(-1, 0, 0), Vector3(0, 0, -1), Vector3(0, -1, 0))
-	attach_node("Spine2", d, Transform3D(b, at + Vector3(0, 0, 0.04 * hs)))
+## Prints `tex` on this player's jersey: "crest" on the chest, "number" or "name" on the
+## back, `size` (width, height) in meters around `at` (a point on the body in the T-pose:
+## its x and y are what count). uniform.gdshader draws it into the cloth, in the cloth's
+## rest space, so it bends and folds with the jersey and stays off whatever passes in
+## front of it. (These were Decals once: a Decal paints everything inside its box, so the
+## crest showed on the arms, gloves and sticks that crossed the chest.)
+func _print(slot: String, tex: Texture2D, size: Vector2, at: Vector3) -> void:
+	var neck := bone_pos("Neck")
+	var k := 0.6 / maxf(neck.y - bone_pos("Hips").y, 0.01)   # rest space, as tools/build_characters.gd REST_TORSO
+	# The build widens the trunk and what is printed on it: narrower in rest space by as
+	# much, so it comes out `size` wide and in proportion on every build.
+	var wide := 1.0 + (float(BodyBuild.GIRTH.Spine1) + float(BodyBuild.GIRTH.Spine2)) * 0.5 * body_size.y
+	var box := Vector4((at.x - neck.x) * k, (at.y - neck.y) * k, wide / (size.x * k), 1.0 / (size.y * k))
+	for m in _print_materials():
+		m.set_shader_parameter(slot + "_tex", tex)
+		m.set_shader_parameter(slot + "_box", box)
+
+
+## This player's own copies of the uniform material on everything the jersey is drawn on
+## (the team's material is shared by its players; each one's prints are their own).
+func _print_materials() -> Array[ShaderMaterial]:
+	if _print_mats.is_empty():
+		var meshes: Array[MeshInstance3D] = []
+		meshes.append_array(_print_extra)
+		for mi: MeshInstance3D in skel.find_children("Outfit_*", "MeshInstance3D", false, false):
+			meshes.append(mi)
+		var own := {}   # the shared material -> this player's copy
+		for mi in meshes:
+			var m := mi.material_override as ShaderMaterial
+			if m == null or m.shader != UNIFORM_SHADER:
+				continue
+			if not own.has(m):
+				own[m] = m.duplicate()
+				_print_mats.append(own[m])
+			mi.material_override = own[m]
+	return _print_mats
 
 
 ## What goes on the back above the number: a short nickname (NICKNAME_MAX letters or
@@ -1066,24 +1728,12 @@ static func _load_letters() -> void:
 			_cap_rows = Vector2i(y0, y1)
 
 
-## Team crest on the jersey front: a Decal projected backward onto the chest from just
-## in front of `at` (a point on the chest's surface, T-pose), so it wraps with the
-## jersey like the back number. `width` is the crest box's width (see crest_size).
+## Team crest on the jersey front, printed on the cloth (_print) around `at` (a point on
+## the chest, T-pose) like the back number. `width` is the crest box's width (see crest_size).
 func _add_crest(at: Vector3, width: float) -> void:
 	if skater.crest == null:
 		return
-	var tex := skater.crest
-	var size := crest_size(tex, width)
-	var d := Decal.new()
-	d.texture_albedo = tex
-	d.size = Vector3(size.x, 0.36 * hs, size.y)
-	d.normal_fade = DECAL_NORMAL_FADE
-	d.upper_fade = 0.05
-	d.lower_fade = 0.05
-	# Projects along its -Y: here body -Z (into the chest). Texture right = the
-	# viewer's right facing the player (body +X), texture down = body down.
-	var b := Basis(Vector3(1, 0, 0), Vector3(0, 0, 1), Vector3(0, -1, 0))
-	attach_node("Spine2", d, Transform3D(b, at - Vector3(0, 0, 0.04 * hs)))
+	_print("crest", skater.crest, crest_size(skater.crest, width), at)
 
 
 ## A crest's size (width, height) in a box `width` wide and CREST_MAX_H of that tall:
@@ -1194,11 +1844,20 @@ func attach_node(bone: String, node: Node3D, rest_xform: Transform3D) -> void:
 ## One stick model (tools/build_gear.gd), stretched each frame from the heel to the top
 ## of the shaft (see _place_stick); `shaft` and `blade` both point at it.
 func _build_stick() -> void:
-	shaft = _add_mesh(self, STICK_MESH, null, Vector3.ZERO)
-	var mats := stick_materials(skater, STICK_MESH)
+	var model: Mesh = STICK_OLD_MESH if stick_style_of(skater) == STICK_OLD else STICK_MESH
+	shaft = _add_mesh(self, model, null, Vector3.ZERO)
+	var mats := stick_materials(skater, model)
 	shaft.set_surface_override_material(0, mats[0])
 	shaft.set_surface_override_material(1, mats[1])
 	blade = shaft
+
+
+## The finish of a skater's stick: their own (STICK_STYLES or STICK_OLD), or the old-time
+## wooden stick for everyone on a team in the old-time kit.
+static func stick_style_of(s: Skater) -> String:
+	if str(s.uniform.get("kit", "")) == OLD:
+		return STICK_OLD
+	return s.stick_style if s.stick_style in STICK_STYLES or s.stick_style == STICK_OLD else "black"
 
 
 ## The club's [home, road] jersey colors for a skater's stick and tape.
@@ -1214,7 +1873,7 @@ static func club_pair(s: Skater) -> Array[Color]:
 ## The tape material also covers the butt-end knob on skater sticks. Cached.
 static func stick_materials(s: Skater, mesh: Mesh) -> Array[ShaderMaterial]:
 	var club := club_pair(s)
-	var style := s.stick_style if s.stick_style in STICK_STYLES else "black"
+	var style := stick_style_of(s)
 	var tape := s.stick_tape if s.stick_tape in TAPES else "white"
 	var key := "stick|%s|%s|%s|%s|%s" % [style, tape, club[0].to_html(), club[1].to_html(), mesh.resource_path]
 	if _materials.has(key):
@@ -1243,6 +1902,9 @@ static func stick_materials(s: Skater, mesh: Mesh) -> Array[ShaderMaterial]:
 			kind = 2
 			base = club[0]
 			graphic = club[1]
+		STICK_OLD:
+			kind = 3
+			graphic = club[0]   # the painted band low on the shaft
 	body.set_shader_parameter("style", kind)
 	body.set_shader_parameter("base", base)
 	body.set_shader_parameter("graphic", graphic)
@@ -1255,6 +1917,8 @@ static func stick_materials(s: Skater, mesh: Mesh) -> Array[ShaderMaterial]:
 	tm.set_shader_parameter("bare_blade", tape == "none")
 	# The knob is taped either way: the blade's tape, or white with none on the blade.
 	tm.set_shader_parameter("knob_color", tc if tape != "none" else STICK_WHITE)
+	if style == STICK_OLD:
+		tm.set_shader_parameter("tape_span", Vector2(0.04, 0.99))   # taped heel to toe, as they were
 	var out: Array[ShaderMaterial] = [body, tm]
 	_materials[key] = out
 	return out
@@ -1665,9 +2329,14 @@ func _pose(delta: float) -> void:
 		target_yaw += deg_to_rad(80.0) * side
 	if skater.is_down() and spd > 1.0:
 		target_yaw = atan2(vel.x, vel.z)
+	# A hip check turns the body side on, the lead hip at the target.
+	var hip_turn_w := clampf(maxf(_check_load, _check_drive) * 1.5, 0.0, 1.0) if skater.check_kind == &"hip" else 0.0
+	if hip_turn_w > 0.0 and not skater.is_down():
+		var cd := skater._check_dir
+		target_yaw = lerp_angle(target_yaw, atan2(-cd.x, -cd.z) + skater.check_lead * 1.2, hip_turn_w)
 	# Down: turns quickly at first (the back to the hit, so the fall goes with the push),
 	# then lazily as the slide settles.
-	var yaw_rate := 14.0
+	var yaw_rate := 14.0 + 6.0 * hip_turn_w
 	if skater.is_down():
 		yaw_rate = 16.0 if skater._state_time < 0.3 else 6.0
 	_yaw = lerp_angle(_yaw, target_yaw, _ease(yaw_rate, delta))
@@ -1721,8 +2390,14 @@ func _pose(delta: float) -> void:
 		amt = 0.0
 	if spd > skater.top_speed() * 1.02:
 		amt *= 0.4
+	# Pinning on the boards: short choppy strides in place, driving in.
+	var pinning := skater.state == Skater.State.PIN
+	if pinning:
+		amt = maxf(amt, 0.4)
+	elif skater.state == Skater.State.PINNED:
+		amt = maxf(amt, 0.14)
 	_stride_amt = lerpf(_stride_amt, amt, _ease(5.0, delta))
-	_stride += delta * (4.5 + spd * 0.55)
+	_stride += delta * (4.5 + spd * 0.55 + (5.5 if pinning else 0.0))
 	var backward := vel.length() > 0.8 and vel.normalized().dot(skater.heading) < -0.4
 
 	# Skate sounds: a scrape per stride, a spray on hockey stops.
@@ -1766,44 +2441,201 @@ func _pose(delta: float) -> void:
 	_free_arm = lerpf(_free_arm, 1.0 if free else 0.0, _ease(5.0 if free else 9.0, delta))
 	rig.free_arm = _free_arm
 	_check_pose()
+	_pin_pose(delta)
 
 	rig.breath = hold_breath
 	if display_pose != "":
 		_display_pose(delta)
 	_tick_jolt(delta)
-	var pitch := _jolt.x - _check_drive * 0.08
-	var roll := _lean + roll_offset + _jolt.y
+	var pitch := _jolt.x + _check_tilt.x + _pin_tilt.x
+	var roll := _lean + roll_offset + _jolt.y + _check_tilt.y + _pin_tilt.y
 	model.rotation = Vector3(pitch, _yaw, roll)
 
 
-## Checking: the load (crouch, the lead shoulder turned into the target, stick tucked in)
-## while the check is coming, then the drive up and through once it lands.
+## Checking, in three beats. The load: sunk and coiled behind the lead shoulder, the stick
+## pulled in. The drive: up and through the hit off the back skate, as big as what the hit
+## did (`_check_size`). Then the finish, the drive easing back out into the stance. A check
+## that hits nothing ends in a stumble forward instead (`_check_whiff`).
+const CHECK_SIZES := {&"bump": 0.55, &"check": 0.8, &"big_hit": 1.0}
+
 func _check_weights(delta: float) -> void:
 	var checking := skater.state == Skater.State.CHECK
-	_check_load = lerpf(_check_load, 1.0 if checking else 0.0, _ease(22.0 if checking else 8.0, delta))
 	var landed := skater.since_check_landed
+	var t := skater._state_time
+	if landed < _seen_landed:
+		# The hit lands: the hitter's body pitches into it and springs back (the same
+		# sprung tilt a hit taken kicks, smaller).
+		_check_size = CHECK_SIZES.get(skater.landed_kind, 0.8)
+		var local := Basis(Vector3.UP, model.rotation.y).inverse() * skater._check_dir
+		_jolt_v += Vector2(local.z, -local.x) * clampf(skater.landed_power / 8.0, 0.4, 1.6) * 1.5
+	_seen_landed = landed
+	var coil := 0.0
 	var drive := 0.0
-	if landed < 0.45:
-		drive = 1.0 - smoothstep(0.12, 0.45, landed)
+	if landed < 0.55:
+		drive = (1.0 - smoothstep(0.18, 0.55, landed)) * _check_size
 	elif checking:
-		drive = smoothstep(0.1, Skater.CHECK_TIME, skater._state_time) * 0.5
-	_check_drive = lerpf(_check_drive, drive, _ease(30.0 if drive > _check_drive else 8.0, delta))
+		# Nothing hit yet: the body starts to uncoil as the lunge runs out.
+		coil = 1.0 - 0.8 * smoothstep(0.12, Skater.CHECK_TIME, t)
+		drive = 0.7 * smoothstep(0.1, Skater.CHECK_TIME, t)
+	_check_load = lerpf(_check_load, coil, _ease(26.0 if coil > _check_load else 14.0, delta))
+	_check_drive = lerpf(_check_drive, drive, _ease(34.0 if drive > _check_drive else 7.0, delta))
+	var missed := skater.since_check_missed
+	var whiff := 0.0
+	if missed < Skater.WHIFF_TIME and landed > missed:
+		whiff = 1.0 - smoothstep(0.16, Skater.WHIFF_TIME, missed)
+	_check_whiff = lerpf(_check_whiff, whiff, _ease(18.0 if whiff > _check_whiff else 9.0, delta))
 
 
 func _check_pose() -> void:
-	var w := maxf(_check_load, _check_drive)
+	var ld := _check_load
+	var dr := _check_drive
+	var wh := _check_whiff
+	var w := clampf(maxf(maxf(ld, dr), wh), 0.0, 1.0)
+	rig.foot_offset[0] = Vector3.ZERO
+	rig.foot_offset[1] = Vector3.ZERO
+	rig.top_shift = Vector3.ZERO
+	rig.free_hold = 0.0
+	_check_tilt = Vector2.ZERO
 	if w <= 0.001:
 		return
-	var lead := skater.check_lead   # +1: the right shoulder leads
-	# Right shoulder forward = the torso turned to its left (rig twist +).
-	rig.twist = lerpf(rig.twist, lead * 0.7, w)
-	# Load: sink and fold, the lead shoulder dipped toward the target. Drive: the legs
-	# straighten up through the hit, chest up and over the shoulder.
-	rig.hips_drop += 0.04 * _check_load - 0.1 * _check_drive
-	rig.lean += 0.18 * _check_load + 0.12 * _check_drive
-	rig.sway += -lead * (0.14 * _check_load - 0.05 * _check_drive)
-	rig.hips_shift.z += 0.08 * _check_drive
-	rig.free_arm = 0.0
+	var lead := skater.check_lead        # +1: the right shoulder (or hip) leads
+	var side := skater.forehand_side()   # +1: the bottom hand is the right one
+	var bottom := 1 if side > 0.0 else 0
+	var bx := -side                      # the bottom arm's own side in skeleton space (+X = left)
+	# Skeleton space: +X the character's left, +Z ahead. Feet: [left, right].
+	var back := 0 if lead > 0.0 else 1   # the skate away from the lead shoulder
+	var front := 1 - back
+	var free := 0.0                      # 0..1: the bottom hand off the stick
+	match skater.check_kind:
+		&"hip":
+			# Folded low over the stick, the hips thrown at the target and the shoulders
+			# tipped away from it, the far skate driving out the other way.
+			var m := Basis(Vector3.UP, model.rotation.y).inverse() * skater._check_dir   # model space: -Z ahead, +X right
+			var at := Vector3(-m.x, 0.0, -m.z)
+			rig.hips_drop += 0.14 * ld + 0.1 * dr
+			rig.lean += 0.4 * ld + 0.3 * dr
+			rig.hips_shift += at * (0.06 * ld + 0.24 * dr)
+			rig.stance += 0.07 * w
+			var far := 0 if at.x < 0.0 else 1
+			rig.foot_offset[far] = -at * (0.08 * ld + 0.26 * dr)
+			rig.foot_offset[1 - far] = at * 0.08 * dr
+			rig.sway += -at.x * (0.1 * ld + 0.2 * dr)
+			_check_tilt = Vector2(-m.z * 0.14, m.x * 0.2) * dr
+		&"shove":
+			# Square to the target: the bottom hand cocked at the chest, then punched out
+			# straight at shoulder height, the body stepping in behind it.
+			free = 1.0
+			rig.twist = lerpf(rig.twist, side * (-0.2 * ld + 0.4 * dr), w)
+			rig.hips_drop += 0.04 * ld - 0.04 * dr
+			rig.lean += 0.06 * ld + 0.16 * dr
+			rig.hips_shift.z += 0.03 * ld + 0.12 * dr
+			rig.foot_offset[bottom] = Vector3(0.0, 0.0, -0.1 * ld - 0.24 * dr)
+			rig.foot_offset[1 - bottom] = Vector3(0.0, 0.0, 0.06 * ld + 0.14 * dr)
+			var punch := clampf(dr * 1.6, 0.0, 1.0)
+			rig.free_at = Vector3(-bx * 0.08, -0.2, 0.16).lerp(Vector3(-bx * 0.14, -0.03, 0.6), punch)
+			rig.free_pole = Vector3(bx * 0.7, -0.6, -0.4).lerp(Vector3(bx * 0.3, -1.0, 0.0), punch)
+			_check_tilt = Vector2(-0.07 * dr, 0.0)
+		_:
+			# Load: sunk onto bent knees, folded, the lead shoulder turned in and dipped at
+			# the target, its forearm tucked across the chest. Drive: the legs straighten
+			# up through the hit off the back skate (off the ice on a big one), the hips
+			# follow the shoulder through and the whole body pitches over it.
+			# Right shoulder forward = the torso turned to its left (rig twist +).
+			rig.twist = lerpf(rig.twist, lead * (0.35 * ld + 0.95 * dr), w)
+			rig.hips_yaw += lead * (0.1 * ld + 0.32 * dr)
+			rig.hips_drop += 0.07 * ld - 0.16 * dr
+			rig.lean += 0.18 * ld - 0.14 * dr
+			rig.sway += -lead * (0.16 * ld - 0.07 * dr)
+			rig.hips_shift += Vector3(-lead * 0.06 * dr, 0.0, 0.04 * ld + 0.17 * dr)
+			rig.stance += 0.04 * ld
+			var big := clampf((_check_size - 0.6) / 0.4, 0.0, 1.0)
+			rig.foot_offset[back] = Vector3(lead * (0.05 * ld + 0.1 * dr), 0.13 * dr * big, -0.16 * ld - 0.44 * dr)
+			rig.foot_offset[front] = Vector3(0.0, 0.0, 0.08 * ld + 0.1 * dr)
+			_check_tilt = Vector2(-0.04 * ld - 0.11 * dr, -lead * 0.1 * dr)
+			if lead == side:
+				# The bottom hand's shoulder leads: that hand lets go and tucks, the top
+				# hand carries the stick clear on the other side.
+				free = 1.0
+				rig.free_at = Vector3(-bx * 0.22, -0.2, 0.16).lerp(Vector3(-bx * 0.18, -0.1, 0.22), dr)
+				rig.free_pole = Vector3(bx * 0.6, -0.8, 0.15)
+			else:
+				# The top hand's shoulder leads: both hands stay on, the top one drawn up
+				# to the chest so the stick lies in tight across the body.
+				rig.top_shift = Vector3(0.0, 0.22, -0.08) * maxf(ld, dr)
+	# Off balance after a miss: carried on over the front skate, chest down, catching it.
+	if wh > 0.001:
+		rig.lean += 0.3 * wh
+		rig.hips_drop += 0.05 * wh
+		rig.hips_shift.z += 0.12 * wh
+		rig.foot_offset[front] += Vector3(0.0, 0.0, 0.2 * wh)
+		rig.foot_offset[back] += Vector3(0.0, 0.07 * wh, -0.22 * wh)
+		_check_tilt += Vector2(-0.13 * wh, -lead * 0.08 * wh)
+	var hold := clampf(maxf(ld, dr) * 1.5, 0.0, 1.0)
+	rig.free_hold = free * hold
+	rig.free_arm = lerpf(_free_arm, free, hold)
+
+
+## Where the blade goes through a check (from the skater, flat frame).
+func _check_blade() -> Vector3:
+	var h := skater.heading
+	var right := skater.right_dir()
+	var side := skater.forehand_side()
+	match skater.check_kind:
+		&"hip":
+			# Low across the front in both hands.
+			return h * 0.7 + right * side * 0.25 + Vector3.UP * 0.08
+		&"shove":
+			# In the top hand alone, out of the way on its own side.
+			return h * 0.9 - right * side * 0.75 + Vector3.UP * 0.15
+	if skater.check_lead != side:
+		# Both hands on, the top hand's shoulder leading: across the body, the blade out
+		# past the far hip.
+		return h * 0.25 + right * side * 0.9 + Vector3.UP * 0.5
+	# In the top hand alone: pulled in on its own side, the blade up off the ice.
+	return h * 0.9 - right * side * 0.6 + Vector3.UP * 0.35
+
+
+## A board battle (BoardBattle). The one pinned: up against the boards, more upright than
+## the skating stance (the glass is right there), hips back into the other, feet wide,
+## the bottom hand off the stick and braced on the glass, looking back over the shoulder
+## on the pinner's side. The one pinning: low behind them, hips driven in, the bottom
+## hand's forearm barred across their back, chopping strides in place. Both sticks go to
+## the puck at the pinned skater's skates; each jostle rocks both (_tick_jolt).
+func _pin_pose(delta: float) -> void:
+	var st := skater.state
+	_pin_w = lerpf(_pin_w, 1.0 if st == Skater.State.PIN else 0.0, _ease(12.0 if st == Skater.State.PIN else 7.0, delta))
+	_pinned_w = lerpf(_pinned_w, 1.0 if st == Skater.State.PINNED else 0.0, _ease(12.0 if st == Skater.State.PINNED else 7.0, delta))
+	_pin_tilt = Vector2.ZERO
+	if skater.battle != null:
+		_pin_puck = skater.battle.puck_spot()
+		_pin_side = skater.battle.side
+	var w := maxf(_pin_w, _pinned_w)
+	if w <= 0.001:
+		return
+	var side := skater.forehand_side()   # +1: the bottom hand is the right one
+	var bx := -side                      # the bottom arm's own side in skeleton space (+X = left)
+	rig.free_arm = lerpf(rig.free_arm, 1.0, w)
+	rig.free_hold = maxf(rig.free_hold, w)
+	if _pinned_w >= _pin_w:
+		var p := _pinned_w
+		rig.lean = lerpf(rig.lean, 0.32, p)
+		rig.hips_shift.z -= 0.1 * p
+		rig.hips_drop += 0.02 * p
+		rig.stance += 0.07 * p
+		rig.twist = lerpf(rig.twist, -_pin_side * 0.28, p)
+		rig.free_at = Vector3(bx * 0.08, 0.1, 0.36)
+		rig.free_pole = Vector3(bx * 0.7, -0.7, -0.1)
+		_pin_tilt = Vector2(-0.05 * p, 0.0)
+	else:
+		var q := _pin_w
+		rig.lean = lerpf(rig.lean, 0.5, q)
+		rig.hips_shift.z += 0.08 * q
+		rig.hips_drop += 0.05 * q
+		rig.stance += 0.06 * q
+		rig.twist = lerpf(rig.twist, side * 0.3, q)
+		rig.free_at = Vector3(-bx * 0.1, -0.05, 0.38)
+		rig.free_pole = Vector3(bx * 0.9, -0.25, 0.0)
+		_pin_tilt = Vector2(-0.08 * q, 0.0)
 
 
 ## The hit-reaction tilt: each new hit kicks it away from the hitter, a stiff spring
@@ -1817,6 +2649,11 @@ func _tick_jolt(delta: float) -> void:
 		# model's left (-X): the head goes left (roll +).
 		_jolt_v += Vector2(local.z, -local.x) * k
 	_seen_hit = skater.since_hit
+	if skater.pin_bump != _seen_bump:
+		# A jostle in a board battle rocks both bodies the way it pushed.
+		_seen_bump = skater.pin_bump
+		var bump := Basis(Vector3.UP, model.rotation.y).inverse() * skater.pin_bump_dir
+		_jolt_v += Vector2(bump.z, -bump.x) * 2.5
 	if delta <= 0.0:
 		return
 	_jolt_v += (-_jolt * 170.0 - _jolt_v * 15.0) * delta
@@ -1878,10 +2715,6 @@ func _update_stick(delta: float) -> void:
 		Skater.State.DOWN:
 			target = h * 0.2 + right * skater.fall_side * 0.9 + Vector3.UP * 0.05
 			follow = _ease(10.0, delta)
-		Skater.State.CHECK:
-			# Stick pulled in, blade up off the ice on the side away from the lead shoulder.
-			target = h * 0.55 - right * skater.check_lead * 0.35 + Vector3.UP * 0.35
-			follow = _ease(25.0, delta)
 		Skater.State.FOLLOW_THROUGH:
 			# Down onto the ice at the puck first, then up and out toward the target, the
 			# stick ending about level at chest height.
@@ -1914,6 +2747,20 @@ func _update_stick(delta: float) -> void:
 			else:
 				target = stance_blade()
 				target.y = 0.03
+	# A check, and its finish after the skater is skating again: the stick stays pulled in.
+	var cw := clampf(maxf(_check_load, _check_drive) * 1.5, 0.0, 1.0)
+	if cw > 0.01 and not skater.has_puck() and not skater.is_down():
+		target = target.lerp(_check_blade(), cw)
+		follow = maxf(follow, _ease(25.0, delta))
+	# A board battle: both blades at the puck by the boards, the pinner's jabbing at it.
+	var bw := maxf(_pin_w, _pinned_w)
+	if bw > 0.01 and not skater.has_puck() and not skater.is_down():
+		var at_puck := _pin_puck - global_position
+		at_puck.y = 0.03
+		if _pin_w > _pinned_w:
+			at_puck += right * sin(_stride * 2.0) * 0.07
+		target = target.lerp(at_puck, bw)
+		follow = maxf(follow, _ease(20.0, delta))
 	# While a clip owns the arms (celebrating), the stick hangs from the top hand.
 	if _clip_w.z > 0.5 and not skater.is_down():
 		target = (rig.top_hand_world - global_position) + h * 0.5 + Vector3.DOWN * 1.1

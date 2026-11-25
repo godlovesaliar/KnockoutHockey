@@ -18,10 +18,6 @@ extends SceneTree
 ## reads on a navy jersey.
 
 const SHEETS := [
-	# Old 4-logo sheets, kept for the two spare logos. Faint, colored ghost logos in the
-	# background: brightness alone decides.
-	{"file": "res://assets/images/logos2.webp", "teams": ["", "anchor", "", ""], "lum": 0.3, "sat": 1.0},
-	{"file": "res://assets/images/logos3.webp", "teams": ["", "", "", "beacon"], "lum": 0.3, "sat": 1.0},
 	# Redrawn logos: one per image on a white or off-white background. "keep" lowers
 	# KEEP_SHARE for logos with small separate pieces (script lettering). "recolor" swaps
 	# the logo's flat colors to match the team (see _apply_recolor): [from, to, tolerance].
@@ -65,6 +61,14 @@ const SHEETS := [
 	{"file": "res://assets/images/logo_campers.jfif", "teams": ["campers"], "lum": 0.8, "sat": 0.12, "light": true},
 	{"file": "res://assets/images/logo_mountaingoats.jfif", "teams": ["mountaingoats"], "lum": 0.8, "sat": 0.12, "light": true},
 	{"file": "res://assets/images/logo_axolotl.jfif", "teams": ["axolotls"], "lum": 0.8, "sat": 0.12, "light": true},
+	# Classic teams (2026-11-24): felt sweater patches, a round one and a diamond. (Their
+	# first logos were quadrants of the old 4-logo sheets, logos2.webp and logos3.webp.)
+	{"file": "res://assets/images/logo_beacon.jfif", "teams": ["beacon"], "lum": 0.8, "sat": 0.12, "light": true},
+	{"file": "res://assets/images/logo_anchor.jfif", "teams": ["anchor"], "lum": 0.8, "sat": 0.12, "light": true},
+	{"file": "res://assets/images/logo_boxcar.jfif", "teams": ["boxcar"], "lum": 0.8, "sat": 0.12, "light": true},
+	{"file": "res://assets/images/logo_copper.jfif", "teams": ["copper"], "lum": 0.8, "sat": 0.12, "light": true},
+	{"file": "res://assets/images/logo_clipper.jfif", "teams": ["clipper"], "lum": 0.8, "sat": 0.12, "light": true},
+	{"file": "res://assets/images/logo_jalopy.jfif", "teams": ["jalopy"], "lum": 0.8, "sat": 0.12, "light": true},
 ]   ## teams: quadrants TL, TR, BL, BR ("" = superseded); a one-team entry is the whole image
 ## Stock logos for created teams (Create Team's badge icons), with `-- mascots`. Each is
 ## drawn in the same navy / red / gold / white with a black outline, and is cut into a

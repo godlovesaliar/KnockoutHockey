@@ -2,26 +2,27 @@
 
 The in-game credits screen (`scripts/ui/credits.gd`, `ROLL`) lists the same assets; update both together.
 
-Everything below from outside the project is in the game. The male and female character bases are used for every player's body (rigged through Mixamo). The hair is turned into game meshes by tools/build_hair.gd. The skater helmets, the goalie masks, sticks, skates, skater gloves, fists and the goalie's pads, boots, thigh rises, blocker and catcher are the project's own models (tools/blender/). The rink and arena are built in code.
+Everything below from outside the project is in the game. The players' bodies are the project's own: `tools/blender/mpfb_body.py` generates them with MPFB (the MakeHuman Plugin For Blender, from the MakeHuman community, installed from Blender's extension platform; what it generates is CC0, and only the bodies it generated are in the game, not the extension), with our own eyes, and `tools/blender/skin_paint.py` paints their skin. The hair and facial hair are the project's own: `tools/blender/hair_gear.py` builds every style on the game's heads (and the strand grain picture), and `tools/build_hair.gd` turns them into the game's meshes. The skater helmets, the goalie masks, sticks, skates, skater gloves, fists and the goalie's pads, boots, thigh rises, blocker and catcher are the project's own models (tools/blender/). So are the outdoor rink's trees (`tools/blender/trees.py` builds `assets/trees/`): the bare hardwoods are grown with the Easy Tree Blender extension (Jacob Johnston, GPL-3.0, https://github.com/jacobcjohnston/Easy-Tree; only the trees it grew are in the game, not the extension), the evergreens are built by the script, and the far trees' cut-outs are rendered from both. The outdoor rink's warming hut is ours too (`tools/blender/hut.py` builds `assets/hut/`: the model, and its wood and stone pictures, which the script makes itself). So are the goals (`tools/blender/net.py` builds `assets/net/net.glb`: the pipes, the padding and the netting) and the ice resurfacer (`tools/blender/zamboni.py` builds `assets/zamboni/zamboni.glb`; the Thingiverse model it replaced on 2026-11-21 is no longer in the game). The people in plain clothes (the fans in close-ups, the Zamboni's driver) are the same bodies in our own sweatshirt, jeans and boots (`tools/blender/plain_clothes.py` builds `assets/characters/plain_<body>.glb`, and `tools/build_fans.gd` the bodies that wear them). The rink and arena are built in code.
 
 ## Models
 
 | Asset | Author | License | Source |
 |---|---|---|---|
-| Female Character Base - Rigged | Braingapps | CC-BY-4.0 | https://sketchfab.com/3d-models/female-character-base-rigged-9245f75f5d0d45cb9e867d5133d5fdc1 |
-| Male Character Base - Rigged | Braingapps | CC-BY-4.0 | https://sketchfab.com/3d-models/male-character-base-rigged-83d91cbfe6fd48ad87f3a2264d3bcb47 |
-| Hair and Beard Pubg Mobile 3D Model (`assets/player/hair_and_beard__pubg_mobile_3d_model.glb`; five hairstyles and the beard, tinted per player) | BilloXD | CC-BY-4.0 | https://sketchfab.com/3d-models/hair-and-beard-pubg-mobile-3d-model-844243e11ccf40f8902385fe2fddd428 |
-| MOSTACHE (`assets/player/mostache.glb`) | vajidkm | CC-BY-4.0 | https://sketchfab.com/3d-models/mostache-61f34dcad95b450d9cc95456f3b93072 |
-| ported hair (`assets/player/ported_hair.glb`; the long braid / ponytail) | bbb59149 | CC-BY-4.0 | https://sketchfab.com/3d-models/ported-hair-e8eb76ad3c8f46f8aee7ceb076f05972 |
-| Snow Trees Pack LOWPOLY (`assets/snow-trees-pack-lowpoly/`; the outdoor rink's woods, bushes and far treeline) | sixonetwo (@evan4129) | CC-BY-4.0 | https://sketchfab.com/3d-models/snow-trees-pack-lowpoly-8927ca8abbfc4871a029323480d1ad05 |
-| Forest cabin low poly (`assets/forest_cabin_low_poly.glb`; the outdoor rink's warming hut) | POLYSCAN (@POLYSCAN3D) | CC-BY-4.0 | https://sketchfab.com/3d-models/forest-cabin-low-poly-557e8b5d4a364031b88148cb51c215e1 |
-| Zamboni (`assets/ZAMBONI5.stl`; cleaned up into `assets/zamboni/zamboni.glb` by `tools/blender/zamboni.py`: one steering wheel kept and mounted, the other and the loose bar dropped, wheels split out to spin and steer, decimated, recolored) | marsmodels | CC BY | https://www.thingiverse.com/thing:5555849 |
+| Bark001 (`assets/trees/bark.jpg`, shrunk; the bark on the outdoor rink's trees. It ships with Easy Tree) | ambientCG | CC0 | https://ambientcg.com/view?id=Bark001 |
 
 ## Fonts
 
+The controller button prompts are drawn in code (`MenuStyle.draw_glyph`); the Playstation Buttons font they used to come from was removed on 2026-11-21.
+
+The three fonts the game uses (author and license as each font file states them):
+
 | Asset | Author | License | Source |
 |---|---|---|---|
-| Playstation Buttons (`assets/fonts/PLAYB___.TTF`; the Cross, Circle, Square, Triangle, Start and Select prompts, `MenuStyle.draw_glyph`) | TracerTong (made with Fontographer 4.1.2, 1999; the font notes Sony's trademarks) | Free for personal use (commercial use: see the license file in the font package or contact the designer, tracertong.co.uk) | https://www.fonts4free.net/playstation-buttons-font.html |
+| Spray.ME (`assets/fonts/sprayme.ttf`; the game title, `MenuStyle.TITLE_FONT`, also baked into the title pictures in `assets/ui/title/` by `tools/build_title.gd`) | Michał "Neoqueto" Nowak (Copyright Michał "Neoqueto" Nowak 2012; built with FontStruct) | CC BY-SA 3.0 (https://creativecommons.org/licenses/by-sa/3.0/) | http://fontstruct.com/fontstructions/show/718516 |
+| Russo One (`assets/fonts/RussoOne-Regular.ttf`; the word HOCKEY in the title and the "Russo" lettering in the Create Team badge builder) | Jovanny Lemonad (Copyright (c) 2011-2012, Jovanny Lemonad (jovanny.ru), with Reserved Font Name "Russo") | SIL Open Font License 1.1 (http://scripts.sil.org/OFL) | http://jovanny.ru |
+| Michroma (`assets/fonts/Michroma.ttf`; the "Wide" lettering in the Create Team badge builder) | Vernon Adams | SIL Open Font License 1.1 (http://scripts.sil.org/OFL) | https://fonts.google.com/specimen/Michroma |
+
+The other six fonts in `assets/fonts/` are not used by the game (they only load through the `titlefont=` test option) and are not credited: Great Lakes NF and Great Lakes Shadow NF (Nick Curtis, 1001Fonts Free For Commercial Use License), Opsilon (GGBotNet, SIL Open Font License), JOGRUNGE (JVMIYO, no license stated in the file), Baron Kuffner and Tracion (no author or license in the file).
 
 ## Characters and animations
 
@@ -36,6 +37,8 @@ The team logos (`assets/images/teamlogos.jfif`, `logos2.webp` through `logos8.jf
 The recordings in `assets/sound/` (shots, hits, hockey stops, skating, goal horn, crowd, cheers, boos, chants, organ) and the announcer lines in `assets/sound/announcer/` are cut into the clips in `assets/sound/cut/` by `tools/cut_sounds.py`. All of them were generated with ElevenLabs.
 
 ## Music
+
+The broadcast theme (the matchup screen's music) and the TV graphics' sounds in `assets/sound/tv/` are the project's own: `tools/build_theme.py` synthesizes them from scratch (no samples, no outside recordings).
 
 The menu playlist (`assets/sound/music/`; every track there plays, shuffled), from Pixabay. The Pixabay Content License doesn't require attribution; credited anyway.
 

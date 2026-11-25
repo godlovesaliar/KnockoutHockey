@@ -19,6 +19,7 @@ const GRAVITY := 9.81
 const MAX_SPEED := 50.0
 const MAX_SWEEPS := 4
 const VISUAL_THICK := 1.5         ## visual thickness scale (visual_scale widens it)
+const VISUAL_NORMAL := 2.0        ## the usual visual_scale (set_look scales the thickness with it)
 const LOSE_DISTANCE := 0.45       ## carried puck this far from the blade = lost
 const RECEIVER_TIMEOUT := 2.5     ## seconds a pass stays "intended" for its receiver
 const PASS_HOMING := 1.6          ## rad/s a pass on the ice can curve toward its receiver...
@@ -61,9 +62,17 @@ func _ready() -> void:
 	collision_layer = 1 << 5
 	collision_mask = 1 | (1 << 1) | (1 << 3)
 	safe_margin = 0.001
-	$Visual.scale = Vector3(visual_scale, VISUAL_THICK, visual_scale)
+	set_look(visual_scale)
+
+
+## How big the puck is drawn (the Big Puck extra doubles it). Only the look: it collides
+## and plays as a real puck.
+func set_look(scale_xz: float) -> void:
+	visual_scale = scale_xz
+	var thick := VISUAL_THICK * scale_xz / VISUAL_NORMAL
+	$Visual.scale = Vector3(scale_xz, thick, scale_xz)
 	# The thickened visual grows from the ice up instead of sinking half into it.
-	$Visual.position.y = RinkSpec.PUCK_THICKNESS * (VISUAL_THICK - 1.0) * 0.5
+	$Visual.position.y = RinkSpec.PUCK_THICKNESS * (thick - 1.0) * 0.5
 
 
 ## Teleports the puck (to the ice if pos.y is at or below ice level), stops it and clears possession.

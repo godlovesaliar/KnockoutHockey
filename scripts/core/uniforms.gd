@@ -6,7 +6,8 @@ class_name Uniforms
 ## A set: `colors` (every Teams colors key as an HTML color), `style` (the Teams.DESIGNS
 ## preset it started from) and the stripe settings on top: `hem` / `sleeve` / `sock`
 ## (stripes per band, 0 = none), `alternate` (every other stripe in the accent color),
-## `yoke` (0 none, 1 small, 2 large) and `width` (0 thin, 1 normal, 2 wide).
+## `yoke` (0 none, 1 small, 2 large), `width` (0 thin, 1 normal, 2 wide) and `sock_pattern`
+## (a Teams.SOCK_PATTERNS index; sets saved before it existed have none, and take the team's).
 ## Without a road set, a team's road uniform is still worked out from the home one
 ## (Teams.uniform_of): white, or the trim color for light jerseys.
 
@@ -70,6 +71,7 @@ static func from_uniform(colors: Dictionary, style: String) -> Dictionary:
 	for k: String in COLOR_KEYS:
 		u.colors[k] = (colors.get(k, Color.BLACK) as Color).to_html(false)
 	set_style(u, style)
+	u.sock_pattern = maxi(Teams.SOCK_PATTERNS.find(str(colors.get("socks", ""))), 0)
 	return u
 
 
@@ -80,6 +82,7 @@ static func set_style(u: Dictionary, style: String) -> void:
 	u.hem = int(d.get("hem_stripes", 1))
 	u.sleeve = int(d.get("sleeve_stripes", 1))
 	u.sock = int(d.get("sock_stripes", 1))
+	u.sock_pattern = int(d.get("sock_pattern", 0))
 	u.alternate = bool(d.get("alternate", false))
 	var y := float(d.get("yoke_r", 0.0))
 	u.yoke = 0 if y <= 0.0 else (1 if y < 0.26 else 2)
@@ -99,6 +102,8 @@ static func params(u: Dictionary) -> Dictionary:
 	d.hem_stripes = clampi(int(u.get("hem", 1)), 0, MAX_STRIPES)
 	d.sleeve_stripes = clampi(int(u.get("sleeve", 1)), 0, MAX_STRIPES)
 	d.sock_stripes = clampi(int(u.get("sock", 1)), 0, MAX_STRIPES)
+	if u.has("sock_pattern"):
+		d.sock_pattern = clampi(int(u.sock_pattern), 0, Teams.SOCK_PATTERNS.size() - 1)
 	d.alternate = bool(u.get("alternate", false))
 	d.yoke_r = YOKES[clampi(int(u.get("yoke", 0)), 0, 2)]
 	var k: float = WIDTHS[clampi(int(u.get("width", 1)), 0, 2)]
@@ -156,6 +161,8 @@ static func _load() -> void:
 					var u: Dictionary = _data[abbr][which]
 					for k: String in ["hem", "sleeve", "sock", "yoke", "width"]:
 						u[k] = int(u.get(k, 1))
+					if u.has("sock_pattern"):
+						u.sock_pattern = int(u.sock_pattern)
 
 
 static func _write() -> void:

@@ -123,7 +123,11 @@ func setup(d: MatchDirector) -> void:
 		_team_banter_at = randf_range(0.25, 0.7) * d.period_length * d.periods
 	if Sfx.has_line("bobby_vs_pa") and randf() < PA_GAG_CHANCE:
 		_pa_gag_at = randf_range(0.2, 0.8) * d.period_length * d.periods
-	_play_intro.call_deferred()
+	# The matchup line: the broadcast open cues its halves; with no open it's said at once.
+	d.intro_cue.connect(_on_intro_cue)
+	(func() -> void:
+		if director.phase != MatchDirector.Phase.INTRO:
+			_play_intro()).call_deferred()
 	for t in 2:
 		var lu: Lineup = d.lineup(t)
 		for s in lu.all_skaters():
@@ -499,6 +503,7 @@ func _on_phase(phase: MatchDirector.Phase) -> void:
 				# Offside, icing and penalty calls (higher priority) talk over this.
 				_say.call_deferred("whistle", 0.35, 1, 20.0)
 		MatchDirector.Phase.FACEOFF:
+			Sfx.stop_theme(2.5)   # the opening faceoff: the broadcast theme's bed is done
 			if director.period != _period_called:
 				_period_called = director.period
 				_say_period_start.call_deferred()
@@ -700,14 +705,26 @@ func _say_one_of(lines: Array, chance: float, priority: int, cooldown: float) ->
 	return false
 
 
-## The matchup screen: "Tonight: a matchup between the <home>" + "and the <away>."
-## (The welcome follows as the screen closes: _on_phase, PREGAME.)
+## The matchup line: "Tonight: a matchup between the <home>" + "and the <away>."
+## (The welcome follows as the open closes: _on_phase, PREGAME.)
 func _play_intro() -> void:
+	_on_intro_cue(&"both")
+
+
+## The broadcast open's beats: each team's half of the matchup line as its panel lands
+## (both halves together for the Quick open). Nothing is said unless both teams have theirs.
+func _on_intro_cue(what: StringName) -> void:
 	var home: String = Teams.team(director.team_ids[HOME]).get("call", "")
 	var away: String = Teams.team(director.team_ids[1 - HOME]).get("call", "")
-	if home == "" or away == "":
+	if home == "" or away == "" or not (Sfx.has("intro_home_" + home) and Sfx.has("intro_away_" + away)):
 		return
-	Sfx.announce_chain(["intro_home_" + home, "intro_away_" + away], 4)
+	match what:
+		&"home":
+			Sfx.announce_chain(["intro_home_" + home], 4)
+		&"away":
+			Sfx.announce_chain(["intro_away_" + away], 4)
+		_:
+			Sfx.announce_chain(["intro_home_" + home, "intro_away_" + away], 4)
 
 
 func _on_carrier(c: Skater) -> void:

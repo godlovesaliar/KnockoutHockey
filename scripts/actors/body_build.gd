@@ -37,7 +37,7 @@ static var _built := {}   ## source mesh instance id -> the mesh with the build 
 static func size_for(body_type: String, height_m: float, weight_kg: float) -> Vector2:
 	if not AVERAGE.has(body_type):
 		return Vector2(1.0, 0.0)
-	var avg: Array = AVERAGE[body_type]
+	var avg: Array = AVERAGE.get(body_type, AVERAGE["male"])
 	var h := height_m if height_m > 0.5 else float(avg[0])
 	var w := weight_kg if weight_kg > 20.0 else float(avg[1])
 	var scale := h / float(avg[0])

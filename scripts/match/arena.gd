@@ -108,6 +108,8 @@ var _fan_kind: Array[PackedFloat32Array] = []
 var _fan_start := PackedInt32Array()
 ## Where each fan is drawn, in look-group order: pairs of (chunk index, instance index).
 var _fan_slot := PackedInt32Array()
+var _fan_bowl := PackedInt32Array()               ## per chunk: its bowl (0 lower, 1 upper, 2 suites)
+var _fan_dress: Array = []                        ## per chunk, per fan: what it wears (_outfit's answer), for the close-ups
 var _ribbons := []                  ## [material, band height in meters]: everything showing the ribbon art
 var _ribbon_px := Vector2i(1, 1)    ## the ribbon atlas's size
 ## Materials painted in the home color (a community rink's wall stripe), set by _recolor.
@@ -674,6 +676,10 @@ func seat_crowd(seats: Array, occupancy_full: Array, seat_meshes: Array) -> void
 		var fmi := _fan_instance(fm, "Fans_" + tag)
 		_fans.append(fm)
 		_fan_twins.append(null)
+		_fan_bowl.append(bowl)
+		var dress := []
+		dress.resize(fans.size())
+		_fan_dress.append(dress)
 		if twin:
 			# Swap to the simpler fan once the chunk is far off (_recolor dresses the
 			# twin's fans the same).
@@ -923,6 +929,7 @@ func _recolor() -> void:
 			var casual: Color = CASUAL[pick.randi() % CASUAL.size()]
 			var dark: Color = DARK_WEAR[pick.randi() % DARK_WEAR.size()]
 			var o := _outfit(r, colors, away_colors, casual, dark, pick)
+			(_fan_dress[_fan_slot[at]] as Array)[i] = o
 			var hat := 0
 			var hat_col := 0
 			var h := pick.randf()
@@ -987,6 +994,170 @@ static func _crest(team_id: int) -> Texture2D:
 ## A color packed into one exact float (8 bits a channel) for the crowd shader.
 static func _pack_color(c: Color) -> float:
 	return float(clampi(c.r8, 0, 255) + 256 * clampi(c.g8, 0, 255) + 65536 * clampi(c.b8, 0, 255))
+
+
+# --- Close-up fans ----------------------------------------------------------------
+# The crowd above is tubes with painted faces, one draw call a section: right from the
+# game camera, not from ten meters. For a TV close-up into the stands, the fans in the
+# seats on camera are swapped for real people (Fan) while the shot lasts. The rest of the
+# time they are hidden with their processing off: nothing of them runs or draws.
+
+const CLOSE_FANS := 40          ## most people a close-up puts in the seats
+## Where a person sits in a seat's frame: hips over the pan, knees short of the row in front.
+const CLOSE_SEAT := Vector3(0.0, 0.0, -0.3)
+
+var close_count := CLOSE_FANS    ## (the viewer raises these two to measure what more would cost)
+var close_reach := 5.0           ## m from where the camera looks that seats are taken
+var _close_root: Node3D
+var _close: Array[Fan] = []
+var _close_rng := RandomNumberGenerator.new()
+var _close_warming := false
+var _close_away := []            ## the crowd's own fans put away meanwhile: [multimesh, far twin, index, transform]
+
+
+## Whether a close-up into the stands can be dressed.
+func has_close_fans() -> bool:
+	return not low_detail and not _fans.is_empty() and Fan.available()
+
+
+## Builds the people for close-ups ahead of time, one a frame (all at once is a second's
+## hitch, which the first close-up would otherwise take).
+func warm_close_fans() -> void:
+	if _close_warming or _close.size() >= close_count or not has_close_fans():
+		return
+	_close_warming = true
+	while _close.size() < close_count:
+		_add_close_fan()
+		await get_tree().process_frame
+		if not is_inside_tree():
+			return
+	_close_warming = false
+
+
+func _add_close_fan() -> void:
+	if _close_root == null:
+		_close_root = Node3D.new()
+		_close_root.name = "CloseFans"
+		_close_root.visible = false
+		_close_root.process_mode = Node.PROCESS_MODE_DISABLED
+		add_child(_close_root)
+		_close_rng.seed = 7411
+	var f := Fan.create(Fan.random_look(_close_rng))
+	f.visible = false
+	_close_root.add_child(f)
+	_close.append(f)
+
+
+## A seat to point a close-up at: a fan a few rows up the lower stands on the `side`
+## (+1 / -1 in x) near `z`, as the seat's world frame (+Z toward the ice). null: nobody.
+func close_up_seat(side: float, z: float) -> Variant:
+	var cands: Array[Transform3D] = []
+	for idx in _fans.size():
+		if _fan_bowl[idx] != 0:
+			continue
+		var mm := _fans[idx]
+		var box := mm.get_aabb()
+		if box.get_center().x * side < 0.0 or z < box.position.z - 3.0 or z > box.end.z + 3.0:
+			continue
+		for i in mm.instance_count:
+			var xf := mm.get_instance_transform(i)
+			# (facing the ice across it: a side stand's seat, not one round a corner)
+			if xf.origin.x * side > 0.0 and absf(xf.origin.z - z) < 3.0 and xf.basis.z.normalized().x * side < -0.9:
+				cands.append(xf)
+	if cands.is_empty():
+		return null
+	cands.sort_custom(func(a: Transform3D, b: Transform3D) -> bool: return a.origin.y < b.origin.y)
+	var pick := cands[mini(int(cands.size() * 0.3), cands.size() - 1)]
+	return global_transform * Transform3D(pick.basis.orthonormalized(), pick.origin)
+
+
+## Puts real people in the seats a camera at `cam` looking at `look` (world) has in the
+## middle of its picture, in place of the crowd's own fans there, dressed as those were.
+## `mood`: a Fan.MOODS key they all react with, or "" for a crowd's mix (cheering if the
+## building is up). Returns how many; hide_close_fans() puts the crowd back.
+func show_close_fans(cam: Vector3, look: Vector3, mood := "") -> int:
+	hide_close_fans()
+	if not has_close_fans():
+		return 0
+	while _close.size() < close_count:   # (not warmed, or not done warming: the rest now)
+		_add_close_fan()
+	var inv := global_transform.affine_inverse()
+	var c := inv * cam
+	var l := inv * look
+	var axis := (l - c).normalized()
+	var right := axis.cross(Vector3.UP).normalized()
+	var above := right.cross(axis)
+	var found := []   # [how far off the middle of the (wide) picture, chunk, instance, transform]
+	for idx in _fans.size():
+		var mm := _fans[idx]
+		if not mm.get_aabb().grow(close_reach).has_point(l):
+			continue
+		for i in mm.instance_count:
+			var xf := mm.get_instance_transform(i)
+			var p := xf.origin + Vector3(0.0, 0.9, 0.0) - c
+			var along := p.dot(axis)
+			if along > 1.0 and xf.origin.distance_to(l) < close_reach:
+				found.append([maxf(absf(p.dot(right)) / 1.78, absf(p.dot(above))) / along, idx, i, xf])
+	found.sort_custom(func(a: Array, b: Array) -> bool: return a[0] < b[0])
+	var up := _excite > 0.6
+	var watch := global_transform * Vector3(0.0, 1.0, l.z * 0.5)
+	var n := mini(found.size(), _close.size())
+	for k in n:
+		var e: Array = found[k]
+		var mm: MultiMesh = _fans[e[1]]
+		var twin: MultiMesh = _fan_twins[e[1]]
+		var i: int = e[2]
+		var xf: Transform3D = e[3]
+		var f := _close[k]
+		var seat := Transform3D(xf.basis.orthonormalized(), xf.origin)
+		f.transform = Transform3D(seat.basis * Basis(Vector3.UP, PI), seat * CLOSE_SEAT)
+		# Dressed as the fan whose seat it is: [color A, color B, outfit, crest] (_outfit).
+		var o: Variant = (_fan_dress[e[1]] as Array)[i]
+		if o != null:
+			var top: Color = o[0]
+			var rib := top
+			var crest: Texture2D = null
+			if int(o[2]) == 1:      # a jersey: its trim on the rib knit, the crest on the chest
+				rib = o[1]
+				var team := home_team if int(o[3]) == 1 else (away_team if int(o[3]) == 2 else -1)
+				if team >= 0:
+					crest = MenuStyle.team_logo(team)
+			f.wear(top, rib, crest)
+		f.visible = true
+		f.sit()
+		if f.face != null:
+			f.face.look_target = cam if k % 9 == 4 else watch
+		var m := mood
+		if m == "":
+			var r := randf()
+			if up:
+				m = "cheer" if r < 0.7 else "clap"
+			else:
+				m = "clap" if r < 0.2 else ("talk" if r < 0.4 else ("cheer" if r < 0.5 else ""))
+		if m != "":
+			f.react(m, randf() * 0.5)
+		var gone := Transform3D(Basis.from_scale(Vector3.ONE * 0.0001), xf.origin)
+		mm.set_instance_transform(i, gone)
+		if twin:
+			twin.set_instance_transform(i, gone)
+		_close_away.append([mm, twin, i, xf])
+	for k in range(n, _close.size()):
+		_close[k].visible = false
+	_close_root.visible = true
+	_close_root.process_mode = Node.PROCESS_MODE_INHERIT
+	return n
+
+
+## The close-up is over: the crowd's own fans back in their seats.
+func hide_close_fans() -> void:
+	for e: Array in _close_away:
+		(e[0] as MultiMesh).set_instance_transform(e[2], e[3])
+		if e[1]:
+			(e[1] as MultiMesh).set_instance_transform(e[2], e[3])
+	_close_away.clear()
+	if _close_root != null and _close_root.visible:
+		_close_root.visible = false
+		_close_root.process_mode = Node.PROCESS_MODE_DISABLED
 
 
 # --- LED ribbon board -------------------------------------------------------------

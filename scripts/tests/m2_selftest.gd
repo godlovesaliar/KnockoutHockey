@@ -186,3 +186,95 @@ func _run() -> void:
 		await _ticks(96)
 	_check(pokes >= 2 and pokes <= 11, "poke checks strip the puck some of the time (%d of 12)" % pokes)
 	await _clear_skaters()
+
+	print("Board battles")
+	var wall := RinkSpec.HALF_W
+	var ended := []
+	var fouls := []
+	# [what the pinner does, what the pinned does] -> how it ends.
+	var cases := [
+		{"name": "holding to the end", "hold": 99.0, "push": 0.0, "want": [&"loose", &"won"]},
+		{"name": "letting go", "hold": 1.0, "push": 0.0, "want": [&"release"]},
+		{"name": "the pinned fighting back", "hold": 99.0, "push": 0.15, "want": [&"break"]},
+	]
+	for c: Dictionary in cases:
+		ended.clear()
+		hits.clear()
+		var held := _spawn(1, Vector3(wall - 0.9, 0, 0), Vector3.RIGHT, func(sk: Skater, i: SkaterIntent, t: float) -> void:
+			if sk.state == Skater.State.PINNED and c.push > 0.0:
+				i.check_down = fmod(t, c.push) < DT)
+		var holder := _spawn(0, Vector3(wall - 3.4, 0, 0), Vector3.RIGHT, func(sk: Skater, i: SkaterIntent, t: float) -> void:
+			if sk.state == Skater.State.SKATE and sk.battle == null and ended.is_empty():
+				i.move = Vector3.RIGHT * 0.4
+				i.check_down = sk.global_position.distance_to(held.global_position) < 1.6
+			i.check_held = t < c.hold)
+		holder.opponents = [held] as Array[Skater]
+		held.opponents = [holder] as Array[Skater]
+		holder.pin_ended.connect(func(_a: Skater, _b: Skater, how: StringName) -> void: ended.append(how))
+		holder.foul_committed.connect(func(_a: Skater, _b: Skater, k: StringName) -> void: fouls.append(k))
+		puck.place(held.puck_anchor())
+		puck.attach(held)
+		var pinned_at := -1
+		for k in 240:
+			await get_tree().physics_frame
+			if holder.state == Skater.State.PIN and held.state == Skater.State.PINNED:
+				pinned_at = k
+				break
+		_check(pinned_at >= 0 and puck.carrier == null and hits.is_empty(), "slow contact on the boards with check held is a pin, not a hit (%s; hits %d)" % [c.name, hits.size()])
+		if pinned_at >= 0:
+			var off := Vector2(held.global_position.x, held.global_position.z).distance_to(Vector2(holder.global_position.x, holder.global_position.z))
+			await _ticks(40)
+			off = Vector2(held.global_position.x, held.global_position.z).distance_to(Vector2(holder.global_position.x, holder.global_position.z))
+			_check(RinkSpec.sdf(held.global_position.x, held.global_position.z) > -0.6 and off < 1.0, "  the two are on the wall together (%.2f m apart)" % off)
+		await _ticks(int((BoardBattle.MAX_TIME + 0.6) / DT))
+		_check(ended.size() == 1 and ended[0] in c.want, "  %s ends it as %s (%s)" % [c.name, c.want, ended])
+		_check(holder.battle == null and held.battle == null and holder.state != Skater.State.PIN and held.state != Skater.State.PINNED, "  both are out of it")
+		if not ended.is_empty() and (ended[0] == &"release" or ended[0] == &"break"):
+			_check(puck.carrier == held, "  the carrier keeps the puck")
+		await _clear_skaters()
+	_check(fouls.is_empty(), "a pin is not holding (%s)" % [fouls])
+
+	hits.clear()
+	var runner_c := _spawn(1, Vector3(wall - 0.9, 0, 0), Vector3.RIGHT, func(_s: Skater, _i: SkaterIntent, _t: float) -> void: pass)
+	var runner := _spawn(0, Vector3(wall - 13.0, 0, 0), Vector3.RIGHT, func(sk: Skater, i: SkaterIntent, _t: float) -> void:
+		i.move = Vector3.RIGHT
+		i.turbo = true
+		i.check_down = sk.global_position.distance_to(runner_c.global_position) < 2.0
+		i.check_held = true)
+	runner.opponents = [runner_c] as Array[Skater]
+	puck.place(runner_c.puck_anchor())
+	puck.attach(runner_c)
+	await _ticks(260)
+	_check(hits.size() >= 1 and runner.state != Skater.State.PIN, "skating in hard is still a hit, check held or not (%s)" % [hits.map(func(h: Dictionary) -> StringName: return h.kind)])
+	await _clear_skaters()
+
+	print("The computer pins")
+	var ai_started := []   # an array: lambdas capture locals by value
+	var ai_ended := []
+	for trial in 8:
+		var walker := _spawn(1, Vector3(wall - 1.0, 0, -6), Vector3.BACK, func(sk: Skater, i: SkaterIntent, t: float) -> void:
+			if sk.state == Skater.State.SKATE and sk.has_puck():
+				i.move = Vector3.BACK * 0.3
+			elif sk.state == Skater.State.PINNED:
+				i.check_down = fmod(t, 0.3) < DT)
+		var chaser := _spawn(0, Vector3(wall - 4.5, 0, -9), Vector3.BACK, func(_s: Skater, _i: SkaterIntent, _t: float) -> void: pass)
+		var tai := TeamAI.new(0, [chaser] as Array[Skater], [walker] as Array[Skater], null, puck, rink)
+		tai.difficulty = 1.0
+		chaser.brain = AIBrain.new(tai, 40 + trial)
+		chaser.opponents = [walker] as Array[Skater]
+		walker.opponents = [chaser] as Array[Skater]
+		chaser.pin_started.connect(func(_a: Skater, _b: Skater) -> void: ai_started.append(1))
+		chaser.pin_ended.connect(func(_a: Skater, _b: Skater, how: StringName) -> void: ai_ended.append(how))
+		puck.place(walker.puck_anchor())
+		puck.attach(walker)
+		for k in 120 * 6:
+			await get_tree().physics_frame
+			tai.update()
+		var extra := 0
+		while chaser.battle != null and extra < 120 * 4:   # let one that's still going finish
+			await get_tree().physics_frame
+			tai.update()
+			extra += 1
+		await _clear_skaters()
+	_check(ai_started.size() >= 2, "a computer defender pins a carrier skating the boards (%d of 8 tries; ended %s)" % [ai_started.size(), ai_ended])
+	_check(ai_ended.size() == ai_started.size(), "and every one of those battles ends (%d)" % ai_ended.size())

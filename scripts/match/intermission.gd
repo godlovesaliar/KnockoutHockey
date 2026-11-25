@@ -23,6 +23,7 @@ const STAR_COLORS := [Color(1.0, 0.82, 0.25), Color(0.85, 0.88, 0.94), Color(0.8
 
 var d: MatchDirector
 var final := false
+var cut := true                 ## the league stinger covers the way out (off when another screen follows)
 var _age := 0.0
 var _done := false
 var _canvas: Control
@@ -121,7 +122,7 @@ func _paint(ci: Control) -> void:
 	if d.period > d.periods and not final:
 		title = "END OF OVERTIME"
 	if final:
-		mode = "EXHIBITION"
+		mode = "CHALLENGE" if d.challenge >= 0 else "EXHIBITION"
 		title = "FINAL" if d.period <= d.periods else "FINAL / %s" % d.period_name(d.period)
 	MenuStyle.draw_tag(ci, Vector2(60, 40), mode, title)
 	_draw_plates(ci)
@@ -137,7 +138,7 @@ func _paint(ci: Control) -> void:
 	if d.humans.is_empty():
 		hint = "AI vs AI — continuing."
 	elif final:
-		hint = "Back to team select."
+		hint = "Back to team select." if cut else "Next: the pucks you earned."
 	else:
 		hint = "Next: the %s." % ("overtime" if d.period + 1 > d.periods else "%s period" % d.period_name(d.period + 1).to_lower())
 	MenuStyle.draw_footer(ci, w, hint, [] if d.humans.is_empty() else [[_input.accept_label(), "CONTINUE"]], _input.using_pad)
@@ -165,13 +166,17 @@ func _draw_plates(ci: Control) -> void:
 		MenuStyle.draw_slant(ci, plate, Color(col, a), 22)
 		MenuStyle.draw_slant(ci, Rect2(px, PLATE_Y + PLATE_H * 0.6, PLATE_W, PLATE_H * 0.4), Color(0, 0, 0, 0.2 * a), 9)
 		var logo := MenuStyle.team_logo(id)
+		var lw := MenuStyle.logo_slot(logo, PLATE_H + 20)   # (wide crests get a wider slot; the name moves over)
 		if logo:
-			ci.draw_texture_rect(logo, Rect2(px + 26, PLATE_Y - 10, PLATE_H + 20, PLATE_H + 20), false, Color(1, 1, 1, a))
+			MenuStyle.draw_logo(ci, logo, Rect2(px + 26, PLATE_Y - 10, lw, PLATE_H + 20), Color(1, 1, 1, a))
 		var info := Teams.team(id)
-		var nx := px + PLATE_H + 60.0
+		var nx := px + 40.0 + lw
 		ci.draw_string(MenuStyle.font(0.12), Vector2(nx, PLATE_Y + 34), str(info.city).to_upper(), HORIZONTAL_ALIGNMENT_LEFT, -1, 20, Color(1, 1, 1, 0.85 * a))
 		var name := str(info.name).to_upper()
-		var fs := 44 if MenuStyle.text_width(name, 44) < PLATE_W - PLATE_H - 90 else 34
+		var room := PLATE_W - (nx - px) - 30.0
+		var fs := 44 if MenuStyle.text_width(name, 44) < room else 34
+		while fs > 22 and MenuStyle.text_width(name, fs) > room:
+			fs -= 2
 		MenuStyle.draw_bold(ci, Vector2(nx, PLATE_Y + 80), name, fs, Color(1, 1, 1, a), 8, Color(MenuStyle.INK, a), 0.2, false)
 		# Score box.
 		var sx := px + PLATE_W + 14.0
@@ -277,8 +282,9 @@ func _player_card(ci: Control, r: Rect2, t: int, s: Skater, tag: String, tag_col
 	var logo := MenuStyle.team_logo(id)
 	if logo:
 		var ls := top - 12.0
-		ci.draw_texture_rect(logo, Rect2(x, r.position.y + 6, ls, ls), false, Color(1, 1, 1, a))
-		x += ls + 12.0
+		var lw := MenuStyle.logo_slot(logo, ls)   # (wide crests get a wider slot)
+		MenuStyle.draw_logo(ci, logo, Rect2(x, r.position.y + 6, lw, ls), Color(1, 1, 1, a))
+		x += lw + 12.0
 	if s == null:
 		MenuStyle.draw_bold(ci, Vector2(x, r.position.y + top * 0.66), "NOBODY", 26, Color(1, 1, 1, 0.5 * a), 0, MenuStyle.INK, 0.2, false)
 		ci.draw_string(f, Vector2(r.position.x + 16, r.end.y - 18), "Clean period for %s." % Teams.team(id).abbr if tag == "COLD" else "Nobody stood out.",
@@ -321,7 +327,7 @@ func _continue() -> void:
 		return
 	_done = true
 	# The league stinger covers the cut back to the rink (or to the menu).
-	if d and d.show_hud:
+	if cut and d and d.show_hud:
 		Stinger.play(get_tree().root, _close)
 	else:
 		_close()

@@ -2,7 +2,7 @@ class_name ArenaOutdoor
 ## Outdoor Rink (an Arena style): the rink set up on a frozen pond in the woods.
 ##   - a few rows of aluminum bleachers down each side (ArenaCommunity.bleachers), and
 ##     snowbanks plowed up round the ends with fans sitting on top;
-##   - the pond's ice out to a snowy shore, pines all round, low hills far off;
+##   - the pond's ice out to a snowy shore, woods all round, low hills far off;
 ##   - light poles with floodlights, strings of bulbs between them, a warming hut;
 ##   - a lamp scoreboard on posts past one end, home banners on poles (the options);
 ##   - the sky, sun or moon, fog and ambient light for the time of day (the `time`
@@ -194,94 +194,116 @@ static func _tri(st: SurfaceTool, p: Array, n: Array) -> void:
 
 # --- Trees and hills --------------------------------------------------------------------
 
-## Snow Trees Pack LOWPOLY by sixonetwo (Sketchfab, CC BY 4.0; see the credits): photo
-## cut-outs on crossed cards. Per tree kind: the FBX node, how tall we make it (m), how
-## often it turns up in the woods.
-const TREE_PACK := "res://assets/snow-trees-pack-lowpoly/source/SnowTrees.fbx"
+## The woods are the project's own trees (tools/blender/trees.py: bare hardwoods grown with
+## the Easy Tree extension, and snowy evergreens). trees.glb holds each kind 1 m tall with
+## its base at the origin; a `<kind>_card` cut-out of it on crossed quads, for the far
+## ones; a `shrub_card`; and the `treeline` strip. Per kind: how tall we make it (m) and
+## how often it turns up in the woods.
+const TREE_SET := "res://assets/trees/trees.glb"
+const TREE_DIR := "res://assets/trees/"
+const BARK_SHADER := preload("res://scenes/match/tree_bark.gdshader")
 const TREE_KINDS := {
-	"snowtree": {"h": [9.0, 16.0], "weight": 0.82},
-	"TreeBareTall": {"h": [10.0, 15.0], "weight": 0.07},
-	"deadtreehero": {"h": [9.0, 13.0], "weight": 0.06},
-	"deadtreewide": {"h": [5.0, 8.0], "weight": 0.05},
+	"ev_spruce": {"h": [11.0, 18.0], "weight": 0.24},
+	"ev_fir": {"h": [8.0, 13.0], "weight": 0.18},
+	"ev_narrow": {"h": [9.0, 15.0], "weight": 0.12},
+	"hw_broad": {"h": [9.0, 14.0], "weight": 0.15},
+	"hw_tall": {"h": [11.0, 17.0], "weight": 0.14},
+	"hw_slim": {"h": [8.0, 13.0], "weight": 0.12},
+	"hw_gnarled": {"h": [6.0, 10.0], "weight": 0.05},
 }
-static var _pack := {}   ## node name -> [mesh, basis that stands it up at the origin, height, material]
+## Trees this near the shore (m) are models; past it they're cut-outs.
+const TREE_MODELS_WITHIN := 34.0
+const TREE_MODELS_WITHIN_LOW := 14.0
+static var _set := {}   ## node name -> [mesh (our materials on it), its width over its height]
 
 
-## The pack's meshes, each with the basis that puts its base at the origin at 1 m tall.
-static func _tree_pack() -> Dictionary:
-	if not _pack.is_empty():
-		return _pack
-	var ps := load(TREE_PACK) as PackedScene
+## A picture cut out by its alpha, seen from both sides. A hard cutoff: no sorting trouble.
+static func _cutout(file: String, cutoff := 0.5) -> StandardMaterial3D:
+	var m := StandardMaterial3D.new()
+	m.albedo_texture = load(TREE_DIR + file) as Texture2D
+	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR
+	m.alpha_scissor_threshold = cutoff
+	m.alpha_antialiasing_mode = BaseMaterial3D.ALPHA_ANTIALIASING_ALPHA_TO_COVERAGE
+	m.cull_mode = BaseMaterial3D.CULL_DISABLED
+	m.roughness = 1.0
+	m.specular_mode = BaseMaterial3D.SPECULAR_DISABLED
+	m.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS_ANISOTROPIC
+	return m
+
+
+## The tree set's meshes by node name, with the game's materials on their surfaces (the
+## file carries only the materials' names).
+static func _tree_set() -> Dictionary:
+	if not _set.is_empty():
+		return _set
+	var ps := load(TREE_SET) as PackedScene
 	if ps == null:
-		return _pack
+		return _set
+	var bark := ShaderMaterial.new()
+	bark.shader = BARK_SHADER
+	bark.set_shader_parameter("bark", load(TREE_DIR + "bark.jpg"))
+	var mats := {
+		"KH Bark": bark,
+		"Boughs": _cutout("bough.png"),
+		"Cards": _cutout("cards.png", 0.4),
+		"Treeline": _cutout("treeline.png", 0.4),
+	}
 	var root := ps.instantiate()
 	for n in root.find_children("*", "MeshInstance3D", true, false):
 		var mi := n as MeshInstance3D
-		var b := mi.transform.basis
-		var box := Transform3D(b, Vector3.ZERO) * mi.mesh.get_aabb()
-		var h := maxf(box.size.y, 0.001)
-		# Centered, base on the ground, scaled to 1 m tall.
-		var fit := Transform3D(Basis.from_scale(Vector3.ONE / h), Vector3.ZERO) 				* Transform3D(b, -Vector3(box.get_center().x, box.position.y, box.get_center().z))
-		# A long strip (the treeline) turned to run along X, so it faces Z like the rest.
-		if box.size.z > box.size.x * 1.5:
-			fit = Transform3D(Basis(Vector3.UP, PI * 0.5), Vector3.ZERO) * fit
-		var src := mi.mesh.surface_get_material(0) as BaseMaterial3D
-		var m := StandardMaterial3D.new()
-		m.albedo_texture = src.albedo_texture if src else null
-		# A hard cutoff: no sorting trouble, and the faint haze some cut-outs carry drops out.
-		m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR
-		m.alpha_scissor_threshold = 0.5
-		m.alpha_antialiasing_mode = BaseMaterial3D.ALPHA_ANTIALIASING_ALPHA_TO_COVERAGE
-		m.cull_mode = BaseMaterial3D.CULL_DISABLED
-		m.roughness = 1.0
-		m.specular_mode = BaseMaterial3D.SPECULAR_DISABLED
-		m.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS_ANISOTROPIC
-		_pack[str(mi.name)] = [mi.mesh, fit.basis, fit.origin, m, maxf(box.size.x, box.size.z) / h]
+		var mesh := mi.mesh.duplicate() as Mesh
+		for s in mesh.get_surface_count():
+			var src := mesh.surface_get_material(s)
+			if src and mats.has(src.resource_name):
+				mesh.surface_set_material(s, mats[src.resource_name])
+		var box := mesh.get_aabb()
+		_set[str(mi.name)] = [mesh, box.size.x / maxf(box.size.y, 0.001)]
 	root.free()
-	return _pack
+	return _set
 
 
-## A MultiMesh of one pack mesh at `xfs` (each a ground spot, a turn and a size).
-static func _pack_instances(a: Arena, kind: String, xfs: Array, node_name: String) -> void:
-	var pk: Array = _tree_pack().get(kind, [])
-	if pk.is_empty() or xfs.is_empty():
+## A MultiMesh of one of the set's meshes at `xfs` (each a ground spot, a turn and a size).
+static func _instances(a: Arena, kind: String, xfs: Array, node_name: String) -> void:
+	var entry: Array = _tree_set().get(kind, [])
+	if entry.is_empty() or xfs.is_empty():
 		return
-	var fit := Transform3D(pk[1], pk[2])
 	var mm := MultiMesh.new()
 	mm.transform_format = MultiMesh.TRANSFORM_3D
-	mm.mesh = pk[0]
+	mm.mesh = entry[0]
 	mm.instance_count = xfs.size()
 	for i in xfs.size():
-		mm.set_instance_transform(i, (xfs[i] as Transform3D) * fit)
+		mm.set_instance_transform(i, xfs[i] as Transform3D)
 	var mmi := MultiMeshInstance3D.new()
 	mmi.name = node_name
 	mmi.multimesh = mm
-	mmi.material_override = pk[3]
 	mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	a.add_child(mmi)
 
 
-## The woods: snowy spruce mostly, a few bare and dead trees, thick at the shore and
-## thinning out; snow-covered bushes along the shore; and two rings of the treeline
-## strip far off, in front of the hills.
+## The woods: snowy evergreens and bare hardwoods, thick at the shore and thinning out
+## (models near the shore, cut-outs past them); shrubs and young firs along the shore;
+## and two rings of the treeline strip far off, in front of the hills.
 static func _trees(a: Arena) -> void:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 2611
 	var count := 220 if Arena.low_detail else 480
+	var models_within := TREE_MODELS_WITHIN_LOW if Arena.low_detail else TREE_MODELS_WITHIN
 	var by_kind := {}
 	for k: String in TREE_KINDS:
 		by_kind[k] = []
+		by_kind[k + "_card"] = []
 	var tries := 0
 	var placed := 0
 	while placed < count and tries < count * 6:
 		tries += 1
 		var ang := rng.randf() * TAU
-		var d := pond_r(ang) + 5.0 + pow(rng.randf(), 1.6) * 110.0
+		var off := 5.0 + pow(rng.randf(), 1.6) * 110.0
+		var d := pond_r(ang) + off
 		var p := Vector3(cos(ang) * d, -0.1, sin(ang) * d)
 		if Vector2(p.x - HUT.x, p.z - HUT.z).length() < 9.0:
 			continue
 		var roll := rng.randf()
-		var kind := "snowtree"
+		var kind: String = TREE_KINDS.keys()[0]
 		for k: String in TREE_KINDS:
 			roll -= float(TREE_KINDS[k].weight)
 			if roll <= 0.0:
@@ -290,32 +312,30 @@ static func _trees(a: Arena) -> void:
 		var hr: Array = TREE_KINDS[kind].h
 		var h := rng.randf_range(hr[0], hr[1])
 		var w := h * rng.randf_range(0.88, 1.12)
-		by_kind[kind].append(Transform3D(Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3(w, h, w)), p))
+		var xf := Transform3D(Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3(w, h, w)), p)
+		by_kind[kind if off < models_within else kind + "_card"].append(xf)
 		placed += 1
 	for k: String in by_kind:
-		_pack_instances(a, k, by_kind[k], "Trees_" + k)
-	# Bushes along the shore, in twos and threes.
-	var bushes := {"snowbush1": [], "snowbush2": []}
+		_instances(a, k, by_kind[k], "Trees_" + k)
+	# Along the shore, in twos and threes: bare shrubs and young firs.
+	var low := {"shrub_card": [], "ev_fir_card": []}
 	for i in (40 if Arena.low_detail else 90):
 		var ang := rng.randf() * TAU
 		var d := pond_r(ang) + rng.randf_range(0.5, 6.0)
 		for j in rng.randi_range(1, 3):
 			var off := Vector3(rng.randf_range(-1.5, 1.5), 0.0, rng.randf_range(-1.5, 1.5))
 			var p := Vector3(cos(ang) * d, -0.15, sin(ang) * d) + off
-			if Vector2(p.x - HUT.x, p.z - HUT.z).length() < 5.0:
+			if Vector2(p.x - HUT.x, p.z - HUT.z).length() < 8.0:
 				continue
-			var h := rng.randf_range(0.9, 1.8)
-			var kind := "snowbush1" if rng.randf() < 0.5 else "snowbush2"
-			# About 1.8 times as wide as tall, whatever the pack stretched them to.
-			var pkb: Array = _tree_pack().get(kind, [])
-			var wide := h * 1.8 / (float(pkb[4]) if not pkb.is_empty() else 1.8)
-			bushes[kind].append(Transform3D(Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3(wide, h, wide)), p))
-	for k: String in bushes:
-		_pack_instances(a, k, bushes[k], "Bushes_" + k)
+			var kind := "shrub_card" if rng.randf() < 0.55 else "ev_fir_card"
+			var h := rng.randf_range(1.2, 2.3) if kind == "shrub_card" else rng.randf_range(1.0, 2.6)
+			low[kind].append(Transform3D(Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3.ONE * h), p))
+	for k: String in low:
+		_instances(a, k, low[k], "Shore_" + k)
 	# The far woods: treeline strips facing in, two staggered rings, overlapping.
-	var pk: Array = _tree_pack().get("treeline", [])
-	if not pk.is_empty():
-		var aspect: float = pk[4]
+	var strip: Array = _tree_set().get("treeline", [])
+	if not strip.is_empty():
+		var aspect: float = strip[1]
 		var strips := []
 		for ring: Array in [[175.0, 0.0, 26.0], [205.0, 0.5, 32.0]]:
 			var r: float = ring[0]
@@ -327,8 +347,8 @@ static func _trees(a: Arena) -> void:
 				var p := Vector3(cos(ang) * r, -0.5, sin(ang) * r)
 				# The strip's face (its local Z) toward the rink.
 				var face := Basis.looking_at(Vector3(cos(ang), 0, sin(ang)), Vector3.UP)
-				strips.append(Transform3D(face.scaled_local(Vector3(w / aspect, h * rng.randf_range(0.85, 1.1), w / aspect)), p))
-		_pack_instances(a, "treeline", strips, "TreeLine")
+				strips.append(Transform3D(face.scaled_local(Vector3(w / aspect, h * rng.randf_range(0.85, 1.1), 1.0)), p))
+		_instances(a, "treeline", strips, "TreeLine")
 
 
 ## Low snowy hills all round, far off in the haze.
@@ -434,11 +454,13 @@ static func _bulbs(a: Arena, t: Dictionary, tops: Array) -> void:
 
 # --- The hut, scoreboard, flags -----------------------------------------------------------
 
-## The warming hut on the shore: Forest cabin low poly by POLYSCAN (Sketchfab, CC BY 4.0;
-## see the credits), turned to face the rink; a warm light at its door after dark.
-const CABIN := "res://assets/forest_cabin_low_poly.glb"
-const CABIN_SCALE := 2.6     ## the model is ~2 m across: ~5.4 m wide, ~5.3 m to the ridge
-const CABIN_TURN := PI       ## radians: turns the model's porch toward the rink
+## The warming hut on the shore is our own log cabin (tools/blender/hut.py builds
+## assets/hut/): hut.glb, its porch toward its +Z, with a `lamp` and a `smoke` marker in
+## it. The file carries only the materials' names; ours go on here. Its windows and
+## lantern are lit after dark, and its chimney smokes at any hour.
+const HUT_SET := "res://assets/hut/hut.glb"
+const HUT_DIR := "res://assets/hut/"
+const HUT_TURN := PI         ## radians: turns the porch toward the rink
 
 
 static func _hut(a: Arena, t: Dictionary) -> void:
@@ -447,96 +469,111 @@ static func _hut(a: Arena, t: Dictionary) -> void:
 	a.add_child(root)
 	# Local -Z toward the rink.
 	root.transform = Transform3D(Basis.looking_at(-HUT.normalized() * Vector3(1, 0, 1), Vector3.UP), HUT)
-	var ps := load(CABIN) as PackedScene
-	if ps:
-		var cabin := ps.instantiate() as Node3D
-		cabin.name = "Cabin"
-		cabin.transform = Transform3D(Basis(Vector3.UP, CABIN_TURN).scaled(Vector3.ONE * CABIN_SCALE), Vector3.ZERO)
-		root.add_child(cabin)
-		_roof_snow(cabin)
-	if float(t.floods) > 0.0:
-		var glow := OmniLight3D.new()
-		glow.position = Vector3(0.0, 2.2, -3.4)
-		glow.omni_range = 8.0
-		glow.light_energy = 1.4
-		glow.light_color = Color(1.0, 0.7, 0.4)
-		root.add_child(glow)
-
-
-## Snow on the cabin's roof: a copy of every steep, up-facing face of the model (the two
-## roof slopes), lifted a little off it along its normal, in white.
-const ROOF_SNOW_LIFT := 0.035   ## model units (x CABIN_SCALE in meters)
-
-
-static func _roof_snow(cabin: Node3D) -> void:
-	var st := SurfaceTool.new()
-	st.begin(Mesh.PRIMITIVE_TRIANGLES)
-	var any := false
-	for n in cabin.find_children("*", "MeshInstance3D", true, false):
-		var mi := n as MeshInstance3D
-		# The mesh's transform within the cabin.
-		var xf := Transform3D.IDENTITY
-		var p: Node = mi
-		while p != cabin:
-			if p is Node3D:
-				xf = (p as Node3D).transform * xf
-			p = p.get_parent()
-		var nb := xf.basis.inverse().transposed()
-		for si in mi.mesh.get_surface_count():
-			var arr := mi.mesh.surface_get_arrays(si)
-			var verts: PackedVector3Array = arr[Mesh.ARRAY_VERTEX]
-			var idx: PackedInt32Array = arr[Mesh.ARRAY_INDEX] if arr[Mesh.ARRAY_INDEX] != null else PackedInt32Array()
-			if idx.is_empty():
-				idx.resize(verts.size())
-				for i in verts.size():
-					idx[i] = i
-			for t in range(0, idx.size() - 2, 3):
-				var v0 := xf * verts[idx[t]]
-				var v1 := xf * verts[idx[t + 1]]
-				var v2 := xf * verts[idx[t + 2]]
-				var fn := (v2 - v0).cross(v1 - v0)
-				if fn.length() < 1e-9:
-					continue
-				fn = fn.normalized()
-				# Godot's front faces wind clockwise: flip if this one points the other way
-				# from the model's own normal.
-				var mn: Vector3 = (nb * (arr[Mesh.ARRAY_NORMAL] as PackedVector3Array)[idx[t]]).normalized() if arr[Mesh.ARRAY_NORMAL] != null else fn
-				if fn.dot(mn) < 0.0:
-					fn = -fn
-				# The roof: steep and facing up and out (not the porch floor or rail tops).
-				if fn.y < 0.25 or absf(fn.y) > 0.9:
-					continue
-				var lift := fn * ROOF_SNOW_LIFT
-				for v: Vector3 in [v0, v1, v2]:
-					st.set_normal(fn)
-					st.add_vertex(v + lift)
-				any = true
-	if not any:
+	var ps := load(HUT_SET) as PackedScene
+	if ps == null:
 		return
-	var mi2 := MeshInstance3D.new()
-	mi2.name = "RoofSnow"
-	mi2.mesh = st.commit()
-	var m := MeshUtil.material(Color.WHITE, 0.85)
-	m.cull_mode = BaseMaterial3D.CULL_DISABLED
-	# Drifts: soft blue-gray hollows in the white, laid on from above (triplanar).
-	var noise := FastNoiseLite.new()
-	noise.seed = 9
-	noise.frequency = 0.02
-	noise.fractal_octaves = 4
-	var tex := NoiseTexture2D.new()
-	tex.width = 256
-	tex.height = 256
-	tex.seamless = true
-	tex.noise = noise
-	var ramp := Gradient.new()
-	ramp.set_color(0, Color(0.78, 0.83, 0.92))
-	ramp.set_color(1, Color(0.98, 0.99, 1.0))
-	tex.color_ramp = ramp
-	m.albedo_texture = tex
-	m.uv1_triplanar = true
-	m.uv1_scale = Vector3(1.6, 1.6, 1.6)
-	mi2.material_override = m
-	cabin.add_child(mi2)
+	var hut := ps.instantiate() as Node3D
+	hut.name = "Hut"
+	hut.transform = Transform3D(Basis(Vector3.UP, HUT_TURN), Vector3.ZERO)
+	root.add_child(hut)
+	var lit := float(t.floods) > 0.0
+	var glass := MeshUtil.material(Color(0.1, 0.13, 0.17), 0.12)
+	var mats := {
+		"HutWood": _hut_material("wood.jpg"),
+		"HutStone": _hut_material("stone.jpg"),
+		"HutPaint": _hut_material(""),
+		"HutSnow": _hut_material("", 0.85),
+		"HutGlow": Arena._emissive(Color(1.0, 0.7, 0.38), 2.4) if lit else glass,
+	}
+	for n in hut.find_children("*", "MeshInstance3D", true, false):
+		var mi := n as MeshInstance3D
+		for s in mi.mesh.get_surface_count():
+			var src := mi.mesh.surface_get_material(s)
+			if src and mats.has(src.resource_name):
+				mi.set_surface_override_material(s, mats[src.resource_name])
+	var lamp := hut.get_node_or_null("lamp") as Node3D
+	if lit and lamp:
+		# The lantern by the door, and the light spilling out over the porch and the snow.
+		var glow := OmniLight3D.new()
+		glow.position = Vector3(0.0, 0.0, 0.5)
+		glow.omni_range = 9.0
+		glow.light_energy = 1.5
+		glow.light_color = Color(1.0, 0.7, 0.4)
+		lamp.add_child(glow)
+		# A little of it out front too, so the sign on the porch beam reads.
+		var fill := OmniLight3D.new()
+		fill.position = Vector3(0.0, 2.5, 5.4)
+		fill.omni_range = 6.0
+		fill.light_energy = 0.5
+		fill.light_color = Color(1.0, 0.75, 0.5)
+		hut.add_child(fill)
+	var mouth := hut.get_node_or_null("smoke") as Node3D
+	if mouth:
+		mouth.add_child(_smoke(t))
+
+
+## The hut's wood and stone: a tiling picture (none for the painted bits or the snow)
+## tinted by the mesh's vertex colors.
+static func _hut_material(file: String, roughness := 0.9) -> StandardMaterial3D:
+	var m := MeshUtil.material(Color.WHITE, roughness)
+	m.vertex_color_use_as_albedo = true
+	if file != "":
+		m.albedo_texture = load(HUT_DIR + file) as Texture2D
+		m.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS_ANISOTROPIC
+	return m
+
+
+## Wood smoke off the chimney: slow puffs that swell, drift downwind and thin out. Pale
+## by day, dim against the night sky.
+static func _smoke(t: Dictionary) -> CPUParticles3D:
+	var p := CPUParticles3D.new()
+	p.name = "Smoke"
+	p.amount = 18
+	p.lifetime = 7.0
+	p.preprocess = 7.0
+	p.local_coords = false
+	p.emission_shape = CPUParticles3D.EMISSION_SHAPE_SPHERE
+	p.emission_sphere_radius = 0.1
+	p.direction = Vector3.UP
+	p.spread = 12.0
+	p.initial_velocity_min = 0.7
+	p.initial_velocity_max = 1.0
+	p.gravity = Vector3(0.22, 0.05, 0.1)
+	p.damping_min = 0.08
+	p.damping_max = 0.12
+	p.angle_min = 0.0
+	p.angle_max = 360.0
+	var grow := Curve.new()
+	grow.add_point(Vector2(0.0, 0.22))
+	grow.add_point(Vector2(1.0, 1.0))
+	p.scale_amount_curve = grow
+	var fade := Gradient.new()
+	fade.offsets = PackedFloat32Array([0.0, 0.12, 1.0])
+	fade.colors = PackedColorArray([Color(1, 1, 1, 0.0), Color(1, 1, 1, 0.5), Color(1, 1, 1, 0.0)])
+	p.color_ramp = fade
+	var puff := GradientTexture2D.new()
+	puff.width = 64
+	puff.height = 64
+	puff.fill = GradientTexture2D.FILL_RADIAL
+	puff.fill_from = Vector2(0.5, 0.5)
+	puff.fill_to = Vector2(0.5, 0.0)
+	var soft := Gradient.new()
+	soft.offsets = PackedFloat32Array([0.0, 0.55, 1.0])
+	soft.colors = PackedColorArray([Color(1, 1, 1, 1.0), Color(1, 1, 1, 0.45), Color(1, 1, 1, 0.0)])
+	puff.gradient = soft
+	var m := StandardMaterial3D.new()
+	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	m.billboard_mode = BaseMaterial3D.BILLBOARD_PARTICLES
+	m.vertex_color_use_as_albedo = true
+	m.albedo_texture = puff
+	m.albedo_color = Color(0.86, 0.87, 0.9).lerp(Color(0.2, 0.21, 0.26), clampf(float(t.stars) * 4.0, 0.0, 1.0))
+	var quad := QuadMesh.new()
+	quad.size = Vector2(2.6, 2.6)
+	quad.material = m
+	p.mesh = quad
+	p.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	return p
 
 
 ## The lamp scoreboard on two posts past the +Z end, facing the ice.

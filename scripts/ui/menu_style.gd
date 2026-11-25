@@ -16,21 +16,19 @@ const DIM := Color(0.62, 0.66, 0.74)
 
 ## Pad prompts are PlayStation buttons. Code may still name pad buttons by their Xbox
 ## position (A = bottom face, LB = left shoulder...); pad_label() turns either into the
-## PlayStation name, and draw_glyph draws the face buttons as their symbols.
+## PlayStation name. draw_glyph draws every prompt itself (no button font): the face
+## buttons as a ringed symbol on a dark button, the shoulder buttons as badges, Start
+## and Select as their shape over the word on a dark plate.
 const PS_NAMES := {"A": "CROSS", "B": "CIRCLE", "X": "SQUARE", "Y": "TRIANGLE",
 		"LB": "L1", "RB": "R1", "LT": "L2", "RT": "R2", "BACK": "SELECT",
 		"LS": "L3", "RS": "R3"}
-## Button glyphs from the PlayStation button font (assets/fonts/PLAYB___.TTF): the face
-## buttons ringed; the shoulder buttons, Start and Select as badges.
-const PS_FONT := "res://assets/fonts/PLAYB___.TTF"
-const PS_SCALE := 1.24   ## font size for a prompt h tall (the ringed glyphs fill about 0.8 em)
-const PS_DROP := 0.4     ## baseline below the glyph's center, in font sizes
-const PS_GLYPHS := {"CROSS": "X", "CIRCLE": "C", "SQUARE": "S", "TRIANGLE": "T",
-		"L1": "l", "R1": "r", "L2": "L", "R2": "R", "START": "A", "SELECT": "B"}
 const SHOULDERS := ["L1", "R1", "L2", "R2", "L3", "R3"]
+## Start (a long triangle pointing right) and Select (a bar), each over its name.
+const PLATES := ["START", "SELECT"]
 ## The face buttons' symbol colors.
 const PAD_COLORS := {"CROSS": Color(0.49, 0.7, 0.93), "CIRCLE": Color(1.0, 0.42, 0.42),
 		"SQUARE": Color(0.92, 0.6, 0.8), "TRIANGLE": Color(0.27, 0.88, 0.66)}
+const PLATE_LIGHT := Color(0.93, 0.95, 0.98)
 
 const CHROME_SHADER := "
 shader_type canvas_item;
@@ -228,7 +226,7 @@ static func draw_glyph(ci: CanvasItem, pos: Vector2, label: String, pad: bool, h
 		ci.draw_circle(c + Vector2(0, 2), r, Color(0, 0, 0, 0.35))
 		ci.draw_circle(c, r, Color(0.1, 0.11, 0.14))
 		ci.draw_circle(c, r - 2.5, Color(0.2, 0.22, 0.26))
-		_draw_ps(ci, c, label, h, PAD_COLORS[label])
+		_draw_symbol(ci, c, label, h, PAD_COLORS[label])
 		return h
 	if pad and label in SHOULDERS:
 		# A shoulder button: a light badge with the name in dark, like the font's badges
@@ -246,14 +244,25 @@ static func draw_glyph(ci: CanvasItem, pos: Vector2, label: String, pad: bool, h
 		var bw := bf.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, bs).x
 		ci.draw_string(bf, badge.get_center() + Vector2(-bw * 0.5, bs * 0.36), label, HORIZONTAL_ALIGNMENT_LEFT, -1, bs, INK)
 		return w
-	if pad and label in PS_GLYPHS:
-		# Start / Select: the font's glyph, light on a dark rounded plate.
-		var w := h * 1.25
+	if pad and label in PLATES:
+		# Start / Select: the button's shape over its name, light on a dark rounded plate.
+		var w := glyph_width(label, true, h)
 		var sb := StyleBoxFlat.new()
 		sb.bg_color = Color(0.1, 0.11, 0.14)
 		sb.set_corner_radius_all(int(h * 0.14))
 		ci.draw_style_box(sb, Rect2(pos, Vector2(w, h)))
-		_draw_ps(ci, pos + Vector2(w * 0.5, h * 0.42), label, h * 0.82, Color(0.93, 0.95, 0.98))
+		var mid := pos + Vector2(w * 0.5, h * 0.36)
+		if label == "START":
+			var tri := PackedVector2Array([mid + Vector2(-h * 0.31, -h * 0.16),
+					mid + Vector2(h * 0.31, 0.0), mid + Vector2(-h * 0.31, h * 0.16)])
+			ci.draw_colored_polygon(tri, PLATE_LIGHT)
+			_draw_loop(ci, tri, PLATE_LIGHT, 1.0)   # smooths the fill's edge
+		else:
+			ci.draw_rect(Rect2(mid - Vector2(h * 0.31, h * 0.15), Vector2(h * 0.62, h * 0.3)), PLATE_LIGHT)
+		var pf := font(0.0)
+		var ps := _plate_font_size(h)
+		var pw := pf.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, ps).x
+		ci.draw_string(pf, pos + Vector2((w - pw) * 0.5, h * 0.86), label, HORIZONTAL_ALIGNMENT_LEFT, -1, ps, PLATE_LIGHT)
 		return w
 	var fs2 := int(h * 0.46)
 	var w := maxf(h, f.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, fs2).x + h * 0.5)
@@ -300,24 +309,41 @@ static func pad_label(label: String) -> String:
 	return PS_NAMES.get(label, label)
 
 
-static var _ps_font: Font
+## A face button's mark for a prompt `h` tall, centered on `c`: a ring in the button's
+## color around its symbol (a cross, a circle, a square or a triangle), all drawn as lines.
+static func _draw_symbol(ci: CanvasItem, c: Vector2, label: String, h: float, col: Color) -> void:
+	var w := maxf(1.4, h * 0.05)
+	ci.draw_arc(c, h * 0.46, 0.0, TAU, 48, col, maxf(1.2, h * 0.04), true)
+	match label:
+		"CROSS":
+			var d := h * 0.2
+			ci.draw_line(c + Vector2(-d, -d), c + Vector2(d, d), col, w, true)
+			ci.draw_line(c + Vector2(-d, d), c + Vector2(d, -d), col, w, true)
+		"CIRCLE":
+			ci.draw_arc(c, h * 0.26, 0.0, TAU, 40, col, w * 1.3, true)
+		"SQUARE":
+			var d := h * 0.23
+			_draw_loop(ci, PackedVector2Array([c + Vector2(-d, -d), c + Vector2(d, -d),
+					c + Vector2(d, d), c + Vector2(-d, d)]), col, w)
+		"TRIANGLE":
+			# The triangle's middle sits a little low so its tip and base clear the ring evenly.
+			var o := c + Vector2(0.0, h * 0.045)
+			var r := h * 0.29
+			_draw_loop(ci, PackedVector2Array([o + Vector2(0.0, -r), o + Vector2(r * 0.866, r * 0.5),
+					o + Vector2(-r * 0.866, r * 0.5)]), col, w)
 
 
-static func ps_font() -> Font:
-	if _ps_font == null and ResourceLoader.exists(PS_FONT):
-		_ps_font = load(PS_FONT)
-	return _ps_font
+## A closed outline through `pts`. It starts and ends mid-edge, so every corner is a
+## proper joint (a polyline's own two ends would leave a notch at a corner).
+static func _draw_loop(ci: CanvasItem, pts: PackedVector2Array, col: Color, w: float) -> void:
+	var line := PackedVector2Array([(pts[pts.size() - 1] + pts[0]) * 0.5])
+	line.append_array(pts)
+	line.append(line[0])
+	ci.draw_polyline(line, col, w, true)
 
 
-## A button's glyph from the PlayStation font, centered on `c`, sized to a prompt `h` tall.
-static func _draw_ps(ci: CanvasItem, c: Vector2, label: String, h: float, col: Color) -> void:
-	var pf := ps_font()
-	if pf == null:
-		return
-	var fs := int(h * PS_SCALE)
-	var ch: String = PS_GLYPHS[label]
-	var w := pf.get_string_size(ch, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
-	ci.draw_string(pf, c + Vector2(-w * 0.5, fs * PS_DROP), ch, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, col)
+static func _plate_font_size(h: float) -> int:
+	return maxi(6, int(h * 0.22))
 
 
 static func glyph_width(label: String, pad: bool, h := 34.0) -> float:
@@ -327,8 +353,8 @@ static func glyph_width(label: String, pad: bool, h := 34.0) -> float:
 		return h
 	if pad and label in SHOULDERS:
 		return h * 1.3
-	if pad and label in PS_GLYPHS:
-		return h * 1.25
+	if pad and label in PLATES:
+		return maxf(h * 1.25, font(0.0).get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, _plate_font_size(h)).x + h * 0.3)
 	return maxf(h, font(0.0).get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, int(h * 0.46)).x + h * 0.5)
 
 
@@ -361,12 +387,82 @@ static func team_logo(team_id: int) -> Texture2D:
 	return Teams.logo(team_id)
 
 
+## Where `tex` goes in `box` at its own proportions: as large as fits, centered. Crests
+## come in every shape (Florida Man's is twice as wide as it is tall, the Lobsters' nearly
+## twice as tall as wide): never stretch one to a box, fit it in.
+static func logo_rect(tex: Texture2D, box: Rect2) -> Rect2:
+	var ts := tex.get_size()
+	var sz := ts * minf(box.size.x / maxf(ts.x, 1.0), box.size.y / maxf(ts.y, 1.0))
+	return Rect2(box.position + (box.size - sz) * 0.5, sz)
+
+
+## How wide a crest's slot is where the slot is `h` tall: `h` for square and tall crests,
+## wider for wide ones (as wide as the crest at full height, up to `most` times `h`), so a
+## wordmark isn't shrunk to a sliver in a square. Whatever sits beside the crest moves over
+## by the difference.
+const LOGO_WIDE := 1.6
+static func logo_slot(tex: Texture2D, h: float, most := LOGO_WIDE) -> float:
+	if tex == null:
+		return h
+	return h * clampf(tex.get_width() / maxf(float(tex.get_height()), 1.0), 1.0, most)
+
+
+## Draws a crest in `box`, fitted (see logo_rect).
+static func draw_logo(ci: CanvasItem, tex: Texture2D, box: Rect2, modulate := Color.WHITE) -> void:
+	if tex != null:
+		ci.draw_texture_rect(tex, logo_rect(tex, box), false, modulate)
+
+
 ## A slanted bar (the menu's parallelogram): `skew` pixels of lean on each end.
 static func draw_slant(ci: CanvasItem, r: Rect2, color: Color, skew := 14.0) -> void:
 	if r.size.x < 1.0 or r.size.y < 1.0:
 		return   # mid-slide: nothing to draw yet
 	ci.draw_colored_polygon(PackedVector2Array([r.position + Vector2(skew, 0), r.position + Vector2(r.size.x + skew, 0),
 			r.position + Vector2(r.size.x, r.size.y), r.position + Vector2(0, r.size.y)]), color)
+
+
+## The player's pucks on a slanted ink plate whose right end is at `right` (the main menu
+## and the store, top right). `k`: its slide-in, 0 to 1.
+static func draw_wallet(ci: CanvasItem, right: float, y: float, pucks: int, k := 1.0) -> void:
+	var text := Pucks.fmt(pucks)
+	var tw := text_width(text, 38)
+	var w := tw + 196.0
+	var r := Rect2(right - w + (1.0 - k) * 80.0, y, w, 58)
+	draw_slant(ci, Rect2(r.position + Vector2(6, 7), r.size), Color(0, 0, 0, 0.35 * k), 16)
+	draw_slant(ci, r.grow(3), Color(RED, k), 16)
+	draw_slant(ci, r, Color(INK, 0.95 * k), 16)
+	draw_puck(ci, r.position + Vector2(50, 30), 19.0, k)
+	draw_bold(ci, r.position + Vector2(84, 43), text, 38, Color(1, 1, 1, k), 0, INK, 0.2, false)
+	ci.draw_string(font(0.12), r.position + Vector2(96 + tw, 41), "PUCKS", HORIZONTAL_ALIGNMENT_LEFT, -1, 18, Color(DIM, k))
+
+
+## The currency's mark: a puck seen from a little above, `r` across at half-width, centered
+## on `c`. A pale rim keeps it readable on the dark panels.
+static func draw_puck(ci: CanvasItem, c: Vector2, r: float, a := 1.0) -> void:
+	var ry := r * 0.4
+	var h := r * 0.46
+	var top := c - Vector2(0, h * 0.5)
+	var o := maxf(1.5, r * 0.09)
+	_draw_puck_body(ci, top + Vector2(r * 0.1, r * 0.14), r + o, ry + o, h, Color(0, 0, 0, 0.4 * a))
+	_draw_puck_body(ci, top, r + o, ry + o, h, Color(ICE, a))
+	_draw_puck_body(ci, top, r, ry, h, Color(0.03, 0.03, 0.05, a))
+	ci.draw_colored_polygon(_ellipse(top, r, ry), Color(0.25, 0.27, 0.32, a))
+	ci.draw_colored_polygon(_ellipse(top, r * 0.88, ry * 0.86), Color(0.1, 0.11, 0.14, a))
+
+
+## A puck's outline: the top ellipse, the wall, the bottom ellipse.
+static func _draw_puck_body(ci: CanvasItem, top: Vector2, r: float, ry: float, h: float, col: Color) -> void:
+	ci.draw_colored_polygon(_ellipse(top, r, ry), col)
+	ci.draw_rect(Rect2(top.x - r, top.y, r * 2.0, h), col)
+	ci.draw_colored_polygon(_ellipse(top + Vector2(0, h), r, ry), col)
+
+
+static func _ellipse(c: Vector2, rx: float, ry: float) -> PackedVector2Array:
+	var pts := PackedVector2Array()
+	for i in 32:
+		var ang := TAU * i / 32.0
+		pts.append(c + Vector2(cos(ang) * rx, sin(ang) * ry))
+	return pts
 
 
 ## Text with the menu's heavy outline (and an optional drop shadow).

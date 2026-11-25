@@ -26,10 +26,13 @@ var _canvas: Control
 
 
 ## Plays a stinger over everything and calls `on_cover` once the screen is covered.
-static func play(parent: Node, on_cover := Callable()) -> Stinger:
+## `sound`: its sweep (in, the logo's thump, out).
+static func play(parent: Node, on_cover := Callable(), sound := true) -> Stinger:
 	var s := Stinger.new()
 	s._on_cover = on_cover
 	parent.add_child(s)
+	if sound:
+		Sfx.play("tv_sting", Vector3.INF, -4.0)
 	return s
 
 
